@@ -34,3 +34,6 @@ go.work.sum
 # Built binaries
 running-man
 the_running_man
+
+# Beads export state
+.beads/export-state/
