@@ -1,0 +1,178 @@
+package api
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/iangeorge/the_running_man/internal/parser"
+	"github.com/iangeorge/the_running_man/internal/storage"
+)
+
+// Server provides the HTTP API for querying logs
+type Server struct {
+	buffer    *storage.RingBuffer
+	port      int
+	startTime time.Time
+}
+
+// NewServer creates a new API server
+func NewServer(buffer *storage.RingBuffer, port int) *Server {
+	return &Server{
+		buffer:    buffer,
+		port:      port,
+		startTime: time.Now(),
+	}
+}
+
+// Start starts the HTTP server
+func (s *Server) Start() error {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/logs", s.handleLogs)
+	mux.HandleFunc("/errors", s.handleErrors)
+	mux.HandleFunc("/health", s.handleHealth)
+
+	addr := fmt.Sprintf(":%d", s.port)
+	fmt.Printf("[running-man] API server starting on http://localhost%s\n", addr)
+	return http.ListenAndServe(addr, s.corsMiddleware(mux))
+}
+
+// corsMiddleware adds CORS headers for browser access
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	// Parse query parameters
+	filters := storage.QueryFilters{}
+
+	// Parse 'since' parameter (e.g., "30s", "5m", "1h")
+	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
+		duration, err := parseDuration(sinceStr)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid since parameter: %v", err))
+			return
+		}
+		filters.Since = duration
+	}
+
+	// Parse 'level' parameter (comma-separated: "error,warn")
+	if levelStr := r.URL.Query().Get("level"); levelStr != "" {
+		levels := strings.Split(levelStr, ",")
+		for _, l := range levels {
+			filters.Levels = append(filters.Levels, parser.LogLevel(strings.TrimSpace(l)))
+		}
+	}
+
+	// Parse 'source' parameter (comma-separated)
+	if sourceStr := r.URL.Query().Get("source"); sourceStr != "" {
+		sources := strings.Split(sourceStr, ",")
+		for _, s := range sources {
+			filters.Sources = append(filters.Sources, strings.TrimSpace(s))
+		}
+	}
+
+	// Parse 'contains' parameter
+	if contains := r.URL.Query().Get("contains"); contains != "" {
+		filters.Contains = contains
+	}
+
+	// Query the buffer
+	entries := s.buffer.Query(filters)
+
+	// Return JSON response
+	s.writeJSON(w, map[string]interface{}{
+		"logs":  entries,
+		"count": len(entries),
+	})
+}
+
+func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
+	// Parse 'since' parameter
+	filters := storage.QueryFilters{
+		ErrorsOnly: true,
+	}
+
+	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
+		duration, err := parseDuration(sinceStr)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid since parameter: %v", err))
+			return
+		}
+		filters.Since = duration
+	}
+
+	// Query for errors only
+	entries := s.buffer.Query(filters)
+
+	s.writeJSON(w, map[string]interface{}{
+		"errors": entries,
+		"count":  len(entries),
+	})
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	stats := s.buffer.Stats()
+
+	s.writeJSON(w, map[string]interface{}{
+		"status":         "ok",
+		"uptime":         time.Since(s.startTime).String(),
+		"uptime_seconds": int(time.Since(s.startTime).Seconds()),
+		"buffer": map[string]interface{}{
+			"total_entries": stats.TotalEntries,
+			"total_bytes":   stats.TotalBytes,
+			"max_entries":   stats.MaxEntries,
+			"max_bytes":     stats.MaxBytes,
+			"max_age":       stats.MaxAge.String(),
+			"oldest_entry":  stats.OldestEntry,
+			"newest_entry":  stats.NewestEntry,
+		},
+	})
+}
+
+func (s *Server) writeJSON(w http.ResponseWriter, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		fmt.Printf("[running-man] Error encoding JSON: %v\n", err)
+	}
+}
+
+func (s *Server) writeError(w http.ResponseWriter, code int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{
+		"error": message,
+	})
+}
+
+// parseDuration parses duration strings like "30s", "5m", "1h"
+func parseDuration(s string) (time.Duration, error) {
+	// Try standard duration format first
+	d, err := time.ParseDuration(s)
+	if err == nil {
+		return d, nil
+	}
+
+	// Try parsing as raw seconds
+	seconds, err := strconv.Atoi(s)
+	if err == nil {
+		return time.Duration(seconds) * time.Second, nil
+	}
+
+	return 0, fmt.Errorf("invalid duration format: %s (expected: 30s, 5m, 1h)", s)
+}

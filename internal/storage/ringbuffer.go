@@ -1,0 +1,195 @@
+package storage
+
+import (
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/iangeorge/the_running_man/internal/parser"
+)
+
+// RingBuffer stores log entries with size and time limits
+type RingBuffer struct {
+	mu          sync.RWMutex
+	entries     []*parser.LogEntry
+	maxSize     int
+	maxAge      time.Duration
+	currentSize int64
+	maxBytes    int64
+	startTime   time.Time
+}
+
+// NewRingBuffer creates a new ring buffer
+func NewRingBuffer(maxSize int, maxAge time.Duration, maxBytes int64) *RingBuffer {
+	return &RingBuffer{
+		entries:   make([]*parser.LogEntry, 0, maxSize),
+		maxSize:   maxSize,
+		maxAge:    maxAge,
+		maxBytes:  maxBytes,
+		startTime: time.Now(),
+	}
+}
+
+// Append adds a new log entry to the buffer
+func (rb *RingBuffer) Append(entry *parser.LogEntry) {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+
+	entrySize := int64(len(entry.Raw))
+
+	// Evict old entries if needed
+	rb.evictIfNeeded(entrySize)
+
+	// Add the new entry
+	rb.entries = append(rb.entries, entry)
+	rb.currentSize += entrySize
+}
+
+// evictIfNeeded removes old entries to make room for new ones
+func (rb *RingBuffer) evictIfNeeded(newEntrySize int64) {
+	now := time.Now()
+
+	// Remove entries that are too old
+	cutoffTime := now.Add(-rb.maxAge)
+	for len(rb.entries) > 0 && rb.entries[0].Timestamp.Before(cutoffTime) {
+		removed := rb.entries[0]
+		rb.entries = rb.entries[1:]
+		rb.currentSize -= int64(len(removed.Raw))
+	}
+
+	// Remove oldest entries if we're over size limit
+	for len(rb.entries) > 0 && rb.currentSize+newEntrySize > rb.maxBytes {
+		removed := rb.entries[0]
+		rb.entries = rb.entries[1:]
+		rb.currentSize -= int64(len(removed.Raw))
+	}
+
+	// Remove oldest entries if we're over count limit
+	for len(rb.entries) >= rb.maxSize {
+		removed := rb.entries[0]
+		rb.entries = rb.entries[1:]
+		rb.currentSize -= int64(len(removed.Raw))
+	}
+}
+
+// Query retrieves log entries matching the given filters
+func (rb *RingBuffer) Query(filters QueryFilters) []*parser.LogEntry {
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
+
+	var result []*parser.LogEntry
+	cutoffTime := time.Now().Add(-filters.Since)
+
+	for _, entry := range rb.entries {
+		// Filter by time
+		if filters.Since > 0 && entry.Timestamp.Before(cutoffTime) {
+			continue
+		}
+
+		// Filter by level
+		if len(filters.Levels) > 0 {
+			found := false
+			for _, level := range filters.Levels {
+				if entry.Level == level {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+
+		// Filter by source
+		if len(filters.Sources) > 0 {
+			found := false
+			for _, source := range filters.Sources {
+				if entry.Source == source {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+
+		// Filter by content
+		if filters.Contains != "" {
+			if !strings.Contains(entry.Message, filters.Contains) &&
+				!strings.Contains(entry.Raw, filters.Contains) {
+				continue
+			}
+		}
+
+		// Filter errors only
+		if filters.ErrorsOnly && !entry.IsError {
+			continue
+		}
+
+		result = append(result, entry)
+	}
+
+	return result
+}
+
+// Stats returns statistics about the buffer
+func (rb *RingBuffer) Stats() BufferStats {
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
+
+	return BufferStats{
+		TotalEntries: len(rb.entries),
+		TotalBytes:   rb.currentSize,
+		OldestEntry:  rb.oldestEntry(),
+		NewestEntry:  rb.newestEntry(),
+		Uptime:       time.Since(rb.startTime),
+		MaxEntries:   rb.maxSize,
+		MaxBytes:     rb.maxBytes,
+		MaxAge:       rb.maxAge,
+	}
+}
+
+func (rb *RingBuffer) oldestEntry() time.Time {
+	if len(rb.entries) == 0 {
+		return time.Time{}
+	}
+	return rb.entries[0].Timestamp
+}
+
+func (rb *RingBuffer) newestEntry() time.Time {
+	if len(rb.entries) == 0 {
+		return time.Time{}
+	}
+	return rb.entries[len(rb.entries)-1].Timestamp
+}
+
+// Clear removes all entries from the buffer
+func (rb *RingBuffer) Clear() {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+
+	rb.entries = make([]*parser.LogEntry, 0, rb.maxSize)
+	rb.currentSize = 0
+}
+
+// QueryFilters specifies which logs to retrieve
+type QueryFilters struct {
+	Since      time.Duration
+	Levels     []parser.LogLevel
+	Sources    []string
+	Contains   string
+	ErrorsOnly bool
+}
+
+// BufferStats contains statistics about the ring buffer
+type BufferStats struct {
+	TotalEntries int
+	TotalBytes   int64
+	OldestEntry  time.Time
+	NewestEntry  time.Time
+	Uptime       time.Duration
+	MaxEntries   int
+	MaxBytes     int64
+	MaxAge       time.Duration
+}

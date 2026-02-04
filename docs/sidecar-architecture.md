@@ -1,8 +1,8 @@
-# Sidecar: Dev Observability Tool
+# The Running Man: Dev Observability Tool
 
 ## Overview
 
-A standalone process that provides unified observability for local development environments. Captures logs, traces, and errors from multiple sources and exposes them via a query API for agent consumption.
+A standalone process that provides unified observability for local development environments. Captures logs, traces, and errors from multiple sources (backend processes, Docker containers, browsers) and exposes them via a query API for agent consumption.
 
 ## Problem Statement
 
@@ -28,42 +28,45 @@ When developing apps with AI agents, debugging requires manually collecting cont
 ## Architecture
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                         Sidecar                                │
-│                                                                │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
-│  │   Process    │  │    Docker    │  │    OTEL      │         │
-│  │   Wrapper    │  │  Log Tailer  │  │  Collector   │         │
-│  │              │  │              │  │              │         │
-│  │  captures    │  │  attaches to │  │  receives    │         │
-│  │  stdout/err  │  │  containers  │  │  spans via   │         │
-│  │  from child  │  │  from compose│  │  gRPC/HTTP   │         │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘         │
-│         │                 │                 │                  │
-│         └─────────────────┼─────────────────┘                  │
-│                           ▼                                    │
-│                 ┌──────────────────┐                           │
-│                 │   Ring Buffer    │                           │
-│                 │                  │                           │
-│                 │  - log entries   │                           │
-│                 │  - spans/traces  │                           │
-│                 │  - parsed errors │                           │
-│                 └────────┬─────────┘                           │
-│                          │                                     │
-│                          ▼                                     │
-│                 ┌──────────────────┐                           │
-│                 │    Query API     │                           │
-│                 │                  │                           │
-│                 │  GET /logs       │                           │
-│                 │  GET /traces     │                           │
-│                 │  GET /errors     │                           │
-│                 │  WS  /stream     │                           │
-│                 └──────────────────┘                           │
-│                          │                                     │
-└──────────────────────────┼─────────────────────────────────────┘
-                           │
-                           ▼
-                    Agent queries
+┌───────────────────────────────────────────────────────────────────────┐
+│                         The Running Man                               │
+│                                                                       │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐             │
+│  │ Process  │  │  Docker  │  │ Browser  │  │   OTEL   │             │
+│  │ Wrapper  │  │   Log    │  │   Log    │  │Collector │             │
+│  │          │  │  Tailer  │  │ Capture  │  │          │             │
+│  │ captures │  │ attaches │  │ receives │  │ receives │             │
+│  │stdout/err│  │   to     │  │  POST    │  │  spans   │             │
+│  │from child│  │containers│  │ /ingest  │  │gRPC/HTTP │             │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘             │
+│       │             │             │             │                    │
+│       └─────────────┴─────────────┴─────────────┘                    │
+│                              ▼                                        │
+│                    ┌──────────────────┐                               │
+│                    │   Ring Buffer    │                               │
+│                    │                  │                               │
+│                    │  - log entries   │                               │
+│                    │  - browser logs  │                               │
+│                    │  - spans/traces  │                               │
+│                    │  - parsed errors │                               │
+│                    └────────┬─────────┘                               │
+│                             │                                         │
+│                             ▼                                         │
+│                    ┌──────────────────┐                               │
+│                    │    Query API     │                               │
+│                    │                  │                               │
+│                    │  GET /logs       │                               │
+│                    │  GET /browser    │                               │
+│                    │  GET /traces     │                               │
+│                    │  GET /errors     │                               │
+│                    │  POST /ingest    │                               │
+│                    │  WS  /stream     │                               │
+│                    └──────────────────┘                               │
+│                             │                                         │
+└─────────────────────────────┼─────────────────────────────────────────┘
+                              │
+                              ▼
+                       Agent queries
 ```
 
 ---
@@ -98,7 +101,63 @@ When developing apps with AI agents, debugging requires manually collecting cont
 **Input:** Path to docker-compose.yml
 **Output:** Stream of log entries to ring buffer
 
-### 3. OTEL Collector
+### 3. Browser Log Capture
+
+**Responsibility:** Capture console logs, errors, and network failures from the browser.
+
+**Approach:** Lightweight JS snippet loaded in dev mode only.
+
+**Behavior:**
+- Hooks `console.log/warn/error/debug`
+- Catches `window.onerror` and unhandled promise rejections
+- Optionally hooks `fetch`/`XHR` to capture failed requests
+- Batches and POSTs to sidecar ingest endpoint
+- Includes active trace ID if present (correlates with backend spans)
+
+**Integration:**
+```javascript
+// main.js - only loads in dev
+if (import.meta.env.DEV) {
+  import('./sidecar-client.js')
+}
+```
+
+**Ingest endpoint:** `POST /ingest/browser`
+
+**Payload:**
+```json
+{
+  "entries": [
+    {
+      "type": "console",
+      "level": "error",
+      "message": "TypeError: Cannot read property 'foo' of undefined",
+      "stack": "...",
+      "timestamp": "2024-01-15T10:30:00Z",
+      "trace_id": "abc123",
+      "url": "http://localhost:5173/dashboard"
+    },
+    {
+      "type": "network",
+      "method": "POST",
+      "url": "/api/users",
+      "status": 500,
+      "timestamp": "...",
+      "trace_id": "abc123"
+    }
+  ]
+}
+```
+
+**SDK features:**
+- Auto-batching (send every N entries or M milliseconds)
+- Configurable running man URL (defaults to `localhost:9000`)
+- Trace ID propagation helper for fetch wrapper
+- Minimal footprint (~2KB minified)
+
+---
+
+### 4. OTEL Collector
 
 **Responsibility:** Receive OTEL spans from instrumented applications.
 
@@ -111,7 +170,7 @@ When developing apps with AI agents, debugging requires manually collecting cont
 **Input:** OTLP spans
 **Output:** Structured span data to ring buffer
 
-### 4. Ring Buffer / Storage
+### 5. Ring Buffer / Storage
 
 **Responsibility:** Store recent logs, traces, and errors with fast query access.
 
@@ -123,12 +182,26 @@ When developing apps with AI agents, debugging requires manually collecting cont
 ```
 LogEntry {
   timestamp: time
-  source: string      // "python-server", "vue-dev", "postgres", etc.
+  source: string      // "python-server", "vue-dev", "postgres", "browser", etc.
   level: string       // "info", "error", "debug"
   message: string
   raw: string         // original line
   trace_id: string?   // if correlated
   metadata: map       // parsed fields from JSON logs
+}
+
+BrowserEntry {
+  timestamp: time
+  type: string        // "console", "network", "error"
+  level: string?      // for console: "log", "warn", "error"
+  message: string
+  stack: string?      // for errors
+  url: string         // page URL
+  trace_id: string?
+  // network-specific
+  method: string?
+  request_url: string?
+  status: int?
 }
 
 Span {
@@ -155,7 +228,7 @@ Error {
 
 **Retention:** Configurable, default 30 minutes or 50MB
 
-### 5. Query API
+### 6. Query API
 
 **Responsibility:** Expose data for agent consumption.
 
@@ -169,6 +242,12 @@ GET /logs
   ?contains=traceback  // text search
   ?trace_id=abc123     // filter by correlation
 
+GET /browser
+  ?since=30s
+  ?level=error,warn    // filter by console level
+  ?type=console,network,error
+  ?trace_id=abc123
+
 GET /traces
   ?trace_id=abc123     // specific trace
   ?workflow_id=xyz     // all spans for a workflow
@@ -177,7 +256,7 @@ GET /traces
 
 GET /errors
   ?since=5m
-  ?source=*
+  ?source=*            // includes "browser" as source
   ?type=python_*
 
 GET /health
@@ -185,6 +264,9 @@ GET /health
 
 WS /stream
   Live tail of logs/errors (optional, nice-to-have)
+
+POST /ingest/browser
+  Receives batched browser entries from JS SDK
 ```
 
 **Response format:** JSON, structured for easy agent parsing
@@ -195,20 +277,20 @@ WS /stream
 
 ```bash
 # Basic usage - wrap a single command
-sidecar run -- python server.py
+running-man run -- python server.py
 
 # Multiple wrapped processes
-sidecar run \
+running-man run \
   --wrap "python server.py" \
   --wrap "npm run dev"
 
 # With docker-compose
-sidecar run \
+running-man run \
   --wrap "python server.py" \
   --docker-compose ./docker-compose.yml
 
 # Full config
-sidecar run \
+running-man run \
   --wrap "python server.py" \
   --wrap "npm run dev" \
   --docker-compose ./docker-compose.yml \
@@ -297,13 +379,19 @@ For multi-step agentic flows:
 - Docker-compose log tailing
 - Source filtering in API
 
-### Phase 3: OTEL Integration
+### Phase 3: Browser Capture
+- JS SDK for console/error capture
+- `/ingest/browser` endpoint
+- `/browser` query endpoint
+- Trace ID propagation helpers
+
+### Phase 4: OTEL Integration
 - OTLP receiver (gRPC + HTTP)
 - Span storage and indexing
 - `/traces` endpoint
-- Trace ID correlation
+- Trace ID correlation across browser → backend
 
-### Phase 4: Polish
+### Phase 5: Polish
 - WebSocket streaming
 - SQLite persistence option
 - Config file support
@@ -323,10 +411,12 @@ For multi-step agentic flows:
 
 ## Open Questions
 
-1. **Process management:** How much should sidecar do? Restart on crash? Health checks? Or keep it simple and just observe?
+1. **Process management:** How much should the running man do? Restart on crash? Health checks? Or keep it simple and just observe?
 
-2. **Frontend SDK:** Worth building a tiny JS helper for trace ID propagation? Or just document the header convention?
+2. **Browser SDK distribution:** npm package? Single file you copy into your project? Both?
 
 3. **Config file:** YAML/TOML config for complex setups, or keep it CLI-only?
 
 4. **Agent integration:** Should we define a standard "context dump" format that agents expect? Or let them query flexibly?
+
+5. **Source maps:** Should the browser SDK attempt to resolve source maps for better stack traces? Adds complexity but improves error readability.

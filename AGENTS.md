@@ -2,6 +2,16 @@
 
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
+## Development
+
+### Tests
+- Keep a comprehensive but focussed set of test for the core functionality. It shouldn't take more than a second or two to run
+- Any longer or more integrated tests should be tagged as such and only run at key stages such as before code review / commit
+- When fixing bugs write a failing test first if possible
+
+### Style
+- Format code properly (with go fmt or whatever) before committing
+
 ## Quick Reference
 
 ```bash
