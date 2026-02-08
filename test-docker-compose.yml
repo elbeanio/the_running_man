@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  # Simple service that logs a message every second
+  logger-1:
+    image: alpine:latest
+    command: sh -c "while true; do echo '[logger-1] Message at $(date)'; sleep 1; done"
+    container_name: test-logger-1
+
+  # Another logger that generates different output
+  logger-2:
+    image: alpine:latest
+    command: >
+      sh -c "i=0; while true; do echo \"[logger-2] Counter: $$i\"; i=$$((i+1)); sleep 2; done"
+    container_name: test-logger-2
+
+  # Service that generates errors to stderr
+  error-logger:
+    image: alpine:latest
+    command: >
+      sh -c "while true; do
+        echo '[error-logger] Normal log';
+        sleep 3;
+        echo '[error-logger] ERROR: Something went wrong' >&2;
+        sleep 3;
+      done"
+    container_name: test-error-logger

@@ -240,8 +240,55 @@ else
 fi
 echo ""
 
-# Test 15: Run tests with race detector
-echo "16. Running race detector..."
+# Test 15: Docker integration (if Docker is available)
+echo "16. Testing Docker Compose integration..."
+if command -v docker &> /dev/null && docker info &> /dev/null; then
+    # Start test containers
+    echo "   Starting test containers..."
+    docker-compose -f test-docker-compose.yml up -d > /dev/null 2>&1
+    sleep 3
+    
+    # Run The Running Man with Docker Compose
+    ./running-man run --docker-compose test-docker-compose.yml > /tmp/running-man-docker.log 2>&1 &
+    PID=$!
+    sleep 5
+    kill $PID 2>/dev/null || true
+    
+    # Check that container logs were captured
+    if grep -q "\[logger-1\]" /tmp/running-man-docker.log && \
+       grep -q "\[logger-2\]" /tmp/running-man-docker.log && \
+       grep -q "\[error-logger\]" /tmp/running-man-docker.log; then
+        echo "✓ Docker Compose integration works (captured logs from all 3 containers)"
+    else
+        echo "✗ Docker Compose integration failed"
+        cat /tmp/running-man-docker.log | head -50
+        docker-compose -f test-docker-compose.yml down > /dev/null 2>&1
+        exit 1
+    fi
+    
+    # Test mixed Docker + process wrapping
+    ./running-man run --docker-compose test-docker-compose.yml --wrap "echo hello-world" > /tmp/running-man-mixed.log 2>&1 &
+    PID=$!
+    sleep 3
+    kill $PID 2>/dev/null || true
+    
+    if grep -q "\[logger-1\]" /tmp/running-man-mixed.log && \
+       grep -q "hello-world" /tmp/running-man-mixed.log; then
+        echo "✓ Mixed Docker + process wrapping works"
+    else
+        echo "✗ Mixed Docker + process wrapping failed"
+        cat /tmp/running-man-mixed.log | head -50
+    fi
+    
+    # Cleanup
+    docker-compose -f test-docker-compose.yml down > /dev/null 2>&1
+else
+    echo "⊘ Docker not available, skipping Docker integration tests"
+fi
+echo ""
+
+# Test 16: Run tests with race detector
+echo "17. Running race detector..."
 if go test -race ./internal/wrapper > /dev/null 2>&1; then
     echo "✓ Race detector passes (no data races)"
 else
@@ -266,14 +313,14 @@ echo "  ✓ No race conditions detected"
 echo ""
 echo "Phase 2.1 (Multi-Process Support): ✓ COMPLETE"
 echo ""
-echo "Phase 2.2 (Docker Compose Integration): In Progress"
+echo "Phase 2.2 (Docker Compose Integration): ✓ COMPLETE"
 echo "  ✓ Docker client library"
 echo "  ✓ CLI flag (--docker-compose)"
 echo "  ✓ Compose file parsing"
-echo "  ⊘ Container discovery via Docker API"
-echo "  ⊘ Log streaming from containers"
-echo "  ⊘ Container lifecycle events"
-echo "  ⊘ Integration testing"
+echo "  ✓ Container discovery via Docker API"
+echo "  ✓ Log streaming from containers"
+echo "  ✓ Container lifecycle events"
+echo "  ✓ Integration testing"
 echo ""
 echo "Remaining Phase 2 features:"
 echo "  ⊘ Enhanced query filters (glob matching, exclude)"
