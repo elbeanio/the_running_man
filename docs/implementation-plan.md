@@ -1,605 +1,504 @@
 # The Running Man Implementation Plan
 
-## Executive Summary
+## Project Status
 
-This document outlines the phased implementation of **the running man**, a dev observability tool that captures logs, traces, and errors from local development environments. The tool wraps processes, tails Docker logs, captures browser console output, collects OTEL spans, and exposes a unified query API for both developers and AI agents.
+This is a **weekend project** for building dev observability tooling focused on AI-assisted development.
 
-**Target Stack:** Go (backend) + tiny JS SDK (browser capture)  
-**Deployment:** Local development only (not production)  
-**Timeline:** 5 phases, MVP achievable in Phase 1-2
+## Current Status
 
----
-
-## Phase 1: Core Foundation (MVP)
-
-**Goal:** Prove the core value proposition with minimal features
-
-### Deliverables
-
-1. **Single Process Wrapper**
-   - Spawn child process with inherited environment
-   - Capture stdout/stderr streams
-   - Pass-through to terminal (dev still sees logs)
-   - Tag entries with process name and timestamp
-   - Graceful signal handling (SIGINT/SIGTERM)
-
-2. **Log Parsing Engine**
-   - Python traceback detection and grouping
-   - JSON log parsing with field extraction
-   - Plain text with heuristic level detection (ERROR, WARN, INFO)
-   - Multi-line error aggregation
-
-3. **In-Memory Ring Buffer**
-   - Fixed size/time retention (default 30min or 50MB)
-   - Efficient append and query operations
-   - Thread-safe with mutex protection
-   - Basic indexing by timestamp and level
-
-4. **Query API - Core Endpoints**
-   ```
-   GET /logs
-     ?since=30s
-     ?level=error,warn
-     ?contains=text
-   
-   GET /errors
-     ?since=5m
-   
-   GET /health
-   ```
-
-5. **CLI Interface**
-   ```bash
-   running-man run -- python server.py
-   running-man run --api-port 9000 -- npm run dev
-   ```
-
-### Success Criteria
-
-- Can wrap a single Python/Node process
-- Captures and parses errors correctly
-- Agent can query recent errors via API
-- Zero-config startup for simple cases
-
-### Estimated Effort: 2-3 weeks
+- ✅ **Phase 1:** Core Foundation (COMPLETE)
+- ✅ **Phase 2:** Multi-Source Capture (COMPLETE)
+- → **Phase 2.5:** Quality of Life & Bug Fixes (NEXT)
+- 📋 **Phase 3:** Agent Integration
+- 📋 **Phase 4:** OTEL & Visualization  
+- 📋 **Phase 5:** Browser Integration
 
 ---
 
-## Phase 2: Multi-Source Capture
+## Phase 1: Core Foundation ✅ COMPLETE
 
-**Goal:** Support real-world dev stacks with multiple processes and containers
+### What We Built
 
-### Deliverables
+**Single Process Management**
+- Process wrapper with stdout/stderr capture
+- Terminal passthrough (developer still sees logs)
+- Graceful signal handling (SIGINT/SIGTERM)
 
-1. **Multi-Process Support**
-   - Multiple `--process` flags
-   - Unique source tagging per process
-   - Parallel stream capture
-   - Aggregate output in terminal
+**Log Parsing**
+- Python traceback detection and grouping
+- JSON log parsing with field extraction
+- Plain text with heuristic level detection
 
-2. **Docker Compose Integration**
-   - Parse docker-compose.yml to discover containers
-   - Attach to container log streams via Docker API
-   - Tag entries with container name
-   - Handle container restart/recreation
-   - Filter by container in API queries
+**Ring Buffer Storage**
+- In-memory circular buffer
+- 30-minute or 50MB retention
+- Thread-safe concurrent access
+- Efficient indexing by timestamp and level
 
-3. **Enhanced Query Filters**
-   ```
-   GET /logs
-     ?source=python-*        # glob matching
-     ?source=postgres        # exact match
-     ?exclude=debug-*        # inverse filter
-   
-   GET /health
-     # Shows status of all capture sources
-   ```
+**Query API**
+- `GET /logs` - Query with filters
+- `GET /errors` - Recent errors
+- `GET /health` - System status
 
-4. **Configuration File Support** (optional)
-   ```yaml
-   # running-man.yml
-   processes:
-     - name: backend
-       command: python server.py
-       env:
-         DEBUG: "1"
-     - name: frontend
-       command: npm run dev
-   
-   docker_compose: ./docker-compose.yml
-   api_port: 9000
-   retention: 30m
-   ```
+**CLI Interface**
+```bash
+running-man run --process "python server.py"
+```
 
-### Success Criteria
-
-- Can wrap multiple processes simultaneously
-- Captures logs from Docker containers
-- Source filtering works reliably
-- Survives container restarts
-
-### Estimated Effort: 2 weeks
+### Test Coverage
+- API: 75.9%
+- Parser: 78.2%
+- Process: 86.8%
+- Storage: 100%
 
 ---
 
-## Phase 3: Browser Log Capture
+## Phase 2: Multi-Source Capture ✅ COMPLETE
 
-**Goal:** Capture browser console logs, errors, and network failures
+### What We Built
 
-### Deliverables
+**Multi-Process Support**
+- Multiple `--process` flags
+- Parallel stream capture
+- Unique source tagging
+- Shell execution (cd, &&, pipes, redirections)
 
-1. **Browser SDK (JavaScript)**
-   - Console hook (`console.log/warn/error/debug`)
-   - Uncaught exception handler (`window.onerror`)
-   - Unhandled promise rejection handler
-   - Optional `fetch`/`XHR` interceptor for failed requests
-   - Auto-batching (configurable: N entries or M milliseconds)
-   - Configurable endpoint URL (default `localhost:9000`)
-   - Trace ID propagation support
-   - Minimal footprint (~2KB minified)
+**Docker Compose Integration**
+- Parse docker-compose.yml to discover services
+- Stream logs from all containers via Docker API
+- Handle container restarts
+- Filter by container in API
 
-2. **Ingest Endpoint**
-   ```
-   POST /ingest/browser
-   ```
-   - Accepts batched log entries from browser SDK
-   - Parses and stores in ring buffer
-   - Tags with source="browser"
-   - Extracts trace_id for correlation
+**Enhanced Query Filters**
+- Source filtering (`?source=backend`)
+- Level filtering (`?level=error,warn`)
+- Time windows (`?since=30s`)
+- Content search (`?contains=traceback`)
 
-3. **Browser Entry Schema**
-   ```
-   BrowserEntry {
-     timestamp: time
-     type: "console" | "network" | "error"
-     level: "log" | "warn" | "error" | "debug"
-     message: string
-     stack: string?        // for errors
-     url: string          // page URL
-     trace_id: string?    // correlation
-     // network-specific
-     method: string?      // POST, GET, etc.
-     request_url: string? // API endpoint
-     status: int?         // HTTP status
-   }
-   ```
+**YAML Configuration**
+- `running-man.yml` with auto-discovery
+- Schema validation with helpful errors
+- CLI flags override config values
+- Configurable shell (bash, zsh, sh)
+- Example config file provided
 
-4. **Browser Query API**
-   ```
-   GET /browser
-     ?since=30s
-     ?level=error,warn
-     ?type=console,network,error
-     ?trace_id=abc123
-     ?url=*dashboard*     // filter by page URL
-   ```
+**TUI Viewer**
+- Interactive Bubble Tea interface
+- Tab switching between sources
+- Real-time log updates
+- Color-coded log levels
 
-5. **SDK Integration Docs**
-   - Installation via npm or CDN
-   - Dev-only loading pattern (Vite, webpack, etc.)
-   - Configuration options
-   - Trace ID propagation examples
-   - Framework-specific guides (React, Vue, Svelte)
+**Bonus Features**
+- Configurable shell per process
+- Process cleanup on TUI quit
+- Signal handling for graceful shutdown
 
-6. **SDK Distribution**
-   - npm package: `@running-man/browser-client`
-   - Standalone file for copy/paste
-   - TypeScript types included
-
-### Success Criteria
-
-- Browser SDK captures console logs and errors
-- Errors include stack traces
-- Failed network requests captured (if enabled)
-- Trace ID correlation works browser → backend
-- SDK has minimal performance impact (<5ms per batch)
-- Works in Chrome, Firefox, Safari
-
-### Estimated Effort: 2-3 weeks
+### Issues Found
+- Docker project name bug (FIXED)
+- TUI newline rendering broken
+- TUI only shows last 5 minutes of logs
+- Need better tab ordering
 
 ---
 
-## Phase 4: OTEL Integration
+## Phase 2.5: Quality of Life & Bug Fixes → NEXT
+
+**Goal:** Make it daily-driver ready for developers and their agents
+
+### TUI Improvements
+
+**Fix Critical Bugs**
+- Fix newline rendering (progress bars, multi-line output currently garbled)
+- Remove 5-minute log window (show all logs up to retention limit)
+- Fix any other rendering issues discovered during testing
+
+**UX Enhancements**
+- **Tab ordering:**
+  - Group 1: `running-man` logs (internal)
+  - Group 2: Docker services (alphabetical)
+  - Group 3: Processes (config file order, or alphabetical)
+- **Color-coded tab groups** for easier visual navigation
+- **Scroll controls:** Page up/down with arrow keys
+- **Text search:** `/` or Ctrl+F to search current view
+
+### Process Management
+
+**Restart on Crash**
+- Add `restart_on_crash: true/false` config option (per-process)
+- Default: `false` (to be decided after testing)
+- Document behavior and limitations
+- Test with real-world crash scenarios
+
+### OpenAPI Documentation
+
+**Auto-Generated API Docs**
+- Add annotations to API handlers for OpenAPI spec generation
+- Generate OpenAPI 3.0 spec
+- Host spec viewer (Swagger UI or similar)
+- Keep markdown docs for quick reference
+
+### User Feedback Integration
+
+**Testing Period:** 1-2 weeks  
+**Testers:** 3-5 developers using in daily workflow
+
+**Feedback Collection:**
+- GitHub issues for bugs (with template)
+- Direct reports for UX issues
+- Feature requests with use cases
+
+**Success Criteria:** 
+- TUI is usable for daily development work
+- No showstopper bugs
+- Logs are readable and accessible
+- Developer can use Running Man instead of juggling terminal tabs
+
+---
+
+## Phase 3: Agent Integration
+
+**Goal:** Make Running Man a first-class tool for AI-assisted development
+
+### Target Integrations
+
+**Primary:**
+- Claude Code
+- OpenCode
+
+**Approach:** Start with skills-based REST API, add MCP server if needed after testing
+
+### Skills Framework
+
+**Concept:** Reusable debugging patterns agents can invoke
+
+**Implementation:**
+- `POST /skills/{skill_name}` endpoint
+- YAML skill definitions (user-extendable)
+- Skill discovery: `GET /skills` lists available skills
+- JSON request/response format
+
+**Example Skills:**
+```yaml
+# skills/recent_errors.yml
+name: recent_errors
+description: Get recent errors with surrounding context
+parameters:
+  - name: since
+    type: duration
+    default: "5m"
+  - name: context_lines
+    type: int
+    default: 10
+    
+# Returns: errors + N lines before/after each
+```
+
+**Built-in Skills (examples):**
+- `recent_errors` - Last N errors with surrounding log context
+- `trace_request` - Follow a request through all services (pre-OTEL version)
+- `startup_failures` - Logs from process startup phase
+- `container_issues` - Docker container errors and restarts
+- `diff_since` - What changed in logs since last query
+
+### Agent-Friendly Endpoints
+
+**Context Endpoints:**
+- `GET /context/errors` - Recent errors + stack traces + surrounding logs
+- `GET /context/startup` - All logs from process startup
+- `GET /context/source/{name}` - Complete log history for a source
+- `GET /context/trace/{trace_id}` - Everything related to a trace (prep for Phase 4)
+
+**Search Endpoint:**
+- `POST /search` - Flexible search with semantic queries (stretch goal)
+- Falls back to content search if semantic not implemented
+
+### Integration Guides
+
+**Documentation:**
+- How to query Running Man from Claude Code
+- How to query Running Man from OpenCode
+- Common debugging workflows
+- Example prompts for agents
+- Skills development guide (how to create custom skills)
+
+**Agent Patterns:**
+- "Show me recent errors" → `POST /skills/recent_errors`
+- "Why won't the server start?" → `GET /context/startup?source=backend`
+- "What happened to the database?" → `GET /context/source/postgres`
+
+### MCP Server (Optional)
+
+**If needed after testing:**
+- Implement MCP server for Claude Code integration
+- Tools: `search_logs`, `get_errors`, `get_process_status`, `restart_process`
+- Auto-discovery of Running Man instances
+- Documentation for setup
+
+### User Feedback Integration
+
+**Testing Period:** 2 weeks of daily usage with agent-assisted workflows
+
+**Metrics:**
+- Time saved vs manual log searching
+- Number of successful agent-driven debugs
+- Frequency of manual fallback
+
+**Success Criteria:**
+- Agents can debug common errors (startup failures, API errors, crashes) without manual log gathering
+- Skills cover 80% of debugging workflows
+- Integration is seamless (minimal setup)
+
+---
+
+## Phase 4: OTEL & Visualization
 
 **Goal:** Add distributed tracing support for instrumented applications
 
-### Deliverables
+### OTEL Integration
 
-1. **OTLP Receiver**
-   - gRPC endpoint (default :4317)
-   - HTTP endpoint (default :4318)
-   - Span ingestion and parsing
-   - Extract trace_id, span_id, parent_span_id, attributes
+**OTLP Receiver:**
+- gRPC endpoint (default `:4317`)
+- HTTP endpoint (default `:4318`)
+- Span ingestion and parsing
+- Extract: trace_id, span_id, parent_span_id, duration, status, attributes
 
-2. **Span Storage**
-   - Store spans in ring buffer with trace indexing
-   - Support nested span relationships
-   - Extract workflow_id from custom attributes
-   - Link spans to log entries via trace_id
+**Span Storage:**
+- Store spans in ring buffer with trace indexing
+- Support nested span relationships (parent/child)
+- Extract workflow_id from custom attributes
+- Link spans to log entries via trace_id
 
-3. **Trace Query API**
-   ```
-   GET /traces
-     ?trace_id=abc123        # specific trace
-     ?workflow_id=xyz        # all spans for workflow
-     ?since=5m              # time window
-     ?status=error          # only errors
-     ?min_duration=100ms    # slow spans
-   ```
+**Trace Correlation:**
+- Match log entries to spans via trace_id
+- Return correlated logs with trace queries
+- Support custom attributes for workflow tracking
+- Cross-reference errors with slow spans
 
-4. **Trace Correlation**
-   - Match log entries to spans via trace_id
-   - Return correlated logs with trace queries
-   - Support custom attributes for workflow tracking
+### Trace Query API
 
-5. **Minimal Instrumentation Guide**
-   - Python SDK setup (OpenTelemetry)
-   - Node.js SDK setup
-   - Header-based trace propagation (X-Trace-ID)
-   - Example: FastAPI/Flask middleware
-   - Example: Express middleware
+**Endpoints:**
+```
+GET /traces
+  ?trace_id=abc123        # specific trace
+  ?workflow_id=xyz        # all spans for workflow
+  ?since=5m              # time window
+  ?status=error          # only errors
+  ?min_duration=100ms    # slow spans
 
-### Success Criteria
+GET /traces/{trace_id}/logs
+  # All logs correlated with this trace
+```
 
-- Receives OTLP spans from instrumented apps
-- Can query full trace trees
-- Correlates logs with traces
-- Workflow ID tracking works for multi-step flows
+### Visualization
 
-### Estimated Effort: 3 weeks
+**Basic Trace Viewer:**
+- Flamegraph or waterfall view
+- Span timeline with duration
+- Error highlighting
+- Click to see span details + correlated logs
 
----
+**Log Timeline:**
+- Visual timeline of log events
+- Correlation with trace spans
+- Error clustering
 
-## Phase 5: Polish & Production-Ready
+**Optional Exports:**
+- Export traces to Jaeger/Zipkin format
+- Download trace as JSON
 
-**Goal:** Improve UX, add nice-to-have features, make it production-quality
+### Instrumentation Guide
 
-### Deliverables
+**Minimal Setup:**
+- Python SDK setup (OpenTelemetry)
+- Node.js SDK setup
+- Go SDK setup
+- Header-based trace propagation (X-Trace-ID)
 
-1. **WebSocket Streaming**
-   ```
-   WS /stream
-     ?sources=backend,frontend
-     ?levels=error,warn
-   ```
-   - Live tail for real-time debugging
-   - Efficient binary protocol or JSON lines
-   - Reconnect handling
+**Examples:**
+- FastAPI/Flask middleware
+- Express middleware
+- Go net/http middleware
 
-2. **SQLite Persistence** (optional flag)
-   ```bash
-   running-man run --persist ./running-man.db -- python server.py
-   ```
-   - Survives restarts
-   - Query historical data across sessions
-   - Configurable retention policy
+### User Feedback Integration
 
-3. **Enhanced Error Detection**
-   - JavaScript/TypeScript stack traces
-   - Go panic detection
-   - Rust panic detection
-   - SQL error patterns
-   - Custom regex patterns via config
+**Testing:** Real microservices architectures with 3+ services
 
-4. **Agent Integration Helpers**
-   - Standardized "context dump" endpoint
-   - GET /context?scenario=startup-failure
-   - Returns everything relevant for common debugging scenarios
-   - Markdown-formatted output option for LLM consumption
-
-5. **Observability & Debugging**
-   - Prometheus metrics endpoint
-   - Internal diagnostics (buffer usage, drop rate)
-   - Verbose logging mode for troubleshooting the running man itself
-
-6. **Cross-Platform Support**
-   - Test on macOS, Linux, Windows
-   - Handle platform-specific process signals
-   - Docker compatibility on all platforms
-
-7. **Documentation & Examples**
-   - Quick start guide
-   - Integration examples (Django, FastAPI, Express, Next.js)
-   - Agent query patterns
-   - Troubleshooting guide
-
-### Success Criteria
-
-- Can stream logs in real-time
-- Persistence works reliably
-- Detects errors in major languages
-- Full documentation and examples
-- Works on all major platforms
-
-### Estimated Effort: 3-4 weeks
+**Success Criteria:**
+- Can trace requests across multiple services
+- Correlation with logs works reliably
+- Visualization is useful for debugging
 
 ---
 
-## Technology Choices
+## Phase 5: Browser Integration
 
-### Core Stack
+**Goal:** Full-stack observability (frontend + backend)
 
-- **Language:** Go
-  - Fast, easy concurrency (goroutines for stream capture)
-  - Simple cross-compilation for macOS/Linux/Windows
-  - Good libraries for process management, HTTP, Docker
+### Browser SDK
 
-- **HTTP Framework:** chi or standard library
-  - Lightweight, minimal dependencies
-  - Good enough for local dev tool
+**npm Package:** `@running-man/browser`
 
-- **OTEL:** go.opentelemetry.io/collector components
-  - Official OTLP receiver implementation
-  - Or build minimal custom receiver (fewer deps)
+**Features:**
+- Console hook (`console.log/warn/error/debug`)
+- Uncaught exception handler (`window.onerror`)
+- Unhandled promise rejection handler
+- Optional `fetch`/`XHR` interceptor for failed requests
+- Auto-batching (configurable: N entries or M milliseconds)
+- Trace ID propagation
+- Minimal footprint (~2KB minified)
 
+**Integration:**
+```javascript
+// Only loads in development
+if (import.meta.env.DEV) {
+  import('@running-man/browser').then(sdk => 
+    sdk.init({ endpoint: 'http://localhost:9000' })
+  )
+}
+```
+
+### Ingest Endpoint
+
+```
+POST /ingest/browser
+  - Accepts batched log entries
+  - Parses and stores in ring buffer
+  - Tags with source="browser"
+  - Extracts trace_id for correlation
+```
+
+**Entry Schema:**
+```json
+{
+  "timestamp": "2024-01-15T10:30:00Z",
+  "type": "console" | "network" | "error",
+  "level": "log" | "warn" | "error" | "debug",
+  "message": "TypeError: Cannot read property 'foo'",
+  "stack": "...",
+  "url": "http://localhost:5173/dashboard",
+  "trace_id": "abc123"
+}
+```
+
+### Browser Query API
+
+```
+GET /browser
+  ?since=30s
+  ?level=error,warn
+  ?type=console,network,error
+  ?trace_id=abc123
+  ?url=*dashboard*
+```
+
+### Framework Integration
+
+**Documentation:**
+- Vite setup
+- webpack setup
+- Next.js setup
+- React/Vue/Svelte examples
+- Dev-only loading patterns
+
+**SDK Distribution:**
+- npm package
+- Standalone file for copy/paste
+- TypeScript types included
+
+### User Feedback Integration
+
+**Testing:** Real frontend applications
+
+**Metrics:**
+- Performance overhead (<5ms target)
+- Error capture rate (should be 100%)
+- Bundle size impact
+
+**Success Criteria:**
+- Captures all browser errors and console logs
+- Performance impact is negligible
+- Integration is straightforward
+- Works in Chrome, Firefox, Safari
+
+---
+
+## Technology Stack
+
+### Core
+- **Language:** Go (fast, great concurrency, easy distribution)
+- **HTTP Framework:** net/http + chi router
+- **Storage:** In-memory (maps + sync.RWMutex)
+
+### Integrations
 - **Docker:** docker/client library
-  - Official Go client for Docker API
+- **OTEL:** go.opentelemetry.io/collector components (or minimal custom receiver)
+- **YAML:** gopkg.in/yaml.v3
+- **TUI:** Bubble Tea
 
-- **Browser SDK:** Vanilla JavaScript
-  - No framework dependencies
-  - TypeScript for development, compile to ES5
-  - Rollup/esbuild for minification
+### Browser SDK (Phase 5)
+- **Language:** TypeScript → JavaScript (ES5)
+- **Bundler:** Rollup or esbuild
+- **Distribution:** npm + standalone file
 
-- **Storage:** 
-  - Phase 1-4: In-memory (maps + sync.RWMutex)
-  - Phase 5: Optional SQLite via mattn/go-sqlite3
-
-### Dependencies
-
-Keep minimal for fast startup and simple distribution:
-- Docker client (only if --docker-compose used)
-- OTEL collector (only if OTEL enabled)
-- SQLite (only if --persist used)
+### Future (Optional)
+- **Persistence:** SQLite via mattn/go-sqlite3
+- **Metrics:** Prometheus client
 
 ---
 
-## Open Questions & Decisions Needed
+## Dependencies Philosophy
 
-### 1. Process Management Philosophy
+**Keep Minimal:**
+- Docker client (only if `--docker-compose` used)
+- OTEL collector (only if OTEL enabled in Phase 4)
+- SQLite (only if `--persist` flag in future)
 
-**Option A:** Passive observer only
-- The running man captures logs but doesn't restart processes
-- Dev uses their own autoreload tools (nodemon, watchdog, etc.)
-- Simpler implementation, clear responsibilities
-
-**Option B:** Active process supervisor
-- Can restart on crash
-- Configurable restart policies
-- Health checks and alerts
-- More complex but more integrated
-
-**Recommendation:** Start with A (passive), add B in Phase 5 if needed
-
-### 2. Browser SDK Distribution
-
-**Option A:** npm package only
-- Install via `npm install @running-man/browser-client`
-- Standard dependency management
-- Easier updates
-
-**Option B:** Single file for copy/paste
-- No npm dependency
-- Drop file into project
-- Simpler for quick testing
-
-**Option C:** Both
-- npm for most users
-- Standalone file for demos/testing
-
-**Recommendation:** C (both) - implemented in Phase 3
-
-### 3. Configuration Complexity
-
-**Option A:** CLI flags only
-- Simple for common cases
-- Can be verbose for complex setups
-
-**Option B:** YAML config file support
-- Better for multi-process setups
-- Shareable across team
-- Environment variable substitution
-
-**Recommendation:** A for Phase 1-2, add B in Phase 3-4
-
-### 4. API Design Philosophy
-
-**Option A:** Flexible query API
-- Many filter parameters
-- Devs/agents compose queries as needed
-- More powerful but requires learning
-
-**Option B:** Scenario-based endpoints
-- `/context/startup-failure`
-- `/context/request-trace?trace_id=X`
-- Easier for common cases, less flexible
-
-**Recommendation:** A as base, add B shortcuts in Phase 5
-
-### 5. Source Maps for Browser SDK
-
-**Option A:** No source map support
-- Show original minified stack traces
-- Simpler implementation
-- Less accurate for production builds
-
-**Option B:** Automatic source map resolution
-- Fetch and parse source maps
-- Show original file/line numbers
-- Better debugging experience
-- More complex implementation
-
-**Recommendation:** A for Phase 3, consider B for Phase 5 if needed
-
----
-
-## Risk Mitigation
-
-### Performance Impact
-
-**Risk:** Capturing logs adds overhead to dev environment
-
-**Mitigation:**
-- Use buffered I/O for minimal latency
-- Async processing (goroutines)
-- Configurable buffer sizes
-- Drop old entries if buffer full (don't block processes)
-
-### Memory Usage
-
-**Risk:** Long-running dev sessions fill memory
-
-**Mitigation:**
-- Fixed ring buffer size (default 50MB)
-- Time-based eviction (default 30min)
-- Expose /health with memory usage stats
-- Optional disk persistence for longer retention
-
-### Platform Compatibility
-
-**Risk:** Process management differs on Windows
-
-**Mitigation:**
-- Abstract platform-specific code early
-- Test on all platforms in CI
-- Clear docs on platform limitations
-
-### Docker Dependency
-
-**Risk:** Not all devs use Docker
-
-**Mitigation:**
-- Make Docker support optional
-- Clear error if --docker-compose used without Docker
-- Tool works fine without Docker features
-
-### Browser SDK Performance
-
-**Risk:** SDK adds overhead to page load and runtime
-
-**Mitigation:**
-- Async loading (doesn't block rendering)
-- Batching reduces network overhead
-- Configurable sampling for high-traffic scenarios
-- Dev-only by default (tree-shake for production)
+**Goal:** Fast startup, simple binary distribution, minimal bloat
 
 ---
 
 ## Success Metrics
 
-### Phase 1 (MVP)
-- [ ] Successful single-process wrapping
-- [ ] 90%+ accuracy on Python traceback detection
-- [ ] API responds in <100ms for typical queries
-- [ ] Zero-config startup works
+### Overall Project Goal
+**Make AI-assisted debugging significantly faster than manual log gathering**
 
-### Phase 2
-- [ ] Can handle 5+ simultaneous processes
-- [ ] Docker log capture with <5s lag
-- [ ] Source filtering works correctly
+### Phase-Specific Goals
 
-### Phase 3
-- [ ] Browser SDK captures console logs and errors
-- [ ] SDK has <5ms overhead per batch
-- [ ] Trace ID propagation works browser → backend
-- [ ] Works in Chrome, Firefox, Safari
-
-### Phase 4
-- [ ] Receives and stores OTLP spans
-- [ ] Trace query latency <200ms
-- [ ] Correlation works across browser/logs/traces
-
-### Phase 5
-- [ ] Works on macOS, Linux, Windows
-- [ ] 95%+ error detection across major languages
-- [ ] Full documentation with 5+ examples
-- [ ] Agent integration helpers tested with real agents
+**Phase 2.5:** TUI is daily-driver ready, no critical bugs  
+**Phase 3:** Agents can debug 80% of common errors without manual help  
+**Phase 4:** Distributed traces are captured and useful  
+**Phase 5:** Browser errors are captured with minimal overhead  
 
 ---
 
 ## Future Possibilities (Beyond Phase 5)
 
-- **Remote deployment:** Run on remote dev server, query from local
-- **Team collaboration:** Share data across team members
-- **Snapshot/replay:** Capture and replay specific scenarios
-- **Integration with IDEs:** VS Code extension for inline log queries
-- **ML-powered error grouping:** Cluster similar errors automatically
-- **Performance profiling:** CPU/memory traces alongside logs
-- **Log analysis:** Suggest likely root causes based on patterns
-- **Browser performance metrics:** Web Vitals, long tasks, etc.
+- Remote deployment (dev server, query from local)
+- Team collaboration (share Running Man data)
+- Snapshot/replay specific scenarios
+- VS Code extension for inline queries
+- ML-powered error grouping
+- Performance profiling (CPU/memory)
+- Log analysis and root cause suggestions
+- Web Vitals and frontend performance metrics
+
+---
+
+## User Feedback Process
+
+After each phase:
+
+1. **Alpha Testing:** Small group (3-5 developers) uses in daily workflow
+2. **Feedback Collection:** GitHub issues + direct reports
+3. **Iteration:** Fix critical bugs, adjust UX based on real usage
+4. **Sign-off:** Phase complete when success criteria met
+
+See [user-testing.md](user-testing.md) for templates and process details.
 
 ---
 
 ## Getting Started
 
-### Immediate Next Steps
+**Phase 2.5 is next.** See GitHub issues for current work items.
 
-1. **Setup project structure**
-   ```
-   the-running-man/
-     cmd/running-man/main.go
-     internal/
-       wrapper/     # process wrapper
-       parser/      # log parsing
-       storage/     # ring buffer
-       api/         # HTTP handlers
-     browser-sdk/
-       src/         # TypeScript source
-       dist/        # Built JS files
-     go.mod
-     package.json   # For browser SDK build
-   ```
-
-2. **Prototype process wrapper** (Phase 1)
-   - Basic exec with stdout/stderr capture
-   - Terminal passthrough
-   - Signal handling
-
-3. **Build ring buffer** (Phase 1)
-   - In-memory circular buffer
-   - Time and size limits
-   - Concurrent access
-
-4. **Implement /logs endpoint** (Phase 1)
-   - Basic filtering
-   - JSON response format
-
-5. **Add Python traceback parser** (Phase 1)
-   - Regex patterns
-   - Multi-line grouping
-
-### Repository Setup
-
-- [ ] Initialize Go module
-- [ ] Initialize npm package for browser SDK
-- [ ] Setup CI/CD (GitHub Actions)
-  - Lint (golangci-lint for Go, eslint for JS)
-  - Test (Go tests, browser SDK tests)
-  - Build for multiple platforms (Go binaries)
-  - Build and publish npm package
-- [ ] Add README with quick start
-- [ ] Create CONTRIBUTING.md
-- [ ] Add LICENSE (MIT or Apache 2.0)
-
----
-
-## Questions for Discussion
-
-1. **Distribution:** Brew/apt/binary releases, or go install? npm global install?
-2. **Target users:** Solo devs, teams, or both? Affects features.
-3. **Agent integration:** Should we build for specific agents (Claude, Cursor) or generic?
-4. **Pricing/model:** Open source? Commercial? Freemium?
-5. **Browser SDK scope:** Just errors/logs or also performance metrics (Web Vitals)?
-
----
-
-## Conclusion
-
-This plan provides a clear path from MVP to production-quality tool. Phase 1-2 delivers immediate value for backend debugging. Phase 3 adds browser observability, completing full-stack coverage. Phase 4 adds powerful distributed tracing. Phase 5 polishes the experience and ensures reliability.
-
-The key insight: by running outside the application and capturing browser logs too, **the running man** remains available even when the app crashes, providing complete visibility across the entire stack. This makes it invaluable for the hardest debugging scenarios in modern web development.
-
-**Estimated total effort:** 13-16 weeks for full Phase 1-5 implementation (single developer)
-
-**MVP timeline:** 4-5 weeks for Phase 1-2 (immediately useful for backend)
-
-**Full-stack observability:** 6-8 weeks for Phase 1-3 (browser + backend)
+Want to contribute? See [CONTRIBUTING.md](../CONTRIBUTING.md) (TBD)

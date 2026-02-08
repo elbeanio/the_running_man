@@ -28,11 +28,35 @@ running-man run --docker-compose ./docker-compose.yml
 running-man run --process "pytest" --no-tui
 ```
 
+### Configuration File
+
+Create a `running-man.yml` in your project root:
+
+```yaml
+processes:
+  - name: backend
+    command: python server.py
+  - name: frontend
+    command: npm run dev
+
+docker_compose: ./docker-compose.yml
+api_port: 9000
+retention: 30m
+shell: /bin/bash  # optional, defaults to /bin/sh
+```
+
+Then just run:
+```bash
+running-man run  # auto-discovers config
+```
+
+See [running-man.yml.example](running-man.yml.example) for all options.
+
 ### TUI Navigation
 
 - **Tab / →**: Switch to next source
 - **Shift+Tab / ←**: Switch to previous source
-- **q**: Quit TUI (processes keep running)
+- **q**: Quit TUI (stops all processes and exits)
 
 ### Query API
 
@@ -57,13 +81,14 @@ curl http://localhost:9000/health
 
 ## Features
 
-- **Process Management**: Run and monitor multiple processes simultaneously
+- **Process Management**: Run and monitor multiple processes with shell support (cd, &&, pipes)
 - **TUI Log Viewer**: Interactive terminal UI with tab switching between sources
+- **Docker Compose**: Automatically capture logs from all containers
+- **YAML Configuration**: Auto-discovery with CLI flag override support
 - **Smart Parsing**: Detects Python tracebacks, JSON logs, and plain text
 - **Ring Buffer**: Efficient in-memory storage (30min or 50MB default)
 - **Query API**: Filter logs by time, level, source, and content
-- **Docker Compose**: Monitor container logs alongside local processes
-- **Zero Config**: Works out of the box for simple cases
+- **Configurable Shell**: Use bash, zsh, or any shell per process
 
 ## Architecture
 
@@ -78,6 +103,16 @@ the_running_man/
     └── api/                # HTTP query endpoints
 ```
 
+## What's Next
+
+**Phase 2.5 (Current):** Fixing TUI bugs, improving navigation, adding polish
+
+**Phase 3 (Next):** Agent integration - making Running Man queryable by Claude Code and OpenCode for AI-assisted debugging
+
+**Future:** OTEL tracing, browser SDK, and more
+
+See [docs/implementation-plan.md](docs/implementation-plan.md) for the full vision.
+
 ## Development
 
 ```bash
@@ -87,17 +122,30 @@ go build -o running-man ./cmd/running-man
 # Run tests
 go test ./...
 
+# Test coverage
+go test ./... -cover
+
 # Run locally
-./running-man run -- python -m http.server 8080
+./running-man run --process "python -m http.server 8080"
 ```
+
+## Documentation
+
+- [Overview](docs/overview.md) - What is The Running Man and why?
+- [Architecture](docs/architecture.md) - How it works
+- [Implementation Plan](docs/implementation-plan.md) - Roadmap and phases
+- [API Reference](docs/api-reference.md) - REST API documentation
+- [Agent Integration](docs/agent-integration.md) - Using with AI coding assistants (Phase 3)
+- [User Testing](docs/user-testing.md) - How to provide feedback
 
 ## Roadmap
 
-- [x] Phase 1: Core Foundation (MVP)
-- [ ] Phase 2: Multi-Source Capture (Docker, multiple processes)
-- [ ] Phase 3: Browser Log Capture
-- [ ] Phase 4: OTEL Integration
-- [ ] Phase 5: Polish & Production-Ready
+- ✅ **Phase 1:** Core Foundation (COMPLETE)
+- ✅ **Phase 2:** Multi-Source Capture (COMPLETE)
+- → **Phase 2.5:** Quality of Life & Bug Fixes (IN PROGRESS)
+- 📋 **Phase 3:** Agent Integration (Claude Code, OpenCode)
+- 📋 **Phase 4:** OTEL & Visualization
+- 📋 **Phase 5:** Browser Integration
 
 See [docs/implementation-plan.md](docs/implementation-plan.md) for detailed roadmap.
 
