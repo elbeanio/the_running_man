@@ -104,10 +104,67 @@ fi
 kill $PID 2>/dev/null || true
 echo ""
 
-# Test 6: Source filtering via API (PHASE 2.3 - Enhanced Query Filters)
-echo "7. Testing source filtering..."
-echo "⊘ Source filtering not yet implemented (task: the_running_man-1yk)"
-echo "  (Will be available in Enhanced Query Filters feature)"
+# Test 6: Source filtering via API with glob patterns
+echo "7. Testing glob pattern filtering..."
+./running-man run --api-port 9003 \
+    --wrap "echo 'from python'" \
+    --wrap "echo 'from node'" \
+    --wrap "echo 'from test'" \
+    > /dev/null 2>&1 &
+PID=$!
+sleep 2
+
+# Test exact match
+COUNT=$(curl -s "http://localhost:9003/logs?source=echo-from-python" | grep -o '"count":[0-9]*' | cut -d: -f2)
+if [ "$COUNT" -eq 1 ]; then
+    echo "✓ Exact source filtering works"
+else
+    echo "✗ Exact source filtering failed (expected 1, got $COUNT)"
+    kill $PID 2>/dev/null || true
+    exit 1
+fi
+
+# Test glob pattern
+COUNT=$(curl -s "http://localhost:9003/logs?source=echo-from-*" | grep -o '"count":[0-9]*' | cut -d: -f2)
+if [ "$COUNT" -eq 3 ]; then
+    echo "✓ Glob pattern filtering works (echo-from-*)"
+else
+    echo "✗ Glob pattern filtering failed (expected 3, got $COUNT)"
+    kill $PID 2>/dev/null || true
+    exit 1
+fi
+
+# Test exclude filter
+COUNT=$(curl -s "http://localhost:9003/logs?exclude=*test*" | grep -o '"count":[0-9]*' | cut -d: -f2)
+if [ "$COUNT" -eq 2 ]; then
+    echo "✓ Exclude filtering works (exclude=*test*)"
+else
+    echo "✗ Exclude filtering failed (expected 2, got $COUNT)"
+    kill $PID 2>/dev/null || true
+    exit 1
+fi
+
+# Test combined source + exclude
+COUNT=$(curl -s "http://localhost:9003/logs?source=echo-*&exclude=*node*,*test*" | grep -o '"count":[0-9]*' | cut -d: -f2)
+if [ "$COUNT" -eq 1 ]; then
+    echo "✓ Combined source + exclude filtering works"
+else
+    echo "✗ Combined filtering failed (expected 1, got $COUNT)"
+    kill $PID 2>/dev/null || true
+    exit 1
+fi
+
+# Test health endpoint with sources
+HEALTH=$(curl -s http://localhost:9003/health)
+if echo "$HEALTH" | grep -q "sources" && echo "$HEALTH" | grep -q "entry_count"; then
+    echo "✓ Health endpoint includes source statistics"
+else
+    echo "✗ Health endpoint missing source statistics"
+    kill $PID 2>/dev/null || true
+    exit 1
+fi
+
+kill $PID 2>/dev/null || true
 echo ""
 
 # Test 7: Handle mixed success/failure exit codes
@@ -308,6 +365,9 @@ echo "  ✓ Complex command parsing with quotes"
 echo "  ✓ Mixed exit codes handled correctly"
 echo "  ✓ Docker Compose CLI flag accepted"
 echo "  ✓ Docker Compose file parsing works"
+echo "  ✓ Glob pattern filtering (source=python-*)"
+echo "  ✓ Exclude filtering (exclude=test-*)"
+echo "  ✓ Health endpoint with source statistics"
 echo "  ✓ All unit tests passing"
 echo "  ✓ No race conditions detected"
 echo ""
@@ -322,6 +382,11 @@ echo "  ✓ Log streaming from containers"
 echo "  ✓ Container lifecycle events"
 echo "  ✓ Integration testing"
 echo ""
+echo "Phase 2.3 (Enhanced Query Filters): ✓ COMPLETE"
+echo "  ✓ Glob pattern matching for sources"
+echo "  ✓ Exclude filter support"
+echo "  ✓ Combined source + exclude filtering"
+echo "  ✓ Health endpoint with source statistics"
+echo ""
 echo "Remaining Phase 2 features:"
-echo "  ⊘ Enhanced query filters (glob matching, exclude)"
 echo "  ⊘ YAML configuration file support"

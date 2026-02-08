@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -100,16 +101,44 @@ func (rb *RingBuffer) Query(filters QueryFilters) []*parser.LogEntry {
 			}
 		}
 
-		// Filter by source
+		// Filter by source (supports glob patterns)
 		if len(filters.Sources) > 0 {
 			found := false
 			for _, source := range filters.Sources {
+				// Try exact match first (faster)
 				if entry.Source == source {
+					found = true
+					break
+				}
+				// Try glob pattern match
+				matched, err := filepath.Match(source, entry.Source)
+				if err == nil && matched {
 					found = true
 					break
 				}
 			}
 			if !found {
+				continue
+			}
+		}
+
+		// Filter by exclude patterns (supports glob)
+		if len(filters.Exclude) > 0 {
+			excluded := false
+			for _, pattern := range filters.Exclude {
+				// Try exact match first (faster)
+				if entry.Source == pattern {
+					excluded = true
+					break
+				}
+				// Try glob pattern match
+				matched, err := filepath.Match(pattern, entry.Source)
+				if err == nil && matched {
+					excluded = true
+					break
+				}
+			}
+			if excluded {
 				continue
 			}
 		}
@@ -150,6 +179,44 @@ func (rb *RingBuffer) Stats() BufferStats {
 	}
 }
 
+// SourceInfo contains information about a log source
+type SourceInfo struct {
+	Name       string    `json:"name"`
+	EntryCount int       `json:"entry_count"`
+	LastSeen   time.Time `json:"last_seen"`
+}
+
+// GetSources returns all unique sources with their statistics
+func (rb *RingBuffer) GetSources() []SourceInfo {
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
+
+	sourceMap := make(map[string]*SourceInfo)
+
+	for _, entry := range rb.entries {
+		if info, exists := sourceMap[entry.Source]; exists {
+			info.EntryCount++
+			if entry.Timestamp.After(info.LastSeen) {
+				info.LastSeen = entry.Timestamp
+			}
+		} else {
+			sourceMap[entry.Source] = &SourceInfo{
+				Name:       entry.Source,
+				EntryCount: 1,
+				LastSeen:   entry.Timestamp,
+			}
+		}
+	}
+
+	// Convert map to slice
+	sources := make([]SourceInfo, 0, len(sourceMap))
+	for _, info := range sourceMap {
+		sources = append(sources, *info)
+	}
+
+	return sources
+}
+
 func (rb *RingBuffer) oldestEntry() time.Time {
 	if len(rb.entries) == 0 {
 		return time.Time{}
@@ -177,7 +244,8 @@ func (rb *RingBuffer) Clear() {
 type QueryFilters struct {
 	Since      time.Duration
 	Levels     []parser.LogLevel
-	Sources    []string
+	Sources    []string // Supports glob patterns (e.g., "python-*")
+	Exclude    []string // Exclude patterns (supports glob)
 	Contains   string
 	ErrorsOnly bool
 }

@@ -323,3 +323,213 @@ func TestRingBuffer_ThreadSafety(t *testing.T) {
 
 	// If we get here without panicking, thread safety works
 }
+
+func TestRingBuffer_SourceGlobFiltering(t *testing.T) {
+	rb := NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+
+	// Add entries from different sources
+	sources := []string{"python-server", "python-worker", "node-api", "go-service", "test-runner"}
+	for _, source := range sources {
+		rb.Append(&parser.LogEntry{
+			Timestamp: time.Now(),
+			Source:    source,
+			Message:   "log from " + source,
+			Raw:       "log from " + source,
+		})
+	}
+
+	tests := []struct {
+		name     string
+		pattern  string
+		expected int
+	}{
+		{"exact match", "python-server", 1},
+		{"glob all python", "python-*", 2},
+		{"glob all with wildcard", "*-server", 1},
+		{"glob prefix", "go-*", 1},
+		{"glob suffix", "*-runner", 1},
+		{"glob all", "*", 5},
+		{"no match", "java-*", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := rb.Query(QueryFilters{
+				Sources: []string{tt.pattern},
+			})
+
+			if len(result) != tt.expected {
+				t.Errorf("Pattern '%s': expected %d entries, got %d", tt.pattern, tt.expected, len(result))
+			}
+		})
+	}
+}
+
+func TestRingBuffer_MultipleSourceGlobFiltering(t *testing.T) {
+	rb := NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+
+	// Add entries from different sources
+	sources := []string{"python-server", "python-worker", "node-api", "go-service"}
+	for _, source := range sources {
+		rb.Append(&parser.LogEntry{
+			Timestamp: time.Now(),
+			Source:    source,
+			Message:   "log from " + source,
+			Raw:       "log from " + source,
+		})
+	}
+
+	// Query with multiple patterns
+	result := rb.Query(QueryFilters{
+		Sources: []string{"python-*", "go-*"},
+	})
+
+	if len(result) != 3 {
+		t.Errorf("Expected 3 entries (2 python + 1 go), got %d", len(result))
+	}
+}
+
+func TestRingBuffer_ExcludeFiltering(t *testing.T) {
+	rb := NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+
+	// Add entries from different sources
+	sources := []string{"python-server", "python-worker", "test-runner", "test-integration"}
+	for _, source := range sources {
+		rb.Append(&parser.LogEntry{
+			Timestamp: time.Now(),
+			Source:    source,
+			Message:   "log from " + source,
+			Raw:       "log from " + source,
+		})
+	}
+
+	tests := []struct {
+		name     string
+		exclude  []string
+		expected int
+	}{
+		{"exclude exact", []string{"python-server"}, 3},
+		{"exclude glob test", []string{"test-*"}, 2},
+		{"exclude multiple", []string{"test-*", "python-worker"}, 1},
+		{"exclude all", []string{"*"}, 0},
+		{"exclude none matching", []string{"java-*"}, 4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := rb.Query(QueryFilters{
+				Exclude: tt.exclude,
+			})
+
+			if len(result) != tt.expected {
+				t.Errorf("Exclude %v: expected %d entries, got %d", tt.exclude, tt.expected, len(result))
+			}
+		})
+	}
+}
+
+func TestRingBuffer_CombinedSourceAndExclude(t *testing.T) {
+	rb := NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+
+	// Add entries from different sources
+	sources := []string{"python-server", "python-test", "python-worker", "node-api"}
+	for _, source := range sources {
+		rb.Append(&parser.LogEntry{
+			Timestamp: time.Now(),
+			Source:    source,
+			Message:   "log from " + source,
+			Raw:       "log from " + source,
+		})
+	}
+
+	// Query for python-* but exclude test
+	result := rb.Query(QueryFilters{
+		Sources: []string{"python-*"},
+		Exclude: []string{"*-test"},
+	})
+
+	if len(result) != 2 {
+		t.Errorf("Expected 2 entries (python-server, python-worker), got %d", len(result))
+	}
+
+	// Verify the correct entries
+	for _, entry := range result {
+		if entry.Source == "python-test" {
+			t.Errorf("Unexpected entry from python-test (should be excluded)")
+		}
+	}
+}
+
+func TestRingBuffer_GetSources(t *testing.T) {
+	rb := NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+
+	// Add entries from different sources
+	now := time.Now()
+	rb.Append(&parser.LogEntry{
+		Timestamp: now.Add(-2 * time.Minute),
+		Source:    "python-server",
+		Message:   "log 1",
+		Raw:       "log 1",
+	})
+	rb.Append(&parser.LogEntry{
+		Timestamp: now.Add(-1 * time.Minute),
+		Source:    "python-server",
+		Message:   "log 2",
+		Raw:       "log 2",
+	})
+	rb.Append(&parser.LogEntry{
+		Timestamp: now,
+		Source:    "node-api",
+		Message:   "log 3",
+		Raw:       "log 3",
+	})
+
+	sources := rb.GetSources()
+
+	if len(sources) != 2 {
+		t.Errorf("Expected 2 unique sources, got %d", len(sources))
+	}
+
+	// Find python-server source
+	var pythonSource *SourceInfo
+	for i := range sources {
+		if sources[i].Name == "python-server" {
+			pythonSource = &sources[i]
+			break
+		}
+	}
+
+	if pythonSource == nil {
+		t.Fatal("python-server source not found")
+	}
+
+	if pythonSource.EntryCount != 2 {
+		t.Errorf("Expected python-server to have 2 entries, got %d", pythonSource.EntryCount)
+	}
+
+	// LastSeen should be the most recent timestamp
+	if pythonSource.LastSeen.Before(now.Add(-1 * time.Minute)) {
+		t.Errorf("Expected LastSeen to be recent, got %v", pythonSource.LastSeen)
+	}
+}
+
+func TestRingBuffer_InvalidGlobPattern(t *testing.T) {
+	rb := NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+
+	rb.Append(&parser.LogEntry{
+		Timestamp: time.Now(),
+		Source:    "test-source",
+		Message:   "log",
+		Raw:       "log",
+	})
+
+	// Invalid glob pattern (malformed)
+	result := rb.Query(QueryFilters{
+		Sources: []string{"[invalid"},
+	})
+
+	// Should return 0 results (pattern doesn't match anything and is invalid)
+	if len(result) != 0 {
+		t.Errorf("Expected 0 entries for invalid glob pattern, got %d", len(result))
+	}
+}

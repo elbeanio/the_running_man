@@ -79,11 +79,19 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Parse 'source' parameter (comma-separated)
+	// Parse 'source' parameter (comma-separated, supports glob patterns)
 	if sourceStr := r.URL.Query().Get("source"); sourceStr != "" {
 		sources := strings.Split(sourceStr, ",")
 		for _, s := range sources {
 			filters.Sources = append(filters.Sources, strings.TrimSpace(s))
+		}
+	}
+
+	// Parse 'exclude' parameter (comma-separated, supports glob patterns)
+	if excludeStr := r.URL.Query().Get("exclude"); excludeStr != "" {
+		excludes := strings.Split(excludeStr, ",")
+		for _, e := range excludes {
+			filters.Exclude = append(filters.Exclude, strings.TrimSpace(e))
 		}
 	}
 
@@ -128,6 +136,7 @@ func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	stats := s.buffer.Stats()
+	sources := s.buffer.GetSources()
 
 	s.writeJSON(w, map[string]interface{}{
 		"status":         "ok",
@@ -142,6 +151,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"oldest_entry":  stats.OldestEntry,
 			"newest_entry":  stats.NewestEntry,
 		},
+		"sources": sources,
 	})
 }
 
