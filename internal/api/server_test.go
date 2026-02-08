@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -645,8 +646,9 @@ func TestHandleProcessDetail_Success_Running(t *testing.T) {
 	}
 	defer manager.Stop()
 
-	// Give process time to start
-	time.Sleep(100 * time.Millisecond)
+	if err := waitForManagerPIDs(manager, 1*time.Second); err != nil {
+		t.Fatalf("Process didn't start: %v", err)
+	}
 
 	server := NewServer(buffer, 9000, nil, manager)
 
@@ -740,7 +742,9 @@ func TestHandleProcessDetail_NotFound(t *testing.T) {
 	}
 	defer manager.Stop()
 
-	time.Sleep(100 * time.Millisecond)
+	if err := waitForManagerPIDs(manager, 1*time.Second); err != nil {
+		t.Fatalf("Processes didn't start: %v", err)
+	}
 
 	server := NewServer(buffer, 9000, nil, manager)
 
@@ -794,4 +798,26 @@ func TestHandleProcessDetail_WhitespaceOnly(t *testing.T) {
 	if errMsg, ok := response["error"].(string); !ok || errMsg != "Process name required" {
 		t.Errorf("Expected 'Process name required' error, got: %v", response["error"])
 	}
+}
+
+// Test helper for polling
+
+// waitForManagerPIDs waits for all processes in manager to have PIDs
+func waitForManagerPIDs(m *process.Manager, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		infos := m.ListProcesses()
+		allStarted := true
+		for _, info := range infos {
+			if info.PID <= 0 {
+				allStarted = false
+				break
+			}
+		}
+		if allStarted {
+			return nil
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return fmt.Errorf("timeout waiting for all processes to start")
 }

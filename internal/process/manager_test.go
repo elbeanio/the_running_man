@@ -1,6 +1,7 @@
 package process
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -100,8 +101,9 @@ func TestManager_Stop(t *testing.T) {
 		t.Fatalf("Failed to start processes: %v", err)
 	}
 
-	// Give processes time to start
-	time.Sleep(100 * time.Millisecond)
+	if err := waitForManagerPIDs(manager, 1*time.Second); err != nil {
+		t.Fatalf("Processes didn't start: %v", err)
+	}
 
 	// Stop all processes
 	if err := manager.Stop(); err != nil {
@@ -164,12 +166,18 @@ func TestManager_Restart(t *testing.T) {
 		t.Fatalf("Restart failed: %v", err)
 	}
 
-	// Wait for restart to complete
-	time.Sleep(200 * time.Millisecond)
-
-	mu.Lock()
-	secondCount := restartCount
-	mu.Unlock()
+	// Wait for restart to complete (poll for count to increase)
+	deadline := time.Now().Add(1 * time.Second)
+	var secondCount int
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		secondCount = restartCount
+		mu.Unlock()
+		if secondCount > firstCount {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	if secondCount <= firstCount {
 		t.Errorf("Restart should have increased count from %d to %d", firstCount, secondCount)
@@ -272,19 +280,21 @@ func TestGetProcess_Found_Running(t *testing.T) {
 		{Name: "test-sleep", Command: "sleep", Args: []string{"5"}},
 	}
 	manager := NewManager(configs, nil)
-	
+
 	if err := manager.Start(); err != nil {
 		t.Fatalf("Failed to start manager: %v", err)
 	}
 	defer manager.Stop()
-	
-	time.Sleep(100 * time.Millisecond) // Let process start
-	
+
+	if err := waitForManagerPIDs(manager, 1*time.Second); err != nil {
+		t.Fatalf("Process didn't start: %v", err)
+	}
+
 	info, err := manager.GetProcess("test-sleep")
 	if err != nil {
 		t.Fatalf("GetProcess failed: %v", err)
 	}
-	
+
 	if info.Name != "test-sleep" {
 		t.Errorf("Expected name 'test-sleep', got '%s'", info.Name)
 	}
@@ -304,19 +314,19 @@ func TestGetProcess_Found_Stopped(t *testing.T) {
 		{Name: "test-echo", Command: "echo", Args: []string{"test"}},
 	}
 	manager := NewManager(configs, nil)
-	
+
 	if err := manager.Start(); err != nil {
 		t.Fatalf("Failed to start manager: %v", err)
 	}
 	defer manager.Stop()
-	
+
 	manager.Wait() // Wait for completion
-	
+
 	info, err := manager.GetProcess("test-echo")
 	if err != nil {
 		t.Fatalf("GetProcess failed: %v", err)
 	}
-	
+
 	if info.Status != "stopped" {
 		t.Errorf("Expected status 'stopped', got '%s'", info.Status)
 	}
@@ -330,17 +340,17 @@ func TestGetProcess_NotFound(t *testing.T) {
 		{Name: "existing", Command: "echo", Args: []string{"test"}},
 	}
 	manager := NewManager(configs, nil)
-	
+
 	if err := manager.Start(); err != nil {
 		t.Fatalf("Failed to start manager: %v", err)
 	}
 	defer manager.Stop()
-	
+
 	_, err := manager.GetProcess("nonexistent")
 	if err == nil {
 		t.Fatal("Expected error for nonexistent process, got nil")
 	}
-	
+
 	if !strings.Contains(err.Error(), "not found") {
 		t.Errorf("Expected 'not found' in error, got: %v", err)
 	}
@@ -352,21 +362,25 @@ func TestListProcesses_ExitCodeAlwaysPresent(t *testing.T) {
 		{Name: "stopped-proc", Command: "echo", Args: []string{"done"}},
 	}
 	manager := NewManager(configs, nil)
-	
+
 	if err := manager.Start(); err != nil {
 		t.Fatalf("Failed to start manager: %v", err)
 	}
 	defer manager.Stop()
-	
-	// Wait a bit for processes to settle
-	time.Sleep(200 * time.Millisecond)
-	
+
+	if err := waitForManagerPIDs(manager, 1*time.Second); err != nil {
+		t.Fatalf("Processes didn't start: %v", err)
+	}
+
+	// Give echo time to complete (it exits immediately)
+	time.Sleep(50 * time.Millisecond)
+
 	infos := manager.ListProcesses()
-	
+
 	if len(infos) != 2 {
 		t.Fatalf("Expected 2 processes, got %d", len(infos))
 	}
-	
+
 	// Verify all have exit_code field (even if running)
 	for _, info := range infos {
 		// Running processes should have exit_code=-1
@@ -378,4 +392,30 @@ func TestListProcesses_ExitCodeAlwaysPresent(t *testing.T) {
 			t.Errorf("Process %s is stopped but exit_code is %d, expected 0", info.Name, info.ExitCode)
 		}
 	}
+}
+
+// Test helper functions for polling instead of sleeping
+
+// waitForPID polls until the process has a valid PID or times out
+
+// Test helper functions for polling instead of sleeping
+
+// waitForManagerPIDs waits for all processes in manager to have PIDs
+func waitForManagerPIDs(m *Manager, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		infos := m.ListProcesses()
+		allStarted := true
+		for _, info := range infos {
+			if info.PID <= 0 {
+				allStarted = false
+				break
+			}
+		}
+		if allStarted {
+			return nil
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return fmt.Errorf("timeout waiting for all processes to start")
 }
