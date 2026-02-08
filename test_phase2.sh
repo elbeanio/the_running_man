@@ -202,8 +202,46 @@ else
 fi
 echo ""
 
-# Test 12: Run tests with race detector
-echo "13. Running race detector..."
+# Test 12: Docker CLI flag validation
+echo "13. Testing --docker-compose CLI flag..."
+# Test that flag is accepted (even though Docker integration isn't complete)
+./running-man run --wrap "echo test" --docker-compose ./nonexistent.yml > /tmp/docker-cli-test.log 2>&1 &
+PID=$!
+sleep 2
+kill $PID 2>/dev/null || true
+
+if grep -q "Docker Compose: ./nonexistent.yml" /tmp/docker-cli-test.log; then
+    echo "✓ --docker-compose flag accepted"
+else
+    echo "✗ --docker-compose flag not working"
+    cat /tmp/docker-cli-test.log
+    exit 1
+fi
+echo ""
+
+# Test 13: Validate at least one source required
+echo "14. Testing source validation..."
+if ./running-man run 2>&1 | grep -q "At least one --wrap flag or --docker-compose is required"; then
+    echo "✓ Source validation works (requires --wrap or --docker-compose)"
+else
+    echo "✗ Source validation failed"
+    exit 1
+fi
+echo ""
+
+# Test 14: Docker compose file parsing (via unit tests)
+echo "15. Testing compose file parsing..."
+if go test ./internal/docker -run TestParseComposeFile > /dev/null 2>&1; then
+    echo "✓ Compose file parsing works (unit tests pass)"
+else
+    echo "✗ Compose file parsing failed"
+    go test ./internal/docker -run TestParseComposeFile
+    exit 1
+fi
+echo ""
+
+# Test 15: Run tests with race detector
+echo "16. Running race detector..."
 if go test -race ./internal/wrapper > /dev/null 2>&1; then
     echo "✓ Race detector passes (no data races)"
 else
@@ -217,16 +255,26 @@ echo ""
 echo "Summary:"
 echo "  ✓ Can handle 5+ simultaneous processes"
 echo "  ✓ Processes execute in parallel (Manager)"
-echo "  ✓ Terminal output aggregation works"
+echo "  ✓ Terminal output aggregation with prefixes"
 echo "  ✓ Source tagging with unique names"
 echo "  ✓ Complex command parsing with quotes"
 echo "  ✓ Mixed exit codes handled correctly"
+echo "  ✓ Docker Compose CLI flag accepted"
+echo "  ✓ Docker Compose file parsing works"
 echo "  ✓ All unit tests passing"
 echo "  ✓ No race conditions detected"
 echo ""
-echo "Remaining Phase 2 tasks:"
-echo "  ⊘ Enhanced query filters (glob matching, exclude)"
-echo "  ⊘ Docker Compose integration"
-echo "  ⊘ YAML configuration file support"
+echo "Phase 2.1 (Multi-Process Support): ✓ COMPLETE"
 echo ""
-echo "Phase 2.1 (Multi-Process Support) is complete!"
+echo "Phase 2.2 (Docker Compose Integration): In Progress"
+echo "  ✓ Docker client library"
+echo "  ✓ CLI flag (--docker-compose)"
+echo "  ✓ Compose file parsing"
+echo "  ⊘ Container discovery via Docker API"
+echo "  ⊘ Log streaming from containers"
+echo "  ⊘ Container lifecycle events"
+echo "  ⊘ Integration testing"
+echo ""
+echo "Remaining Phase 2 features:"
+echo "  ⊘ Enhanced query filters (glob matching, exclude)"
+echo "  ⊘ YAML configuration file support"
