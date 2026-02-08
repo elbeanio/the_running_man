@@ -22,6 +22,21 @@ const (
 // LineHandler is called when a log line is captured
 type LineHandler func(source string, line string, timestamp time.Time, isStderr bool)
 
+// validateProcessName validates and sanitizes a process name
+func validateProcessName(name string) (string, error) {
+	processName := strings.TrimSpace(name)
+	if processName == "" {
+		return "", fmt.Errorf("Process name required")
+	}
+	if strings.Contains(processName, "/") || strings.Contains(processName, "..") {
+		return "", fmt.Errorf("Invalid process name")
+	}
+	if len(processName) > maxProcessNameLength {
+		return "", fmt.Errorf("Process name too long")
+	}
+	return processName, nil
+}
+
 // Server provides the HTTP API for querying logs
 type Server struct {
 	buffer      *storage.RingBuffer
@@ -86,7 +101,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/logs", s.handleLogs)
 	mux.HandleFunc("/errors", s.handleErrors)
 	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/processes/", s.handleProcessDetail) // Must come before /processes
+	mux.HandleFunc("/processes/", s.handleProcessOrRestart) // Handles both GET /processes/{name} and POST /processes/{name}/restart
 	mux.HandleFunc("/processes", s.handleProcesses)
 
 	addr := fmt.Sprintf(":%d", s.port)
@@ -98,7 +113,7 @@ func (s *Server) Start() error {
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
 		if r.Method == "OPTIONS" {
@@ -256,26 +271,37 @@ func (s *Server) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleProcessDetail(w http.ResponseWriter, r *http.Request) {
-	// Extract process name from URL path: /processes/{name}
+func (s *Server) handleProcessOrRestart(w http.ResponseWriter, r *http.Request) {
+	// Extract path after /processes/
 	path := strings.TrimPrefix(r.URL.Path, "/processes/")
 	if path == "" || path == r.URL.Path {
 		s.writeError(w, http.StatusBadRequest, "Process name required")
 		return
 	}
 
-	// Sanitize process name: prevent path traversal and limit length
-	processName := strings.TrimSpace(path)
-	if processName == "" {
-		s.writeError(w, http.StatusBadRequest, "Process name required")
+	// Check if this is a restart request: /processes/{name}/restart
+	if strings.HasSuffix(path, "/restart") {
+		if r.Method != http.MethodPost {
+			s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed, use POST")
+			return
+		}
+		s.handleProcessRestart(w, r, path)
 		return
 	}
-	if strings.Contains(processName, "/") || strings.Contains(processName, "..") {
-		s.writeError(w, http.StatusBadRequest, "Invalid process name")
+
+	// Otherwise, handle GET /processes/{name}
+	if r.Method != http.MethodGet {
+		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed, use GET")
 		return
 	}
-	if len(processName) > maxProcessNameLength {
-		s.writeError(w, http.StatusBadRequest, "Process name too long")
+	s.handleProcessDetail(w, r, path)
+}
+
+func (s *Server) handleProcessDetail(w http.ResponseWriter, r *http.Request, path string) {
+	// Validate and sanitize process name
+	processName, err := validateProcessName(path)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -297,4 +323,49 @@ func (s *Server) handleProcessDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, info)
+}
+
+func (s *Server) handleProcessRestart(w http.ResponseWriter, r *http.Request, path string) {
+	// Extract process name from path (remove /restart suffix) and validate
+	processNamePath := strings.TrimSuffix(path, "/restart")
+	processName, err := validateProcessName(processNamePath)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Check manager availability after input validation
+	if s.manager == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "Process manager not available")
+		return
+	}
+
+	// Restart the process
+	if err := s.manager.Restart(processName); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			names := s.manager.ProcessNames()
+			s.writeError(w, http.StatusNotFound,
+				fmt.Sprintf("Process '%s' not found. Available: %s",
+					processName, strings.Join(names, ", ")))
+		} else {
+			s.writeError(w, http.StatusInternalServerError,
+				fmt.Sprintf("Failed to restart process: %v", err))
+		}
+		return
+	}
+
+	// Get updated process info after restart
+	info, err := s.manager.GetProcess(processName)
+	if err != nil {
+		// Process was restarted but we can't get info (rare)
+		s.writeJSON(w, map[string]interface{}{
+			"message": fmt.Sprintf("Process '%s' restarted successfully", processName),
+		})
+		return
+	}
+
+	s.writeJSON(w, map[string]interface{}{
+		"message": fmt.Sprintf("Process '%s' restarted successfully", processName),
+		"process": info,
+	})
 }

@@ -522,7 +522,7 @@ func TestHandleProcessDetail_InvalidName_Slash(t *testing.T) {
 	req := httptest.NewRequest("GET", "/processes/foo/bar", nil)
 	w := httptest.NewRecorder()
 
-	server.handleProcessDetail(w, req)
+	server.handleProcessOrRestart(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("Expected status 400, got %d", w.Code)
@@ -545,7 +545,7 @@ func TestHandleProcessDetail_InvalidName_DotDot(t *testing.T) {
 	req := httptest.NewRequest("GET", "/processes/../etc/passwd", nil)
 	w := httptest.NewRecorder()
 
-	server.handleProcessDetail(w, req)
+	server.handleProcessOrRestart(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("Expected status 400, got %d", w.Code)
@@ -569,7 +569,7 @@ func TestHandleProcessDetail_TooLong(t *testing.T) {
 	req := httptest.NewRequest("GET", "/processes/"+longName, nil)
 	w := httptest.NewRecorder()
 
-	server.handleProcessDetail(w, req)
+	server.handleProcessOrRestart(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("Expected status 400, got %d", w.Code)
@@ -592,7 +592,7 @@ func TestHandleProcessDetail_EmptyName(t *testing.T) {
 	req := httptest.NewRequest("GET", "/processes/", nil)
 	w := httptest.NewRecorder()
 
-	server.handleProcessDetail(w, req)
+	server.handleProcessOrRestart(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("Expected status 400, got %d", w.Code)
@@ -615,7 +615,7 @@ func TestHandleProcessDetail_NoManager(t *testing.T) {
 	req := httptest.NewRequest("GET", "/processes/any-name", nil)
 	w := httptest.NewRecorder()
 
-	server.handleProcessDetail(w, req)
+	server.handleProcessOrRestart(w, req)
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("Expected status 503, got %d", w.Code)
@@ -655,7 +655,7 @@ func TestHandleProcessDetail_Success_Running(t *testing.T) {
 	req := httptest.NewRequest("GET", "/processes/test-sleep", nil)
 	w := httptest.NewRecorder()
 
-	server.handleProcessDetail(w, req)
+	server.handleProcessOrRestart(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", w.Code)
@@ -705,7 +705,7 @@ func TestHandleProcessDetail_Success_Stopped(t *testing.T) {
 	req := httptest.NewRequest("GET", "/processes/test-echo", nil)
 	w := httptest.NewRecorder()
 
-	server.handleProcessDetail(w, req)
+	server.handleProcessOrRestart(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", w.Code)
@@ -751,7 +751,7 @@ func TestHandleProcessDetail_NotFound(t *testing.T) {
 	req := httptest.NewRequest("GET", "/processes/nonexistent", nil)
 	w := httptest.NewRecorder()
 
-	server.handleProcessDetail(w, req)
+	server.handleProcessOrRestart(w, req)
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("Expected status 404, got %d", w.Code)
@@ -784,7 +784,7 @@ func TestHandleProcessDetail_WhitespaceOnly(t *testing.T) {
 	req := httptest.NewRequest("GET", "/processes/%20%20%20", nil)
 	w := httptest.NewRecorder()
 
-	server.handleProcessDetail(w, req)
+	server.handleProcessOrRestart(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("Expected status 400, got %d", w.Code)
@@ -820,4 +820,143 @@ func waitForManagerPIDs(m *process.Manager, timeout time.Duration) error {
 		time.Sleep(5 * time.Millisecond)
 	}
 	return fmt.Errorf("timeout waiting for all processes to start")
+}
+
+// Tests for POST /processes/{name}/restart
+
+func TestHandleProcessRestart_Success(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	
+	configs := []process.ProcessConfig{
+		{Name: "test-echo", Command: "echo", Args: []string{"test"}},
+	}
+	manager := process.NewManager(configs, nil)
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start manager: %v", err)
+	}
+	defer manager.Stop()
+	
+	if err := waitForManagerPIDs(manager, 1*time.Second); err != nil {
+		t.Fatalf("Process didn't start: %v", err)
+	}
+	
+	server := NewServer(buffer, 9000, nil, manager)
+	
+	// Get original PID
+	info1, _ := manager.GetProcess("test-echo")
+	originalPID := info1.PID
+	
+	// Restart the process
+	req := httptest.NewRequest("POST", "/processes/test-echo/restart", nil)
+	w := httptest.NewRecorder()
+	
+	server.handleProcessOrRestart(w, req)
+	
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+	
+	var response map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	
+	// Check response has message and process
+	if msg, ok := response["message"].(string); !ok || !strings.Contains(msg, "restarted successfully") {
+		t.Errorf("Expected success message, got: %v", response["message"])
+	}
+	
+	processData, ok := response["process"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected 'process' field in response")
+	}
+	
+	// Wait a bit for restart to complete
+	time.Sleep(50 * time.Millisecond)
+	
+	// Verify PID changed
+	info2, _ := manager.GetProcess("test-echo")
+	newPID := info2.PID
+	
+	if newPID == originalPID {
+		t.Errorf("PID should have changed after restart, was %d, still %d", originalPID, newPID)
+	}
+	
+	// Verify process info in response
+	if name, ok := processData["name"].(string); !ok || name != "test-echo" {
+		t.Errorf("Expected process name 'test-echo', got %v", processData["name"])
+	}
+}
+
+func TestHandleProcessRestart_NotFound(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	
+	configs := []process.ProcessConfig{
+		{Name: "existing", Command: "sleep", Args: []string{"10"}},
+	}
+	manager := process.NewManager(configs, nil)
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start manager: %v", err)
+	}
+	defer manager.Stop()
+	
+	server := NewServer(buffer, 9000, nil, manager)
+	
+	req := httptest.NewRequest("POST", "/processes/nonexistent/restart", nil)
+	w := httptest.NewRecorder()
+	
+	server.handleProcessOrRestart(w, req)
+	
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d", w.Code)
+	}
+	
+	var response map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	
+	errMsg, ok := response["error"].(string)
+	if !ok || !strings.Contains(errMsg, "not found") {
+		t.Errorf("Expected 'not found' error, got: %v", response["error"])
+	}
+}
+
+func TestHandleProcessRestart_WrongMethod(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	
+	configs := []process.ProcessConfig{
+		{Name: "test-proc", Command: "sleep", Args: []string{"10"}},
+	}
+	manager := process.NewManager(configs, nil)
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start manager: %v", err)
+	}
+	defer manager.Stop()
+	
+	server := NewServer(buffer, 9000, nil, manager)
+	
+	// Try GET on restart endpoint
+	req := httptest.NewRequest("GET", "/processes/test-proc/restart", nil)
+	w := httptest.NewRecorder()
+	
+	server.handleProcessOrRestart(w, req)
+	
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status 405, got %d", w.Code)
+	}
+}
+
+func TestHandleProcessRestart_NoManager(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	server := NewServer(buffer, 9000, nil, nil) // nil manager
+	
+	req := httptest.NewRequest("POST", "/processes/any-proc/restart", nil)
+	w := httptest.NewRecorder()
+	
+	server.handleProcessOrRestart(w, req)
+	
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("Expected status 503, got %d", w.Code)
+	}
 }
