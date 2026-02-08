@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/iangeorge/the_running_man/internal/process"
 )
 
 const defaultPollInterval = 2 * time.Second
@@ -24,6 +25,7 @@ type model struct {
 	err            error
 	width          int
 	height         int
+	manager        *process.Manager // Process manager to stop on quit
 }
 
 type logEntry struct {
@@ -56,7 +58,7 @@ type tickMsg time.Time
 
 func (e errMsg) Error() string { return e.err.Error() }
 
-func initialModel(apiURL string) model {
+func initialModel(apiURL string, manager *process.Manager) model {
 	return model{
 		apiURL:         apiURL,
 		sources:        []string{},
@@ -64,6 +66,7 @@ func initialModel(apiURL string) model {
 		logs:           []logEntry{},
 		width:          80,
 		height:         24,
+		manager:        manager,
 	}
 }
 
@@ -79,6 +82,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
+			// Just quit - main.go will handle cleanup
 			return m, tea.Quit
 
 		case "tab", "right":
@@ -291,6 +295,10 @@ var (
 )
 
 func tuiCommand(args []string) {
+	tuiCommandWithManager(args, nil)
+}
+
+func tuiCommandWithManager(args []string, manager *process.Manager) {
 	// Parse flags
 	fs := flag.NewFlagSet("tui", flag.ExitOnError)
 	apiPort := fs.Int("api-port", defaultAPIPort, "API server port")
@@ -299,7 +307,7 @@ func tuiCommand(args []string) {
 	apiURL := fmt.Sprintf("http://localhost:%d", *apiPort)
 
 	// Create and run the TUI
-	p := tea.NewProgram(initialModel(apiURL), tea.WithAltScreen())
+	p := tea.NewProgram(initialModel(apiURL, manager), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
 		os.Exit(1)

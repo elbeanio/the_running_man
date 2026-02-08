@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/iangeorge/the_running_man/internal/api"
 	"github.com/iangeorge/the_running_man/internal/docker"
 	"github.com/iangeorge/the_running_man/internal/parser"
@@ -276,83 +275,73 @@ func runCommand(args []string) {
 		os.Exit(1)
 	}
 
-	// Wait for all processes to complete
-	err := manager.Wait()
-
-	// Stop all container streamers
-	for _, streamer := range containerStreamers {
-		streamer.Stop()
-	}
-
-	// Wait for container streamers to finish
-	for _, streamer := range containerStreamers {
-		streamer.Wait()
-	}
-
-	// Flush any remaining multi-line entries for all processes
-	for _, proc := range processes {
-		if flushed := multiParser.Flush(proc.Name); flushed != nil {
-			buffer.Append(flushed)
-		}
-	}
-
-	// Flush container streamers (if any)
-	if *dockerCompose != "" {
-		compose, _ := docker.ParseComposeFile(*dockerCompose)
-		for _, serviceName := range compose.GetServiceNames() {
-			if flushed := multiParser.Flush(serviceName); flushed != nil {
-				buffer.Append(flushed)
-			}
-		}
-	}
-
-	// Get exit codes
-	exitCodes := manager.ExitCodes()
-
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "\n[running-man] One or more processes exited with error: %v\n", err)
-	} else {
-		fmt.Printf("\n[running-man] All processes completed successfully\n")
-	}
-
-	// Print exit codes for each process
-	for name, code := range exitCodes {
-		if code != 0 {
-			fmt.Fprintf(os.Stderr, "[running-man] Process %s exited with code %d\n", name, code)
-		}
-	}
-
-	// Launch TUI or run in headless mode
+	// Launch TUI or run in headless mode (don't wait for processes to finish first)
 	if *noTUI {
-		// Headless mode - print info and block
-		fmt.Printf("[running-man] Captured %d log entries\n", buffer.Stats().TotalEntries)
+		// Headless mode - print info and wait for processes
 		fmt.Printf("[running-man] API available at http://localhost:%d\n", *apiPort)
 		fmt.Printf("[running-man] Running in headless mode (--no-tui)\n")
 		fmt.Printf("[running-man] Press Ctrl+C to exit\n")
 
-		// Keep API server running (blocks forever - exit with Ctrl+C)
-		select {}
+		// Wait for all processes to complete
+		err := manager.Wait()
+
+		// Stop all container streamers
+		for _, streamer := range containerStreamers {
+			streamer.Stop()
+		}
+
+		// Wait for container streamers to finish
+		for _, streamer := range containerStreamers {
+			streamer.Wait()
+		}
+
+		// Get exit codes
+		exitCodes := manager.ExitCodes()
+
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\n[running-man] One or more processes exited with error: %v\n", err)
+		} else {
+			fmt.Printf("\n[running-man] All processes completed successfully\n")
+		}
+
+		// Print exit codes for each process
+		for name, code := range exitCodes {
+			if code != 0 {
+				fmt.Fprintf(os.Stderr, "[running-man] Process %s exited with code %d\n", name, code)
+			}
+		}
 	} else {
-		// TUI mode - launch interactive viewer
+		// TUI mode - launch interactive viewer immediately
 		fmt.Printf("[running-man] Starting TUI viewer...\n")
 		fmt.Printf("[running-man] API available at http://localhost:%d\n", *apiPort)
 		time.Sleep(200 * time.Millisecond) // Give API a moment to stabilize
 
-		apiURL := fmt.Sprintf("http://localhost:%d", *apiPort)
-		p := tea.NewProgram(initialModel(apiURL), tea.WithAltScreen())
-		if _, err := p.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "[running-man] TUI error: %v\n", err)
-			os.Exit(1)
+		// Run TUI with manager reference so it can stop processes on quit
+		tuiCommandWithManager([]string{fmt.Sprintf("--api-port=%d", *apiPort)}, manager)
+
+		// TUI exited (user pressed 'q') - stop processes and clean up
+		fmt.Printf("\n[running-man] Shutting down processes...\n")
+
+		// Stop all processes
+		manager.Stop()
+
+		// Wait for processes to finish stopping
+		manager.Wait()
+
+		// Stop all container streamers
+		for _, streamer := range containerStreamers {
+			streamer.Stop()
 		}
 
-		// TUI exited - print status and keep processes running
-		fmt.Printf("\n[running-man] TUI closed\n")
-		fmt.Printf("[running-man] Processes still running\n")
-		fmt.Printf("[running-man] API still available at http://localhost:%d\n", *apiPort)
-		fmt.Printf("[running-man] Press Ctrl+C to stop all processes\n")
+		// Wait for container streamers to finish
+		for _, streamer := range containerStreamers {
+			streamer.Wait()
+		}
 
-		// Keep API server running
-		select {}
+		fmt.Printf("[running-man] Shutdown complete\n")
+		// NOTE: API server (goroutine) is not gracefully shut down
+		// It will be cleaned up when the program exits
+		// TODO: Add api.Server.Shutdown() method for graceful shutdown
 	}
 }
 
