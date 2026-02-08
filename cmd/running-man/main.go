@@ -156,14 +156,16 @@ func runCommand(args []string) {
 		}
 	}
 
-	// Get retention and buffer settings from config (no CLI flags for these yet)
+	// Get retention, buffer, and shell settings from config (no CLI flags for these yet)
 	finalRetention := defaultRetention
 	finalMaxEntries := defaultMaxEntries
 	finalMaxBytes := int64(defaultMaxBytes)
+	finalShell := "/bin/sh"
 	if cfg != nil {
 		finalRetention = cfg.GetRetentionDuration()
 		finalMaxEntries = cfg.GetMaxEntries()
 		finalMaxBytes = cfg.GetMaxBytes()
+		finalShell = cfg.GetShell()
 	}
 
 	// Parse process configurations
@@ -203,6 +205,7 @@ func runCommand(args []string) {
 			Name:    name,
 			Command: cmd,
 			Args:    cmdArgs,
+			Shell:   finalShell,
 		})
 	}
 

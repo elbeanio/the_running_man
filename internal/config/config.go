@@ -129,13 +129,16 @@ func (c *Config) Validate() error {
 }
 
 // ToProcessConfigs converts config ProcessConfigs to process.ProcessConfigs.
+// The shell from the config is applied to all processes.
 func (c *Config) ToProcessConfigs() []process.ProcessConfig {
+	shell := c.GetShell()
 	result := make([]process.ProcessConfig, len(c.Processes))
 	for i, proc := range c.Processes {
 		result[i] = process.ProcessConfig{
 			Name:    proc.Name,
 			Command: proc.Command,
 			Args:    proc.Args,
+			Shell:   shell,
 		}
 	}
 	return result

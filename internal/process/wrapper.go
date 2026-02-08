@@ -1,6 +1,6 @@
 // Package process provides process wrapping and lifecycle management.
 //
-// SECURITY MODEL: All processes are executed via /bin/sh -c to enable full shell features
+// SECURITY MODEL: All processes are executed via shell -c to enable full shell features
 // (cd, &&, ||, pipes, redirections, variable expansion, etc.). This means shell metacharacters
 // and command substitution will be interpreted.
 //
@@ -12,7 +12,7 @@
 // If an attacker can modify these sources, they already have full access to the system.
 // There is no security boundary to defend - the user is intentionally running arbitrary commands.
 //
-// NOTE: Currently only supports Unix-like systems (macOS, Linux). Uses /bin/sh.
+// NOTE: Currently only supports Unix-like systems (macOS, Linux). Default shell: /bin/sh.
 package process
 
 import (
@@ -38,6 +38,7 @@ type ProcessWrapper struct {
 	name      string
 	command   string
 	args      []string
+	shell     string
 	stdout    io.ReadCloser
 	stderr    io.ReadCloser
 	handler   LineHandler
@@ -52,20 +53,26 @@ type ProcessWrapper struct {
 
 // New creates a new ProcessWrapper for the given command.
 //
-// Commands are executed via /bin/sh -c to enable shell features like cd, &&, pipes, etc.
+// Commands are executed via shell -c to enable shell features like cd, &&, pipes, etc.
 // The command and args are joined with spaces to form the full shell command string.
+// If shell is empty, defaults to /bin/sh.
 //
 // Example:
 //
-//	New("frontend", "cd", []string{"frontend", "&&", "npm", "start"}, handler)
-//	Executes: /bin/sh -c "cd frontend && npm start"
+//	New("frontend", "cd", []string{"frontend", "&&", "npm", "start"}, "/bin/bash", handler)
+//	Executes: /bin/bash -c "cd frontend && npm start"
 //
 // Or more simply:
 //
-//	New("frontend", "cd frontend && npm start", []string{}, handler)
-//	Executes: /bin/sh -c "cd frontend && npm start"
-func New(name string, command string, args []string, handler LineHandler) *ProcessWrapper {
+//	New("frontend", "cd frontend && npm start", []string{}, "/bin/bash", handler)
+//	Executes: /bin/bash -c "cd frontend && npm start"
+func New(name string, command string, args []string, shell string, handler LineHandler) *ProcessWrapper {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// Default to /bin/sh if no shell specified
+	if shell == "" {
+		shell = "/bin/sh"
+	}
 
 	// Build the full command string for shell execution
 	var fullCommand string
@@ -76,13 +83,14 @@ func New(name string, command string, args []string, handler LineHandler) *Proce
 	}
 
 	// Execute command in shell to support cd, &&, pipes, etc.
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", fullCommand)
+	cmd := exec.CommandContext(ctx, shell, "-c", fullCommand)
 	cmd.Env = os.Environ() // Inherit environment
 
 	return &ProcessWrapper{
 		name:    name,
 		command: command,
 		args:    args,
+		shell:   shell,
 		cmd:     cmd,
 		handler: handler,
 		ctx:     ctx,

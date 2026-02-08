@@ -19,7 +19,7 @@ func TestProcessWrapper_BasicExecution(t *testing.T) {
 	}
 
 	// Use echo to output some text
-	wrapper := New("test-echo", "echo", []string{"hello", "world"}, handler)
+	wrapper := New("test-echo", "echo", []string{"hello", "world"}, "", handler)
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start process: %v", err)
@@ -61,7 +61,7 @@ func TestProcessWrapper_ErrorOutput(t *testing.T) {
 	}
 
 	// Use a shell command that writes to stderr
-	wrapper := New("test-stderr", "echo 'error message' >&2", []string{}, handler)
+	wrapper := New("test-stderr", "echo 'error message' >&2", []string{}, "", handler)
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start process: %v", err)
@@ -99,7 +99,7 @@ func TestProcessWrapper_EnvironmentInheritance(t *testing.T) {
 	t.Setenv("TEST_VAR", "test_value")
 
 	// Use printenv to check the variable
-	wrapper := New("test-env", "printenv", []string{"TEST_VAR"}, handler)
+	wrapper := New("test-env", "printenv", []string{"TEST_VAR"}, "", handler)
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start process: %v", err)
@@ -124,7 +124,7 @@ func TestProcessWrapper_EnvironmentInheritance(t *testing.T) {
 }
 
 func TestProcessWrapper_NonZeroExit(t *testing.T) {
-	wrapper := New("test-fail", "exit 42", []string{}, nil)
+	wrapper := New("test-fail", "exit 42", []string{}, "", nil)
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start process: %v", err)
@@ -145,7 +145,7 @@ func TestProcessWrapper_NonZeroExit(t *testing.T) {
 // Batch 4: Helper method tests
 
 func TestPID_NotStarted(t *testing.T) {
-	wrapper := New("test", "echo", []string{"hi"}, nil)
+	wrapper := New("test", "echo", []string{"hi"}, "", nil)
 	// Don't call Start()
 
 	pid := wrapper.PID()
@@ -155,7 +155,7 @@ func TestPID_NotStarted(t *testing.T) {
 }
 
 func TestPID_AfterStart(t *testing.T) {
-	wrapper := New("test", "sleep", []string{"2"}, nil)
+	wrapper := New("test", "sleep", []string{"2"}, "", nil)
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start: %v", err)
@@ -169,7 +169,7 @@ func TestPID_AfterStart(t *testing.T) {
 }
 
 func TestGetStatus_Running(t *testing.T) {
-	wrapper := New("test", "sleep", []string{"2"}, nil)
+	wrapper := New("test", "sleep", []string{"2"}, "", nil)
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start: %v", err)
@@ -187,7 +187,7 @@ func TestGetStatus_Running(t *testing.T) {
 }
 
 func TestGetStatus_Stopped(t *testing.T) {
-	wrapper := New("test", "echo", []string{"done"}, nil)
+	wrapper := New("test", "echo", []string{"done"}, "", nil)
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start: %v", err)
@@ -202,7 +202,7 @@ func TestGetStatus_Stopped(t *testing.T) {
 }
 
 func TestGetStatus_Failed(t *testing.T) {
-	wrapper := New("test", "exit 1", []string{}, nil)
+	wrapper := New("test", "exit 1", []string{}, "", nil)
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start: %v", err)
@@ -217,7 +217,7 @@ func TestGetStatus_Failed(t *testing.T) {
 }
 
 func TestIsRunning_NotStarted(t *testing.T) {
-	wrapper := New("test", "echo", []string{"hi"}, nil)
+	wrapper := New("test", "echo", []string{"hi"}, "", nil)
 	// Don't start
 
 	running := wrapper.IsRunning()
@@ -228,7 +228,7 @@ func TestIsRunning_NotStarted(t *testing.T) {
 }
 
 func TestIsRunning_AfterExit(t *testing.T) {
-	wrapper := New("test", "echo", []string{"done"}, nil)
+	wrapper := New("test", "echo", []string{"done"}, "", nil)
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start: %v", err)
@@ -245,7 +245,7 @@ func TestIsRunning_AfterExit(t *testing.T) {
 func TestStartTime(t *testing.T) {
 	before := time.Now()
 
-	wrapper := New("test", "echo", []string{"test"}, nil)
+	wrapper := New("test", "echo", []string{"test"}, "", nil)
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start: %v", err)
@@ -261,7 +261,7 @@ func TestStartTime(t *testing.T) {
 }
 
 func TestCommandString_NoArgs(t *testing.T) {
-	wrapper := New("test", "echo", nil, nil)
+	wrapper := New("test", "echo", nil, "", nil)
 
 	cmd := wrapper.CommandString()
 	if cmd != "echo" {
@@ -270,7 +270,7 @@ func TestCommandString_NoArgs(t *testing.T) {
 }
 
 func TestCommandString_WithArgs(t *testing.T) {
-	wrapper := New("test", "echo", []string{"hello", "world"}, nil)
+	wrapper := New("test", "echo", []string{"hello", "world"}, "", nil)
 
 	cmd := wrapper.CommandString()
 	expected := "echo hello world"
@@ -319,7 +319,7 @@ func TestShellFeature_ChangeDirectory(t *testing.T) {
 
 	// Use cd to change directory and print working directory
 	// This tests that shell execution works
-	wrapper := New("test-cd", "cd /tmp && pwd", []string{}, handler)
+	wrapper := New("test-cd", "cd /tmp && pwd", []string{}, "", handler)
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start process: %v", err)
@@ -359,7 +359,7 @@ func TestShellFeature_CommandChaining(t *testing.T) {
 	}
 
 	// Test && chaining - both commands should execute
-	wrapper := New("test-chain", "echo first && echo second", []string{}, handler)
+	wrapper := New("test-chain", "echo first && echo second", []string{}, "", handler)
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start process: %v", err)
@@ -402,7 +402,7 @@ func TestShellFeature_Pipes(t *testing.T) {
 	}
 
 	// Test pipes - echo then grep
-	wrapper := New("test-pipe", "echo hello world | grep hello", []string{}, handler)
+	wrapper := New("test-pipe", "echo hello world | grep hello", []string{}, "", handler)
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start process: %v", err)
@@ -443,7 +443,7 @@ func TestShellFeature_ExitCodePropagation(t *testing.T) {
 
 	// Test that exit codes propagate correctly from shell
 	// false command returns exit code 1
-	wrapper := New("test-exit", "false", []string{}, handler)
+	wrapper := New("test-exit", "false", []string{}, "", handler)
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start process: %v", err)
@@ -463,7 +463,7 @@ func TestShellFeature_ExitCodePropagation(t *testing.T) {
 
 func TestShellFeature_CommandStringDisplay(t *testing.T) {
 	// Verify that CommandString returns the original command, not the shell wrapper
-	wrapper := New("test-display", "cd /tmp && pwd", []string{}, nil)
+	wrapper := New("test-display", "cd /tmp && pwd", []string{}, "", nil)
 
 	cmdStr := wrapper.CommandString()
 	expected := "cd /tmp && pwd"

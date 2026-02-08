@@ -15,6 +15,7 @@ type ProcessConfig struct {
 	Name    string
 	Command string
 	Args    []string
+	Shell   string // Shell to use (default: /bin/sh)
 }
 
 // ProcessInfo contains runtime information about a process
@@ -66,7 +67,7 @@ func (m *Manager) Start() error {
 
 	// Start each process
 	for name, cfg := range m.configs {
-		wrapper := New(name, cfg.Command, cfg.Args, m.handler)
+		wrapper := New(name, cfg.Command, cfg.Args, cfg.Shell, m.handler)
 		if err := wrapper.Start(); err != nil {
 			// If any process fails to start, stop all started processes
 			m.stopAllLocked()
@@ -165,7 +166,7 @@ func (m *Manager) Restart(processName string) error {
 	}
 
 	// Start new instance
-	wrapper := New(cfg.Name, cfg.Command, cfg.Args, m.handler)
+	wrapper := New(cfg.Name, cfg.Command, cfg.Args, cfg.Shell, m.handler)
 	if err := wrapper.Start(); err != nil {
 		return fmt.Errorf("failed to restart process %s: %w", processName, err)
 	}
