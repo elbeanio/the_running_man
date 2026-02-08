@@ -39,10 +39,10 @@ You should see:
 - Log output from all three containers with `[container-name]` prefixes
 - Mixed stdout/stderr streams (error-logger generates both)
 
-### 3. Test with mixed sources (Docker + wrapped processes)
+### 3. Test with mixed sources (Docker + managed processes)
 
 ```bash
-./running-man run --docker-compose test-docker-compose.yml --wrap "echo 'Hello from process'"
+./running-man run --docker-compose test-docker-compose.yml --process "echo 'Hello from process'"
 ```
 
 This tests running both Docker containers and regular processes simultaneously.

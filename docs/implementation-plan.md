@@ -72,7 +72,7 @@ This document outlines the phased implementation of **the running man**, a dev o
 ### Deliverables
 
 1. **Multi-Process Support**
-   - Multiple `--wrap` flags
+   - Multiple `--process` flags
    - Unique source tagging per process
    - Parallel stream capture
    - Aggregate output in terminal

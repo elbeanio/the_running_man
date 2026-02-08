@@ -279,20 +279,20 @@ POST /ingest/browser
 # Basic usage - wrap a single command
 running-man run -- python server.py
 
-# Multiple wrapped processes
+# Multiple managed processes
 running-man run \
-  --wrap "python server.py" \
-  --wrap "npm run dev"
+  --process "python server.py" \
+  --process "npm run dev"
 
 # With docker-compose
 running-man run \
-  --wrap "python server.py" \
+  --process "python server.py" \
   --docker-compose ./docker-compose.yml
 
 # Full config
 running-man run \
-  --wrap "python server.py" \
-  --wrap "npm run dev" \
+  --process "python server.py" \
+  --process "npm run dev" \
   --docker-compose ./docker-compose.yml \
   --otel-port 4317 \
   --api-port 9000 \
@@ -375,7 +375,7 @@ For multi-step agentic flows:
 - `/logs` and `/errors` endpoints
 
 ### Phase 2: Multi-process + Docker
-- Multiple `--wrap` commands
+- Multiple `--process` commands
 - Docker-compose log tailing
 - Source filtering in API
 

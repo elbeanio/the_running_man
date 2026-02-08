@@ -10,8 +10,8 @@ go build -o running-man ./cmd/running-man
 echo "✓ Build successful"
 echo ""
 
-# Test 1: Multiple process wrapping
-echo "2. Testing multiple process wrapping..."
+# Test 1: Multiple process management
+echo "2. Testing multiple process management..."
 ./running-man run --no-tui --process "echo process1" --process "echo process2" --process "echo process3" > /tmp/running-man-multi.log 2>&1 &
 PID=$!
 sleep 2
@@ -22,7 +22,7 @@ if grep -q "process1" /tmp/running-man-multi.log && \
    grep -q "process3" /tmp/running-man-multi.log; then
     echo "✓ Multiple processes execute successfully"
 else
-    echo "✗ Multiple process wrapping failed"
+    echo "✗ Multiple process management failed"
     cat /tmp/running-man-multi.log
     exit 1
 fi
@@ -323,7 +323,7 @@ if command -v docker &> /dev/null && docker info &> /dev/null; then
         exit 1
     fi
     
-    # Test mixed Docker + process wrapping
+    # Test mixed Docker + process management
     ./running-man run --no-tui --docker-compose test-docker-compose.yml --process "echo hello-world" > /tmp/running-man-mixed.log 2>&1 &
     PID=$!
     sleep 3
@@ -331,9 +331,9 @@ if command -v docker &> /dev/null && docker info &> /dev/null; then
     
     if grep -q "\[logger-1\]" /tmp/running-man-mixed.log && \
        grep -q "hello-world" /tmp/running-man-mixed.log; then
-        echo "✓ Mixed Docker + process wrapping works"
+        echo "✓ Mixed Docker + process management works"
     else
-        echo "✗ Mixed Docker + process wrapping failed"
+        echo "✗ Mixed Docker + process management failed"
         cat /tmp/running-man-mixed.log | head -50
     fi
     
@@ -387,7 +387,7 @@ echo ""
 
 # Test 17: Run tests with race detector
 echo "18. Running race detector..."
-if go test -race ./internal/wrapper > /dev/null 2>&1; then
+if go test -race ./internal/process > /dev/null 2>&1; then
     echo "✓ Race detector passes (no data races)"
 else
     echo "✗ Race detector found issues"

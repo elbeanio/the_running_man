@@ -18,8 +18,8 @@ You'd start your dev environment through the running man instead of running thin
 
 ```bash
 running-man run \
-  --wrap "python server.py" \
-  --wrap "npm run dev" \
+  --process "python server.py" \
+  --process "npm run dev" \
   --docker-compose ./docker-compose.yml
 ```
 

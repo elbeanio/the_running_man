@@ -10,45 +10,45 @@ go build -o running-man ./cmd/running-man
 echo "✓ Build successful"
 echo ""
 
-# Test 1: Zero-config startup
-echo "2. Testing zero-config startup..."
-./running-man run --no-tui -- echo "Hello World" > /tmp/running-man-test.log 2>&1 &
+# Test 1: Simple process startup
+echo "2. Testing simple process startup..."
+./running-man run --no-tui --process 'echo "Hello World"' > /tmp/running-man-test.log 2>&1 &
 PID=$!
 sleep 2
 kill $PID 2>/dev/null || true
 if grep -q "Hello World" /tmp/running-man-test.log; then
-    echo "✓ Zero-config startup works"
+    echo "✓ Simple process startup works"
 else
-    echo "✗ Zero-config startup failed"
+    echo "✗ Simple process startup failed"
     exit 1
 fi
 echo ""
 
-# Test 2: Can wrap Python process
-echo "3. Testing Python process wrapping..."
-./running-man run --no-tui -- python3 -c "print('Python test'); import sys; print('ERROR: Test error', file=sys.stderr)" > /tmp/running-man-python.log 2>&1 &
+# Test 2: Can run Python process
+echo "3. Testing Python process management..."
+./running-man run --no-tui --process "python3 -c \"print('Python test'); import sys; print('ERROR: Test error', file=sys.stderr)\"" > /tmp/running-man-python.log 2>&1 &
 PID=$!
 sleep 2
 kill $PID 2>/dev/null || true
 if grep -q "Python test" /tmp/running-man-python.log && grep -q "ERROR: Test error" /tmp/running-man-python.log; then
-    echo "✓ Python process wrapping works"
+    echo "✓ Python process management works"
 else
-    echo "✗ Python process wrapping failed"
+    echo "✗ Python process management failed"
     exit 1
 fi
 echo ""
 
-# Test 3: Can wrap Node process (if node is available)
-echo "4. Testing Node.js process wrapping..."
+# Test 3: Can run Node process (if node is available)
+echo "4. Testing Node.js process management..."
 if command -v node &> /dev/null; then
-    ./running-man run --no-tui -- node -e "console.log('Node test'); console.error('Node error');" > /tmp/running-man-node.log 2>&1 &
+    ./running-man run --no-tui --process "node -e \"console.log('Node test'); console.error('Node error');\"" > /tmp/running-man-node.log 2>&1 &
     PID=$!
     sleep 2
     kill $PID 2>/dev/null || true
     if grep -q "Node test" /tmp/running-man-node.log; then
-        echo "✓ Node.js process wrapping works"
+        echo "✓ Node.js process management works"
     else
-        echo "✗ Node.js process wrapping failed"
+        echo "✗ Node.js process management failed"
         exit 1
     fi
 else
@@ -58,7 +58,7 @@ echo ""
 
 # Test 4: API query works
 echo "5. Testing API queries..."
-./running-man run --no-tui --api-port 9001 -- python3 test_script.py > /dev/null 2>&1 &
+./running-man run --no-tui --api-port 9001 --process "python3 test_script.py" > /dev/null 2>&1 &
 PID=$!
 sleep 3
 

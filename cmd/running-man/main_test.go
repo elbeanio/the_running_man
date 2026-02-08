@@ -308,7 +308,7 @@ func TestParseFlagsAndValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			wraps, compose, port, err := parseFlagsAndValidate(tt.args)
+			procs, compose, port, err := parseFlagsAndValidate(tt.args)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("parseFlagsAndValidate() error = %v, wantErr %v", err, tt.wantErr)
@@ -322,13 +322,13 @@ func TestParseFlagsAndValidate(t *testing.T) {
 				return
 			}
 
-			// Compare wraps (handle nil vs empty slice)
-			if len(wraps) != len(tt.wantProcs) {
-				t.Errorf("wraps length = %d, want %d", len(wraps), len(tt.wantProcs))
+			// Compare processes (handle nil vs empty slice)
+			if len(procs) != len(tt.wantProcs) {
+				t.Errorf("procs length = %d, want %d", len(procs), len(tt.wantProcs))
 			} else {
-				for i := range wraps {
-					if wraps[i] != tt.wantProcs[i] {
-						t.Errorf("wraps[%d] = %v, want %v", i, wraps[i], tt.wantProcs[i])
+				for i := range procs {
+					if procs[i] != tt.wantProcs[i] {
+						t.Errorf("procs[%d] = %v, want %v", i, procs[i], tt.wantProcs[i])
 					}
 				}
 			}

@@ -11,7 +11,7 @@
 
 2. **✅ CLI flag** (`the_running_man-5ty`)
    - `--docker-compose PATH` flag added
-   - Validation: requires either --wrap or --docker-compose
+   - Validation: requires either --process or --docker-compose
    - Help text updated with examples
 
 3. **✅ Compose file parsing** (`the_running_man-1se`)
@@ -60,7 +60,7 @@ When `--docker-compose` is provided, main.go now:
    - Demultiplexes stdout/stderr streams
 
 5. **✅ Mixed process + container support**
-   - Supports both `--wrap` and `--docker-compose` simultaneously
+   - Supports both `--process` and `--docker-compose` simultaneously
    - Unified log aggregation for processes and containers
    - Coordinated shutdown of all sources
 
