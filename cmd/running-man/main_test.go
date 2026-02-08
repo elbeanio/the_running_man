@@ -1,6 +1,8 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -215,5 +217,213 @@ func TestWrapFlags(t *testing.T) {
 	expected := "echo hello, npm run dev"
 	if str != expected {
 		t.Errorf("wrapFlags.String() = %q, want %q", str, expected)
+	}
+}
+
+// parseFlagsAndValidate extracts flag parsing and validation for testing
+func parseFlagsAndValidate(args []string) (wraps []string, dockerCompose string, apiPort int, err error) {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	apiPortFlag := fs.Int("api-port", defaultAPIPort, "API server port")
+	dockerComposeFlag := fs.String("docker-compose", "", "Path to docker-compose.yml file")
+
+	var wrapFlags wrapFlags
+	fs.Var(&wrapFlags, "wrap", "Process to wrap (can be specified multiple times)")
+
+	// Parse flags
+	if err := fs.Parse(args); err != nil {
+		return nil, "", 0, err
+	}
+
+	// Validate
+	if len(wrapFlags) == 0 && *dockerComposeFlag == "" {
+		return nil, "", 0, fmt.Errorf("at least one --wrap flag or --docker-compose is required")
+	}
+
+	return wrapFlags, *dockerComposeFlag, *apiPortFlag, nil
+}
+
+func TestParseFlagsAndValidate(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantWraps   []string
+		wantCompose string
+		wantPort    int
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "single wrap",
+			args:        []string{"--wrap", "echo hello"},
+			wantWraps:   []string{"echo hello"},
+			wantCompose: "",
+			wantPort:    9000,
+			wantErr:     false,
+		},
+		{
+			name:        "multiple wraps",
+			args:        []string{"--wrap", "echo hello", "--wrap", "echo world"},
+			wantWraps:   []string{"echo hello", "echo world"},
+			wantCompose: "",
+			wantPort:    9000,
+			wantErr:     false,
+		},
+		{
+			name:        "docker-compose only",
+			args:        []string{"--docker-compose", "./docker-compose.yml"},
+			wantWraps:   []string{},
+			wantCompose: "./docker-compose.yml",
+			wantPort:    9000,
+			wantErr:     false,
+		},
+		{
+			name:        "wrap and docker-compose",
+			args:        []string{"--wrap", "echo test", "--docker-compose", "./compose.yml"},
+			wantWraps:   []string{"echo test"},
+			wantCompose: "./compose.yml",
+			wantPort:    9000,
+			wantErr:     false,
+		},
+		{
+			name:        "custom api port",
+			args:        []string{"--wrap", "echo test", "--api-port", "8080"},
+			wantWraps:   []string{"echo test"},
+			wantCompose: "",
+			wantPort:    8080,
+			wantErr:     false,
+		},
+		{
+			name:        "no sources - error",
+			args:        []string{},
+			wantErr:     true,
+			errContains: "at least one",
+		},
+		{
+			name:        "only api-port - error",
+			args:        []string{"--api-port", "8080"},
+			wantErr:     true,
+			errContains: "at least one",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wraps, compose, port, err := parseFlagsAndValidate(tt.args)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseFlagsAndValidate() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr {
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("error = %v, want error containing %q", err, tt.errContains)
+				}
+				return
+			}
+
+			// Compare wraps (handle nil vs empty slice)
+			if len(wraps) != len(tt.wantWraps) {
+				t.Errorf("wraps length = %d, want %d", len(wraps), len(tt.wantWraps))
+			} else {
+				for i := range wraps {
+					if wraps[i] != tt.wantWraps[i] {
+						t.Errorf("wraps[%d] = %v, want %v", i, wraps[i], tt.wantWraps[i])
+					}
+				}
+			}
+
+			if compose != tt.wantCompose {
+				t.Errorf("dockerCompose = %v, want %v", compose, tt.wantCompose)
+			}
+
+			if port != tt.wantPort {
+				t.Errorf("apiPort = %v, want %v", port, tt.wantPort)
+			}
+		})
+	}
+}
+
+func TestProcessConfigCreation(t *testing.T) {
+	tests := []struct {
+		name         string
+		wraps        []string
+		wantNames    []string
+		wantCommands []string
+	}{
+		{
+			name:         "single process",
+			wraps:        []string{"echo hello"},
+			wantNames:    []string{"echo-hello"},
+			wantCommands: []string{"echo"},
+		},
+		{
+			name:         "multiple processes",
+			wraps:        []string{"echo hello", "npm run dev", "python server.py"},
+			wantNames:    []string{"echo-hello", "npm-run-dev", "python-server-py"},
+			wantCommands: []string{"echo", "npm", "python"},
+		},
+		{
+			name:         "duplicate slugs get counters",
+			wraps:        []string{"echo hello", "echo hello", "echo hello"},
+			wantNames:    []string{"echo-hello", "echo-hello-2", "echo-hello-3"},
+			wantCommands: []string{"echo", "echo", "echo"},
+		},
+		{
+			name:         "complex commands",
+			wraps:        []string{`sh -c "echo test"`, "python -m http.server"},
+			wantNames:    []string{"sh-c-echo-test", "python-m-http-server"},
+			wantCommands: []string{"sh", "python"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Simulate the process config creation logic
+			nameMap := make(map[string]int)
+			var configs []struct {
+				Name    string
+				Command string
+			}
+
+			for _, cmdStr := range tt.wraps {
+				cmd, _, err := parseCommandString(cmdStr)
+				if err != nil {
+					t.Fatalf("parseCommandString(%q) failed: %v", cmdStr, err)
+				}
+
+				baseName := slugify(cmdStr)
+				name := baseName
+
+				if count, exists := nameMap[baseName]; exists {
+					nameMap[baseName] = count + 1
+					name = fmt.Sprintf("%s-%d", baseName, count+1)
+				} else {
+					nameMap[baseName] = 1
+				}
+
+				configs = append(configs, struct {
+					Name    string
+					Command string
+				}{
+					Name:    name,
+					Command: cmd,
+				})
+			}
+
+			// Verify names
+			if len(configs) != len(tt.wantNames) {
+				t.Fatalf("got %d configs, want %d", len(configs), len(tt.wantNames))
+			}
+
+			for i, cfg := range configs {
+				if cfg.Name != tt.wantNames[i] {
+					t.Errorf("config[%d].Name = %q, want %q", i, cfg.Name, tt.wantNames[i])
+				}
+				if cfg.Command != tt.wantCommands[i] {
+					t.Errorf("config[%d].Command = %q, want %q", i, cfg.Command, tt.wantCommands[i])
+				}
+			}
+		})
 	}
 }
