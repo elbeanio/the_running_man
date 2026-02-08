@@ -1,0 +1,44 @@
+# Example configuration file for The Running Man
+# Copy this file to running-man.yml and customize for your project
+
+# Processes to run and manage
+processes:
+  - name: backend
+    command: go run cmd/server/main.go
+    # args: ["--port", "8080"]  # Optional: command arguments
+
+  - name: frontend
+    command: npm run dev
+    # Shell features work! Use cd, &&, pipes, etc.
+
+  - name: worker
+    command: cd services/worker && python worker.py
+
+# Docker Compose integration (optional)
+# Automatically streams logs from all services in your compose file
+# docker_compose: ./docker-compose.yml
+
+# API server configuration
+# The API provides endpoints for querying logs, errors, and health
+api_port: 9000  # Default: 9000
+
+# Log retention settings
+retention: 30m       # How long to keep logs (e.g., "30m", "1h", "24h")
+                     # Default: 30m
+max_entries: 10000   # Maximum number of log entries to keep
+                     # Default: 10000
+max_bytes: 52428800  # Maximum total bytes of logs (50MB)
+                     # Default: 52428800 (50MB)
+
+# Shell to use for process execution
+# Allows you to use shell-specific features (bash arrays, zsh glob, etc.)
+shell: /bin/sh  # Default: /bin/sh
+                # Options: /bin/sh, /bin/bash, /bin/zsh, /usr/bin/bash, /usr/bin/zsh
+
+# Usage:
+#   running-man run                    # Auto-discovers this file
+#   running-man run --config path.yml  # Use specific config file
+#   
+# CLI flags override config file values:
+#   running-man run --api-port 8080    # Overrides api_port from config
+#   running-man run --process "cmd"    # Ignores processes from config
