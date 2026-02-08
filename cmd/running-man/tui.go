@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -172,14 +173,9 @@ func renderLogs(logs []logEntry, height, width int) string {
 		return logStyle.Render("No logs yet...")
 	}
 
-	// Show most recent logs that fit in the available height
-	startIdx := 0
-	if len(logs) > height {
-		startIdx = len(logs) - height
-	}
-
-	lines := []string{}
-	for _, log := range logs[startIdx:] {
+	// Collect all lines (splitting multiline messages)
+	allLines := []string{}
+	for _, log := range logs {
 		style := logStyle
 		if log.IsError {
 			style = errorLogStyle
@@ -191,17 +187,35 @@ func renderLogs(logs []logEntry, height, width int) string {
 			timestamp = timestamp[:19] // Trim to HH:MM:SS
 		}
 
-		line := fmt.Sprintf("[%s] [%s] %s", timestamp[11:19], log.Level, log.Message)
+		// Split message on newlines to handle multiline output
+		messageLines := strings.Split(log.Message, "\n")
 
-		// Truncate long lines
-		if len(line) > width-2 {
-			line = line[:width-5] + "..."
+		for i, msgLine := range messageLines {
+			var line string
+			if i == 0 {
+				// First line gets full prefix
+				line = fmt.Sprintf("[%s] [%s] %s", timestamp[11:19], log.Level, msgLine)
+			} else {
+				// Continuation lines get indented
+				line = fmt.Sprintf("                    %s", msgLine)
+			}
+
+			// Truncate long lines
+			if len(line) > width-2 {
+				line = line[:width-5] + "..."
+			}
+
+			allLines = append(allLines, style.Render(line))
 		}
-
-		lines = append(lines, style.Render(line))
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+	// Show most recent lines that fit in the available height
+	startIdx := 0
+	if len(allLines) > height {
+		startIdx = len(allLines) - height
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, allLines[startIdx:]...)
 }
 
 // Commands
