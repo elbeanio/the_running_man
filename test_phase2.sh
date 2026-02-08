@@ -344,8 +344,49 @@ else
 fi
 echo ""
 
-# Test 16: Run tests with race detector
-echo "17. Running race detector..."
+# Test 16: Self-logging and pattern warnings
+echo "17. Testing self-logging and pattern warnings..."
+./running-man run --api-port 9004 --wrap "echo test" > /dev/null 2>&1 &
+PID=$!
+sleep 2
+
+# Check that running-man logs itself
+COUNT=$(curl -s 'http://localhost:9004/logs?source=running-man' | grep -o '"count":[0-9]*' | cut -d: -f2)
+if [ "$COUNT" -ge 1 ]; then
+    echo "✓ Self-logging works (captured $COUNT running-man logs)"
+else
+    echo "✗ Self-logging failed (expected ≥1, got $COUNT)"
+    kill $PID 2>/dev/null || true
+    exit 1
+fi
+
+# Trigger pattern warnings
+curl -s 'http://localhost:9004/logs?source=************test' > /dev/null 2>&1
+sleep 1
+
+# Check for wildcard warning
+if curl -s 'http://localhost:9004/logs?source=running-man' | grep -q "wildcards"; then
+    echo "✓ Pattern complexity warnings work"
+else
+    echo "✗ Pattern warnings not found"
+    kill $PID 2>/dev/null || true
+    exit 1
+fi
+
+# Check that running-man appears in health endpoint
+if curl -s 'http://localhost:9004/health' | grep -q '"name":"running-man"'; then
+    echo "✓ Self-logging source in health endpoint"
+else
+    echo "✗ Self-logging source missing from health"
+    kill $PID 2>/dev/null || true
+    exit 1
+fi
+
+kill $PID 2>/dev/null || true
+echo ""
+
+# Test 17: Run tests with race detector
+echo "18. Running race detector..."
 if go test -race ./internal/wrapper > /dev/null 2>&1; then
     echo "✓ Race detector passes (no data races)"
 else
@@ -368,6 +409,8 @@ echo "  ✓ Docker Compose file parsing works"
 echo "  ✓ Glob pattern filtering (source=python-*)"
 echo "  ✓ Exclude filtering (exclude=test-*)"
 echo "  ✓ Health endpoint with source statistics"
+echo "  ✓ Self-logging (captures its own logs)"
+echo "  ✓ Pattern complexity warnings"
 echo "  ✓ All unit tests passing"
 echo "  ✓ No race conditions detected"
 echo ""
@@ -387,6 +430,8 @@ echo "  ✓ Glob pattern matching for sources"
 echo "  ✓ Exclude filter support"
 echo "  ✓ Combined source + exclude filtering"
 echo "  ✓ Health endpoint with source statistics"
+echo "  ✓ Self-logging capability"
+echo "  ✓ Pattern complexity warnings"
 echo ""
 echo "Remaining Phase 2 features:"
 echo "  ⊘ YAML configuration file support"

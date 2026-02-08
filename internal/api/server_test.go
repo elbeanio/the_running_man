@@ -312,3 +312,200 @@ func TestCORSHeaders(t *testing.T) {
 		t.Error("Expected CORS header to be set")
 	}
 }
+
+func TestSelfLogging(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+
+	// Track calls to lineHandler
+	var capturedLogs []struct {
+		source  string
+		message string
+		isError bool
+	}
+
+	lineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {
+		capturedLogs = append(capturedLogs, struct {
+			source  string
+			message string
+			isError bool
+		}{source, line, isStderr})
+	}
+
+	server := NewServer(buffer, 9000, lineHandler)
+
+	// Test normal log
+	server.log("Test message", false)
+
+	if len(capturedLogs) != 1 {
+		t.Fatalf("Expected 1 captured log, got %d", len(capturedLogs))
+	}
+
+	if capturedLogs[0].source != "running-man" {
+		t.Errorf("Expected source 'running-man', got '%s'", capturedLogs[0].source)
+	}
+
+	if capturedLogs[0].message != "Test message" {
+		t.Errorf("Expected message 'Test message', got '%s'", capturedLogs[0].message)
+	}
+
+	if capturedLogs[0].isError {
+		t.Error("Expected isError to be false")
+	}
+
+	// Test error log
+	server.log("Error message", true)
+
+	if len(capturedLogs) != 2 {
+		t.Fatalf("Expected 2 captured logs, got %d", len(capturedLogs))
+	}
+
+	if !capturedLogs[1].isError {
+		t.Error("Expected isError to be true for error log")
+	}
+}
+
+func TestSelfLogging_NilHandler(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	server := NewServer(buffer, 9000, nil)
+
+	// Should not panic with nil handler
+	server.log("Test message", false)
+	server.log("Error message", true)
+}
+
+func TestCheckPatternComplexity(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+
+	var warnings []string
+	lineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {
+		warnings = append(warnings, line)
+	}
+
+	server := NewServer(buffer, 9000, lineHandler)
+
+	tests := []struct {
+		name         string
+		patterns     []string
+		patternType  string
+		wantWarnings int
+		containsText string
+	}{
+		{
+			name:         "few patterns - no warning",
+			patterns:     []string{"test", "foo", "bar"},
+			patternType:  "source",
+			wantWarnings: 0,
+		},
+		{
+			name:         "many patterns - warning",
+			patterns:     make([]string, 25),
+			patternType:  "source",
+			wantWarnings: 1,
+			containsText: "Large number",
+		},
+		{
+			name:         "long pattern - warning",
+			patterns:     []string{string(make([]byte, 250))},
+			patternType:  "exclude",
+			wantWarnings: 1,
+			containsText: "Very long",
+		},
+		{
+			name:         "many wildcards - warning",
+			patterns:     []string{"************test"},
+			patternType:  "source",
+			wantWarnings: 1,
+			containsText: "many wildcards",
+		},
+		{
+			name:         "multiple issues - multiple warnings",
+			patterns:     append(make([]string, 25), "************test"),
+			patternType:  "source",
+			wantWarnings: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			warnings = nil // Reset
+			server.checkPatternComplexity(tt.patterns, tt.patternType)
+
+			if len(warnings) != tt.wantWarnings {
+				t.Errorf("Expected %d warnings, got %d", tt.wantWarnings, len(warnings))
+			}
+
+			if tt.containsText != "" && len(warnings) > 0 {
+				found := false
+				for _, w := range warnings {
+					if contains(w, tt.containsText) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("Expected warning containing '%s', got: %v", tt.containsText, warnings)
+				}
+			}
+		})
+	}
+}
+
+func TestPatternWarnings_Integration(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+
+	// Use actual lineHandler that appends to buffer
+	lineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {
+		entry := &parser.LogEntry{
+			Timestamp: timestamp,
+			Level:     parser.LevelInfo,
+			Source:    source,
+			Message:   line,
+			Raw:       line,
+			IsError:   isStderr,
+		}
+		buffer.Append(entry)
+	}
+
+	server := NewServer(buffer, 9000, lineHandler)
+
+	// Make a request with problematic patterns
+	req := httptest.NewRequest("GET", "/logs?source=************test", nil)
+	w := httptest.NewRecorder()
+
+	server.handleLogs(w, req)
+
+	// Check that warning was captured in buffer
+	logs := buffer.Query(storage.QueryFilters{
+		Sources: []string{"running-man"},
+	})
+
+	if len(logs) == 0 {
+		t.Fatal("Expected warning to be captured in buffer")
+	}
+
+	found := false
+	for _, log := range logs {
+		if contains(log.Message, "Warning") && contains(log.Message, "wildcards") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Error("Expected to find wildcard warning in captured logs")
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
