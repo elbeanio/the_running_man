@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 )
@@ -139,4 +140,58 @@ func GetProjectNameFromPath(composePath string) string {
 	projectName = strings.ReplaceAll(projectName, "_", "-")
 
 	return projectName
+}
+
+// ContainerEvent represents a Docker container lifecycle event
+type ContainerEvent struct {
+	Type        string // start, stop, die, restart, kill
+	ContainerID string
+	Name        string
+	Image       string
+}
+
+// EventHandler is called when a container lifecycle event occurs
+type EventHandler func(event ContainerEvent)
+
+// WatchEvents watches Docker events and calls handler for container lifecycle events
+// This function blocks until the context is cancelled
+func (c *Client) WatchEvents(ctx context.Context, projectName string, handler EventHandler) error {
+	// Build filter for events from our compose project
+	filterArgs := filters.NewArgs()
+	filterArgs.Add("type", "container")
+	filterArgs.Add("label", fmt.Sprintf("com.docker.compose.project=%s", projectName))
+
+	eventOptions := events.ListOptions{
+		Filters: filterArgs,
+	}
+
+	eventsChan, errsChan := c.cli.Events(ctx, eventOptions)
+
+	for {
+		select {
+		case event := <-eventsChan:
+			// Process container events
+			if event.Type == "container" {
+				containerEvent := ContainerEvent{
+					Type:        string(event.Action),
+					ContainerID: event.Actor.ID[:12], // Short ID
+					Name:        event.Actor.Attributes["name"],
+					Image:       event.Actor.Attributes["image"],
+				}
+
+				// Call handler for relevant events
+				switch string(event.Action) {
+				case "start", "restart", "die", "stop", "kill":
+					handler(containerEvent)
+				}
+			}
+		case err := <-errsChan:
+			if err != nil && ctx.Err() == nil {
+				return fmt.Errorf("error watching events: %w", err)
+			}
+			return nil
+		case <-ctx.Done():
+			return nil
+		}
+	}
 }

@@ -134,3 +134,34 @@ func TestDiscoverContainers(t *testing.T) {
 	// Log how many containers were found (could be 0 and that's ok)
 	t.Logf("Found %d containers", len(containers))
 }
+
+func TestWatchEvents(t *testing.T) {
+	if !IsAvailable() {
+		t.Skip("Docker daemon not available, skipping test")
+	}
+
+	client, err := NewClient()
+	if err != nil {
+		t.Fatalf("Failed to create Docker client: %v", err)
+	}
+	defer client.Close()
+
+	// Create a context that will cancel after a short time
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	var eventCount int
+	handler := func(event ContainerEvent) {
+		eventCount++
+		t.Logf("Received event: %s for container %s", event.Type, event.Name)
+	}
+
+	// This will watch events and timeout after 2 seconds
+	// We just verify it doesn't error
+	err = client.WatchEvents(ctx, "test-project", handler)
+	if err != nil {
+		t.Errorf("WatchEvents failed: %v", err)
+	}
+
+	t.Logf("Received %d events", eventCount)
+}
