@@ -13,7 +13,7 @@ import (
 
 func setupTestServer() (*Server, *storage.RingBuffer) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil) // nil lineHandler for tests
+	server := NewServer(buffer, 9000, nil, nil) // nil lineHandler and manager for tests
 	return server, buffer
 }
 
@@ -331,7 +331,7 @@ func TestSelfLogging(t *testing.T) {
 		}{source, line, isStderr})
 	}
 
-	server := NewServer(buffer, 9000, lineHandler)
+	server := NewServer(buffer, 9000, lineHandler, nil)
 
 	// Test normal log
 	server.log("Test message", false)
@@ -366,7 +366,7 @@ func TestSelfLogging(t *testing.T) {
 
 func TestSelfLogging_NilHandler(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil)
+	server := NewServer(buffer, 9000, nil, nil)
 
 	// Should not panic with nil handler
 	server.log("Test message", false)
@@ -381,7 +381,7 @@ func TestCheckPatternComplexity(t *testing.T) {
 		warnings = append(warnings, line)
 	}
 
-	server := NewServer(buffer, 9000, lineHandler)
+	server := NewServer(buffer, 9000, lineHandler, nil)
 
 	tests := []struct {
 		name         string
@@ -466,7 +466,7 @@ func TestPatternWarnings_Integration(t *testing.T) {
 		buffer.Append(entry)
 	}
 
-	server := NewServer(buffer, 9000, lineHandler)
+	server := NewServer(buffer, 9000, lineHandler, nil)
 
 	// Make a request with problematic patterns
 	req := httptest.NewRequest("GET", "/logs?source=************test", nil)

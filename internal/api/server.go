@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/iangeorge/the_running_man/internal/parser"
+	"github.com/iangeorge/the_running_man/internal/process"
 	"github.com/iangeorge/the_running_man/internal/storage"
 )
 
@@ -22,15 +23,17 @@ type Server struct {
 	port        int
 	startTime   time.Time
 	lineHandler LineHandler
+	manager     *process.Manager
 }
 
 // NewServer creates a new API server
-func NewServer(buffer *storage.RingBuffer, port int, lineHandler LineHandler) *Server {
+func NewServer(buffer *storage.RingBuffer, port int, lineHandler LineHandler, manager *process.Manager) *Server {
 	return &Server{
 		buffer:      buffer,
 		port:        port,
 		startTime:   time.Now(),
 		lineHandler: lineHandler,
+		manager:     manager,
 	}
 }
 
