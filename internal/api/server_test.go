@@ -13,7 +13,7 @@ import (
 
 func setupTestServer() (*Server, *storage.RingBuffer) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000)
+	server := NewServer(buffer, 9000, nil) // nil lineHandler for tests
 	return server, buffer
 }
 

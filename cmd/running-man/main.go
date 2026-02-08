@@ -256,7 +256,7 @@ func runCommand(args []string) {
 	manager := wrapper.NewManager(processes, lineHandler)
 
 	// Start API server in background
-	apiServer := api.NewServer(buffer, *apiPort)
+	apiServer := api.NewServer(buffer, *apiPort, lineHandler)
 	go func() {
 		if err := apiServer.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] API server error: %v\n", err)

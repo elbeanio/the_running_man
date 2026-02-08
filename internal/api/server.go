@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -12,19 +13,61 @@ import (
 	"github.com/iangeorge/the_running_man/internal/storage"
 )
 
+// LineHandler is called when a log line is captured
+type LineHandler func(source string, line string, timestamp time.Time, isStderr bool)
+
 // Server provides the HTTP API for querying logs
 type Server struct {
-	buffer    *storage.RingBuffer
-	port      int
-	startTime time.Time
+	buffer      *storage.RingBuffer
+	port        int
+	startTime   time.Time
+	lineHandler LineHandler
 }
 
 // NewServer creates a new API server
-func NewServer(buffer *storage.RingBuffer, port int) *Server {
+func NewServer(buffer *storage.RingBuffer, port int, lineHandler LineHandler) *Server {
 	return &Server{
-		buffer:    buffer,
-		port:      port,
-		startTime: time.Now(),
+		buffer:      buffer,
+		port:        port,
+		startTime:   time.Now(),
+		lineHandler: lineHandler,
+	}
+}
+
+// log sends a log message through the lineHandler to be captured
+func (s *Server) log(message string, isError bool) {
+	// Also print to terminal for visibility
+	if isError {
+		fmt.Fprintf(os.Stderr, "[running-man] %s\n", message)
+	} else {
+		fmt.Printf("[running-man] %s\n", message)
+	}
+
+	// Capture in buffer if handler is available
+	if s.lineHandler != nil {
+		s.lineHandler("running-man", message, time.Now(), isError)
+	}
+}
+
+// checkPatternComplexity warns about potentially problematic glob patterns
+func (s *Server) checkPatternComplexity(patterns []string, patternType string) {
+	const maxPatterns = 20
+	const maxPatternLength = 200
+	const maxWildcards = 10
+
+	if len(patterns) > maxPatterns {
+		s.log(fmt.Sprintf("Warning: Large number of %s patterns (%d) may impact performance", patternType, len(patterns)), false)
+	}
+
+	for _, pattern := range patterns {
+		if len(pattern) > maxPatternLength {
+			s.log(fmt.Sprintf("Warning: Very long %s pattern (%d chars) may impact performance: %s...", patternType, len(pattern), pattern[:50]), false)
+		}
+
+		wildcardCount := strings.Count(pattern, "*")
+		if wildcardCount > maxWildcards {
+			s.log(fmt.Sprintf("Warning: Pattern with many wildcards (%d) may impact performance: %s", wildcardCount, pattern), false)
+		}
 	}
 }
 
@@ -37,7 +80,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/health", s.handleHealth)
 
 	addr := fmt.Sprintf(":%d", s.port)
-	fmt.Printf("[running-man] API server starting on http://localhost%s\n", addr)
+	s.log(fmt.Sprintf("API server starting on http://localhost%s", addr), false)
 	return http.ListenAndServe(addr, s.corsMiddleware(mux))
 }
 
@@ -85,6 +128,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		for _, s := range sources {
 			filters.Sources = append(filters.Sources, strings.TrimSpace(s))
 		}
+		s.checkPatternComplexity(filters.Sources, "source")
 	}
 
 	// Parse 'exclude' parameter (comma-separated, supports glob patterns)
@@ -93,6 +137,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		for _, e := range excludes {
 			filters.Exclude = append(filters.Exclude, strings.TrimSpace(e))
 		}
+		s.checkPatternComplexity(filters.Exclude, "exclude")
 	}
 
 	// Parse 'contains' parameter
@@ -158,7 +203,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) writeJSON(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		fmt.Printf("[running-man] Error encoding JSON: %v\n", err)
+		s.log(fmt.Sprintf("Error encoding JSON: %v", err), true)
 	}
 }
 
