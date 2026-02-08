@@ -117,14 +117,15 @@ func runCommand(args []string) {
 	// Setup flags
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	apiPort := fs.Int("api-port", defaultAPIPort, "API server port")
+	dockerCompose := fs.String("docker-compose", "", "Path to docker-compose.yml file")
 
 	var wraps wrapFlags
 	fs.Var(&wraps, "wrap", "Process to wrap (can be specified multiple times)")
 
 	fs.Parse(args)
 
-	if len(wraps) == 0 {
-		fmt.Fprintln(os.Stderr, "Error: At least one --wrap flag is required")
+	if len(wraps) == 0 && *dockerCompose == "" {
+		fmt.Fprintln(os.Stderr, "Error: At least one --wrap flag or --docker-compose is required")
 		printUsage()
 		os.Exit(1)
 	}
@@ -160,9 +161,18 @@ func runCommand(args []string) {
 	}
 
 	fmt.Println("The Running Man - Dev Observability Tool")
+
+	// Show Docker Compose info if provided
+	if *dockerCompose != "" {
+		fmt.Printf("Docker Compose: %s\n", *dockerCompose)
+		fmt.Println("⚠ Note: Docker Compose integration not yet fully implemented")
+	}
+
+	// Show wrapped processes
 	for _, proc := range processes {
 		fmt.Printf("Wrapping [%s]: %s %v\n", proc.Name, proc.Command, proc.Args)
 	}
+
 	fmt.Printf("API: http://localhost:%d\n\n", *apiPort)
 
 	// Create ring buffer
@@ -238,19 +248,27 @@ func printUsage() {
 
 Usage:
   running-man run --wrap "command" [--wrap "command" ...] [flags]
+  running-man run --docker-compose PATH [--wrap "command" ...] [flags]
   running-man version
   running-man help
 
 Flags:
-  --wrap "command"   Process to wrap (can be specified multiple times)
-  --api-port PORT    API server port (default: 9000)
+  --wrap "command"         Process to wrap (can be specified multiple times)
+  --docker-compose PATH    Path to docker-compose.yml file
+  --api-port PORT          API server port (default: 9000)
 
 Examples:
   # Wrap a single process
   running-man run --wrap "python server.py"
 
-  # Wrap multiple processes (Phase 2)
+  # Wrap multiple processes
   running-man run --wrap "python server.py" --wrap "npm run dev"
+
+  # Tail Docker Compose services
+  running-man run --docker-compose ./docker-compose.yml
+
+  # Mix Docker and processes
+  running-man run --docker-compose ./docker-compose.yml --wrap "npm run dev"
 
   # Custom API port
   running-man run --wrap "go run main.go" --api-port 8080
