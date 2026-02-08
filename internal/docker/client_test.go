@@ -91,7 +91,7 @@ func TestGetProjectNameFromPath(t *testing.T) {
 		{
 			name:     "path with underscores",
 			path:     "/home/my_project/docker-compose.yml",
-			expected: "my-project", // Docker converts _ to -
+			expected: "my_project", // Docker keeps underscores
 		},
 		{
 			name:     "path with uppercase",

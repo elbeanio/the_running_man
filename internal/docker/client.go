@@ -135,9 +135,9 @@ func GetProjectNameFromPath(composePath string) string {
 		}
 	}
 
-	// Sanitize project name (Docker Compose converts to lowercase and replaces _ with -)
+	// Docker Compose uses the directory name as-is, only converting to lowercase
+	// Note: It does NOT replace underscores with hyphens
 	projectName = strings.ToLower(projectName)
-	projectName = strings.ReplaceAll(projectName, "_", "-")
 
 	return projectName
 }
