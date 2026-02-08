@@ -264,3 +264,118 @@ func TestManager_ConcurrentAccess(t *testing.T) {
 	wg.Wait()
 	manager.Wait()
 }
+
+// Batch 3: GetProcess and ListProcesses tests
+
+func TestGetProcess_Found_Running(t *testing.T) {
+	configs := []ProcessConfig{
+		{Name: "test-sleep", Command: "sleep", Args: []string{"5"}},
+	}
+	manager := NewManager(configs, nil)
+	
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start manager: %v", err)
+	}
+	defer manager.Stop()
+	
+	time.Sleep(100 * time.Millisecond) // Let process start
+	
+	info, err := manager.GetProcess("test-sleep")
+	if err != nil {
+		t.Fatalf("GetProcess failed: %v", err)
+	}
+	
+	if info.Name != "test-sleep" {
+		t.Errorf("Expected name 'test-sleep', got '%s'", info.Name)
+	}
+	if info.Status != "running" {
+		t.Errorf("Expected status 'running', got '%s'", info.Status)
+	}
+	if info.PID <= 0 {
+		t.Errorf("Expected positive PID, got %d", info.PID)
+	}
+	if info.ExitCode != -1 {
+		t.Errorf("Expected exit_code -1 for running process, got %d", info.ExitCode)
+	}
+}
+
+func TestGetProcess_Found_Stopped(t *testing.T) {
+	configs := []ProcessConfig{
+		{Name: "test-echo", Command: "echo", Args: []string{"test"}},
+	}
+	manager := NewManager(configs, nil)
+	
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start manager: %v", err)
+	}
+	defer manager.Stop()
+	
+	manager.Wait() // Wait for completion
+	
+	info, err := manager.GetProcess("test-echo")
+	if err != nil {
+		t.Fatalf("GetProcess failed: %v", err)
+	}
+	
+	if info.Status != "stopped" {
+		t.Errorf("Expected status 'stopped', got '%s'", info.Status)
+	}
+	if info.ExitCode != 0 {
+		t.Errorf("Expected exit_code 0 for stopped process, got %d", info.ExitCode)
+	}
+}
+
+func TestGetProcess_NotFound(t *testing.T) {
+	configs := []ProcessConfig{
+		{Name: "existing", Command: "echo", Args: []string{"test"}},
+	}
+	manager := NewManager(configs, nil)
+	
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start manager: %v", err)
+	}
+	defer manager.Stop()
+	
+	_, err := manager.GetProcess("nonexistent")
+	if err == nil {
+		t.Fatal("Expected error for nonexistent process, got nil")
+	}
+	
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("Expected 'not found' in error, got: %v", err)
+	}
+}
+
+func TestListProcesses_ExitCodeAlwaysPresent(t *testing.T) {
+	configs := []ProcessConfig{
+		{Name: "running-proc", Command: "sleep", Args: []string{"5"}},
+		{Name: "stopped-proc", Command: "echo", Args: []string{"done"}},
+	}
+	manager := NewManager(configs, nil)
+	
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start manager: %v", err)
+	}
+	defer manager.Stop()
+	
+	// Wait a bit for processes to settle
+	time.Sleep(200 * time.Millisecond)
+	
+	infos := manager.ListProcesses()
+	
+	if len(infos) != 2 {
+		t.Fatalf("Expected 2 processes, got %d", len(infos))
+	}
+	
+	// Verify all have exit_code field (even if running)
+	for _, info := range infos {
+		// Running processes should have exit_code=-1
+		// Stopped processes should have exit_code=0
+		if info.Status == "running" && info.ExitCode != -1 {
+			t.Errorf("Process %s is running but exit_code is %d, expected -1", info.Name, info.ExitCode)
+		}
+		if info.Status == "stopped" && info.ExitCode != 0 {
+			t.Errorf("Process %s is stopped but exit_code is %d, expected 0", info.Name, info.ExitCode)
+		}
+	}
+}

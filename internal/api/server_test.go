@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/iangeorge/the_running_man/internal/parser"
+	"github.com/iangeorge/the_running_man/internal/process"
 	"github.com/iangeorge/the_running_man/internal/storage"
 )
 
@@ -508,4 +510,264 @@ func findSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// Batch 1: Security validation tests for GET /processes/{name}
+
+func TestHandleProcessDetail_InvalidName_Slash(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	server := NewServer(buffer, 9000, nil, nil)
+
+	req := httptest.NewRequest("GET", "/processes/foo/bar", nil)
+	w := httptest.NewRecorder()
+
+	server.handleProcessDetail(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if errMsg, ok := response["error"].(string); !ok || errMsg != "Invalid process name" {
+		t.Errorf("Expected 'Invalid process name' error, got: %v", response["error"])
+	}
+}
+
+func TestHandleProcessDetail_InvalidName_DotDot(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	server := NewServer(buffer, 9000, nil, nil)
+
+	req := httptest.NewRequest("GET", "/processes/../etc/passwd", nil)
+	w := httptest.NewRecorder()
+
+	server.handleProcessDetail(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if errMsg, ok := response["error"].(string); !ok || errMsg != "Invalid process name" {
+		t.Errorf("Expected 'Invalid process name' error, got: %v", response["error"])
+	}
+}
+
+func TestHandleProcessDetail_TooLong(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	server := NewServer(buffer, 9000, nil, nil)
+
+	longName := strings.Repeat("a", 300)
+	req := httptest.NewRequest("GET", "/processes/"+longName, nil)
+	w := httptest.NewRecorder()
+
+	server.handleProcessDetail(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if errMsg, ok := response["error"].(string); !ok || errMsg != "Process name too long" {
+		t.Errorf("Expected 'Process name too long' error, got: %v", response["error"])
+	}
+}
+
+func TestHandleProcessDetail_EmptyName(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	server := NewServer(buffer, 9000, nil, nil)
+
+	req := httptest.NewRequest("GET", "/processes/", nil)
+	w := httptest.NewRecorder()
+
+	server.handleProcessDetail(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if errMsg, ok := response["error"].(string); !ok || errMsg != "Process name required" {
+		t.Errorf("Expected 'Process name required' error, got: %v", response["error"])
+	}
+}
+
+func TestHandleProcessDetail_NoManager(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	server := NewServer(buffer, 9000, nil, nil) // nil manager
+
+	req := httptest.NewRequest("GET", "/processes/any-name", nil)
+	w := httptest.NewRecorder()
+
+	server.handleProcessDetail(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("Expected status 503, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if errMsg, ok := response["error"].(string); !ok || errMsg != "Process manager not available" {
+		t.Errorf("Expected 'Process manager not available' error, got: %v", response["error"])
+	}
+}
+
+// Batch 2: Happy path tests with real processes
+
+func TestHandleProcessDetail_Success_Running(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+
+	// Create manager with a long-running process
+	configs := []process.ProcessConfig{
+		{Name: "test-sleep", Command: "sleep", Args: []string{"10"}},
+	}
+	manager := process.NewManager(configs, nil)
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start manager: %v", err)
+	}
+	defer manager.Stop()
+
+	// Give process time to start
+	time.Sleep(100 * time.Millisecond)
+
+	server := NewServer(buffer, 9000, nil, manager)
+
+	req := httptest.NewRequest("GET", "/processes/test-sleep", nil)
+	w := httptest.NewRecorder()
+
+	server.handleProcessDetail(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+
+	var info process.ProcessInfo
+	if err := json.NewDecoder(w.Body).Decode(&info); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// Verify fields
+	if info.Name != "test-sleep" {
+		t.Errorf("Expected name 'test-sleep', got '%s'", info.Name)
+	}
+	if info.Status != "running" {
+		t.Errorf("Expected status 'running', got '%s'", info.Status)
+	}
+	if info.PID <= 0 {
+		t.Errorf("Expected positive PID, got %d", info.PID)
+	}
+	if info.ExitCode != -1 {
+		t.Errorf("Expected exit_code -1 for running process, got %d", info.ExitCode)
+	}
+	if !strings.Contains(info.Command, "sleep") {
+		t.Errorf("Expected command to contain 'sleep', got '%s'", info.Command)
+	}
+}
+
+func TestHandleProcessDetail_Success_Stopped(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+
+	// Create manager with a quick process
+	configs := []process.ProcessConfig{
+		{Name: "test-echo", Command: "echo", Args: []string{"done"}},
+	}
+	manager := process.NewManager(configs, nil)
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start manager: %v", err)
+	}
+	defer manager.Stop()
+
+	// Wait for process to actually complete
+	manager.Wait()
+
+	server := NewServer(buffer, 9000, nil, manager)
+
+	req := httptest.NewRequest("GET", "/processes/test-echo", nil)
+	w := httptest.NewRecorder()
+
+	server.handleProcessDetail(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+
+	var info process.ProcessInfo
+	if err := json.NewDecoder(w.Body).Decode(&info); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// Verify fields
+	if info.Name != "test-echo" {
+		t.Errorf("Expected name 'test-echo', got '%s'", info.Name)
+	}
+	if info.Status != "stopped" {
+		t.Errorf("Expected status 'stopped', got '%s'", info.Status)
+	}
+	if info.ExitCode != 0 {
+		t.Errorf("Expected exit_code 0 for stopped process, got %d", info.ExitCode)
+	}
+}
+
+func TestHandleProcessDetail_NotFound(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+
+	// Create manager with known processes
+	configs := []process.ProcessConfig{
+		{Name: "proc1", Command: "sleep", Args: []string{"10"}},
+		{Name: "proc2", Command: "sleep", Args: []string{"10"}},
+	}
+	manager := process.NewManager(configs, nil)
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start manager: %v", err)
+	}
+	defer manager.Stop()
+
+	time.Sleep(100 * time.Millisecond)
+
+	server := NewServer(buffer, 9000, nil, manager)
+
+	req := httptest.NewRequest("GET", "/processes/nonexistent", nil)
+	w := httptest.NewRecorder()
+
+	server.handleProcessDetail(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	errMsg, ok := response["error"].(string)
+	if !ok {
+		t.Fatal("Expected error message in response")
+	}
+
+	// Should mention the process and list available ones
+	if !strings.Contains(errMsg, "nonexistent") {
+		t.Errorf("Error should mention 'nonexistent', got: %s", errMsg)
+	}
+	if !strings.Contains(errMsg, "proc1") || !strings.Contains(errMsg, "proc2") {
+		t.Errorf("Error should list available processes (proc1, proc2), got: %s", errMsg)
+	}
 }

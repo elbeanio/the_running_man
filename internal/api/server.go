@@ -81,6 +81,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/logs", s.handleLogs)
 	mux.HandleFunc("/errors", s.handleErrors)
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/processes/", s.handleProcessDetail) // Must come before /processes
 	mux.HandleFunc("/processes", s.handleProcesses)
 
 	addr := fmt.Sprintf(":%d", s.port)
@@ -248,4 +249,47 @@ func (s *Server) handleProcesses(w http.ResponseWriter, r *http.Request) {
 		"processes": processes,
 		"count":     len(processes),
 	})
+}
+
+func (s *Server) handleProcessDetail(w http.ResponseWriter, r *http.Request) {
+	// Extract process name from URL path: /processes/{name}
+	path := strings.TrimPrefix(r.URL.Path, "/processes/")
+	if path == "" || path == r.URL.Path {
+		s.writeError(w, http.StatusBadRequest, "Process name required")
+		return
+	}
+
+	// Sanitize process name: prevent path traversal and limit length
+	processName := strings.TrimSpace(path)
+	if strings.Contains(processName, "/") || strings.Contains(processName, "..") {
+		s.writeError(w, http.StatusBadRequest, "Invalid process name")
+		return
+	}
+	if len(processName) > 255 {
+		s.writeError(w, http.StatusBadRequest, "Process name too long")
+		return
+	}
+
+	// Check manager availability after input validation
+	if s.manager == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "Process manager not available")
+		return
+	}
+
+	// Get process info from manager
+	info, err := s.manager.GetProcess(processName)
+	if err != nil {
+		// Provide helpful context about available processes
+		available := s.manager.ListProcesses()
+		names := make([]string, len(available))
+		for i, p := range available {
+			names[i] = p.Name
+		}
+		s.writeError(w, http.StatusNotFound,
+			fmt.Sprintf("Process '%s' not found. Available: %s",
+				processName, strings.Join(names, ", ")))
+		return
+	}
+
+	s.writeJSON(w, info)
 }

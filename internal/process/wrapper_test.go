@@ -140,3 +140,138 @@ func TestProcessWrapper_NonZeroExit(t *testing.T) {
 		t.Errorf("Expected exit code 42, got %d", code)
 	}
 }
+
+// Batch 4: Helper method tests
+
+func TestPID_NotStarted(t *testing.T) {
+	wrapper := New("test", "echo", []string{"hi"}, nil)
+	// Don't call Start()
+	
+	pid := wrapper.PID()
+	if pid != -1 {
+		t.Errorf("Expected PID=-1 before start, got %d", pid)
+	}
+}
+
+func TestPID_AfterStart(t *testing.T) {
+	wrapper := New("test", "sleep", []string{"2"}, nil)
+	
+	if err := wrapper.Start(); err != nil {
+		t.Fatalf("Failed to start: %v", err)
+	}
+	defer wrapper.Stop()
+	
+	pid := wrapper.PID()
+	if pid <= 0 {
+		t.Errorf("Expected positive PID after start, got %d", pid)
+	}
+}
+
+func TestGetStatus_Running(t *testing.T) {
+	wrapper := New("test", "sleep", []string{"2"}, nil)
+	
+	if err := wrapper.Start(); err != nil {
+		t.Fatalf("Failed to start: %v", err)
+	}
+	defer wrapper.Stop()
+	
+	time.Sleep(50 * time.Millisecond) // Let it settle
+	
+	status := wrapper.GetStatus()
+	if status != "running" {
+		t.Errorf("Expected status 'running', got '%s'", status)
+	}
+}
+
+func TestGetStatus_Stopped(t *testing.T) {
+	wrapper := New("test", "echo", []string{"done"}, nil)
+	
+	if err := wrapper.Start(); err != nil {
+		t.Fatalf("Failed to start: %v", err)
+	}
+	
+	wrapper.Wait() // Wait for completion
+	
+	status := wrapper.GetStatus()
+	if status != "stopped" {
+		t.Errorf("Expected status 'stopped', got '%s'", status)
+	}
+}
+
+func TestGetStatus_Failed(t *testing.T) {
+	wrapper := New("test", "sh", []string{"-c", "exit 1"}, nil)
+	
+	if err := wrapper.Start(); err != nil {
+		t.Fatalf("Failed to start: %v", err)
+	}
+	
+	wrapper.Wait() // Will error but that's expected
+	
+	status := wrapper.GetStatus()
+	if status != "failed" {
+		t.Errorf("Expected status 'failed', got '%s'", status)
+	}
+}
+
+func TestIsRunning_NotStarted(t *testing.T) {
+	wrapper := New("test", "echo", []string{"hi"}, nil)
+	// Don't start
+	
+	running := wrapper.IsRunning()
+	// Process not started yet, so ProcessState is nil -> returns true
+	if !running {
+		t.Error("Expected IsRunning=true for not-yet-started process")
+	}
+}
+
+func TestIsRunning_AfterExit(t *testing.T) {
+	wrapper := New("test", "echo", []string{"done"}, nil)
+	
+	if err := wrapper.Start(); err != nil {
+		t.Fatalf("Failed to start: %v", err)
+	}
+	
+	wrapper.Wait()
+	
+	running := wrapper.IsRunning()
+	if running {
+		t.Error("Expected IsRunning=false after process exits")
+	}
+}
+
+func TestStartTime(t *testing.T) {
+	before := time.Now()
+	
+	wrapper := New("test", "echo", []string{"test"}, nil)
+	
+	if err := wrapper.Start(); err != nil {
+		t.Fatalf("Failed to start: %v", err)
+	}
+	defer wrapper.Stop()
+	
+	after := time.Now()
+	startTime := wrapper.StartTime()
+	
+	if startTime.Before(before) || startTime.After(after) {
+		t.Errorf("Start time %v not between %v and %v", startTime, before, after)
+	}
+}
+
+func TestCommandString_NoArgs(t *testing.T) {
+	wrapper := New("test", "echo", nil, nil)
+	
+	cmd := wrapper.CommandString()
+	if cmd != "echo" {
+		t.Errorf("Expected 'echo', got '%s'", cmd)
+	}
+}
+
+func TestCommandString_WithArgs(t *testing.T) {
+	wrapper := New("test", "echo", []string{"hello", "world"}, nil)
+	
+	cmd := wrapper.CommandString()
+	expected := "echo hello world"
+	if cmd != expected {
+		t.Errorf("Expected '%s', got '%s'", expected, cmd)
+	}
+}

@@ -177,10 +177,10 @@ func (w *ProcessWrapper) ExitCode() int {
 	return w.cmd.ProcessState.ExitCode()
 }
 
-// PID returns the process ID
+// PID returns the process ID, or -1 if not started
 func (w *ProcessWrapper) PID() int {
 	if w.cmd.Process == nil {
-		return 0
+		return -1
 	}
 	return w.cmd.Process.Pid
 }
@@ -192,10 +192,12 @@ func (w *ProcessWrapper) IsRunning() bool {
 
 // GetStatus returns "running", "stopped", or "failed"
 func (w *ProcessWrapper) GetStatus() string {
-	if w.IsRunning() {
+	// Read ProcessState once to avoid race conditions
+	state := w.cmd.ProcessState
+	if state == nil {
 		return "running"
 	}
-	if w.ExitCode() == 0 {
+	if state.ExitCode() == 0 {
 		return "stopped"
 	}
 	return "failed"

@@ -21,9 +21,9 @@ type ProcessConfig struct {
 type ProcessInfo struct {
 	Name      string    `json:"name"`
 	Command   string    `json:"command"`
-	PID       int       `json:"pid"`
-	Status    string    `json:"status"` // "running", "stopped", "failed"
-	ExitCode  int       `json:"exit_code,omitempty"`
+	PID       int       `json:"pid"`       // -1 if not started
+	Status    string    `json:"status"`    // "running", "stopped", "failed"
+	ExitCode  int       `json:"exit_code"` // -1 for running processes
 	StartTime time.Time `json:"start_time"`
 }
 
@@ -202,9 +202,7 @@ func (m *Manager) ListProcesses() []ProcessInfo {
 			PID:       p.PID(),
 			Status:    p.GetStatus(),
 			StartTime: p.StartTime(),
-		}
-		if !p.IsRunning() {
-			info.ExitCode = p.ExitCode()
+			ExitCode:  p.ExitCode(), // Always include exit code (-1 for running processes)
 		}
 		infos = append(infos, info)
 	}
@@ -227,9 +225,7 @@ func (m *Manager) GetProcess(name string) (*ProcessInfo, error) {
 		PID:       p.PID(),
 		Status:    p.GetStatus(),
 		StartTime: p.StartTime(),
-	}
-	if !p.IsRunning() {
-		info.ExitCode = p.ExitCode()
+		ExitCode:  p.ExitCode(), // Always include exit code (-1 for running processes)
 	}
 	return info, nil
 }
