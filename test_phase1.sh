@@ -12,7 +12,7 @@ echo ""
 
 # Test 1: Zero-config startup
 echo "2. Testing zero-config startup..."
-./running-man run -- echo "Hello World" > /tmp/running-man-test.log 2>&1 &
+./running-man run --no-tui -- echo "Hello World" > /tmp/running-man-test.log 2>&1 &
 PID=$!
 sleep 2
 kill $PID 2>/dev/null || true
@@ -26,7 +26,7 @@ echo ""
 
 # Test 2: Can wrap Python process
 echo "3. Testing Python process wrapping..."
-./running-man run -- python3 -c "print('Python test'); import sys; print('ERROR: Test error', file=sys.stderr)" > /tmp/running-man-python.log 2>&1 &
+./running-man run --no-tui -- python3 -c "print('Python test'); import sys; print('ERROR: Test error', file=sys.stderr)" > /tmp/running-man-python.log 2>&1 &
 PID=$!
 sleep 2
 kill $PID 2>/dev/null || true
@@ -41,7 +41,7 @@ echo ""
 # Test 3: Can wrap Node process (if node is available)
 echo "4. Testing Node.js process wrapping..."
 if command -v node &> /dev/null; then
-    ./running-man run -- node -e "console.log('Node test'); console.error('Node error');" > /tmp/running-man-node.log 2>&1 &
+    ./running-man run --no-tui -- node -e "console.log('Node test'); console.error('Node error');" > /tmp/running-man-node.log 2>&1 &
     PID=$!
     sleep 2
     kill $PID 2>/dev/null || true
@@ -58,7 +58,7 @@ echo ""
 
 # Test 4: API query works
 echo "5. Testing API queries..."
-./running-man run --api-port 9001 -- python3 test_script.py > /dev/null 2>&1 &
+./running-man run --no-tui --api-port 9001 -- python3 test_script.py > /dev/null 2>&1 &
 PID=$!
 sleep 3
 

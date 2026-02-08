@@ -12,22 +12,31 @@ go install github.com/iangeorge/the_running_man/cmd/running-man@latest
 
 ### Usage
 
-Wrap your development process:
+Wrap your development process (TUI launches automatically):
 
 ```bash
-# Python application
-running-man run -- python server.py
+# Python application - TUI shows logs in real-time
+running-man run --wrap "python server.py"
 
-# Node.js application
-running-man run -- npm run dev
+# Multiple processes - switch between them with Tab
+running-man run --wrap "python server.py" --wrap "npm run dev"
 
-# Custom API port
-running-man run --api-port 9000 -- python manage.py runserver
+# Docker Compose services - all containers visible in TUI
+running-man run --docker-compose ./docker-compose.yml
+
+# Headless mode for CI/automation
+running-man run --wrap "pytest" --no-tui
 ```
+
+### TUI Navigation
+
+- **Tab / →**: Switch to next source
+- **Shift+Tab / ←**: Switch to previous source
+- **q**: Quit TUI (processes keep running)
 
 ### Query API
 
-Once running, query logs via HTTP:
+The API is available while TUI is running (use a separate terminal):
 
 ```bash
 # Recent logs

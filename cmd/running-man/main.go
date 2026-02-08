@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/iangeorge/the_running_man/internal/api"
 	"github.com/iangeorge/the_running_man/internal/docker"
 	"github.com/iangeorge/the_running_man/internal/parser"
@@ -122,6 +123,7 @@ func runCommand(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	apiPort := fs.Int("api-port", defaultAPIPort, "API server port")
 	dockerCompose := fs.String("docker-compose", "", "Path to docker-compose.yml file")
+	noTUI := fs.Bool("no-tui", false, "Disable TUI and run in headless mode")
 
 	var wraps wrapFlags
 	fs.Var(&wraps, "wrap", "Process to wrap (can be specified multiple times)")
@@ -320,12 +322,38 @@ func runCommand(args []string) {
 		}
 	}
 
-	fmt.Printf("[running-man] Captured %d log entries\n", buffer.Stats().TotalEntries)
-	fmt.Printf("[running-man] API still available at http://localhost:%d\n", *apiPort)
-	fmt.Printf("[running-man] Press Ctrl+C to exit\n")
+	// Launch TUI or run in headless mode
+	if *noTUI {
+		// Headless mode - print info and block
+		fmt.Printf("[running-man] Captured %d log entries\n", buffer.Stats().TotalEntries)
+		fmt.Printf("[running-man] API available at http://localhost:%d\n", *apiPort)
+		fmt.Printf("[running-man] Running in headless mode (--no-tui)\n")
+		fmt.Printf("[running-man] Press Ctrl+C to exit\n")
 
-	// Keep API server running (blocks forever - exit with Ctrl+C)
-	select {}
+		// Keep API server running (blocks forever - exit with Ctrl+C)
+		select {}
+	} else {
+		// TUI mode - launch interactive viewer
+		fmt.Printf("[running-man] Starting TUI viewer...\n")
+		fmt.Printf("[running-man] API available at http://localhost:%d\n", *apiPort)
+		time.Sleep(200 * time.Millisecond) // Give API a moment to stabilize
+
+		apiURL := fmt.Sprintf("http://localhost:%d", *apiPort)
+		p := tea.NewProgram(initialModel(apiURL), tea.WithAltScreen())
+		if _, err := p.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "[running-man] TUI error: %v\n", err)
+			os.Exit(1)
+		}
+
+		// TUI exited - print status and keep processes running
+		fmt.Printf("\n[running-man] TUI closed\n")
+		fmt.Printf("[running-man] Processes still running\n")
+		fmt.Printf("[running-man] API still available at http://localhost:%d\n", *apiPort)
+		fmt.Printf("[running-man] Press Ctrl+C to stop all processes\n")
+
+		// Keep API server running
+		select {}
+	}
 }
 
 func printUsage() {
@@ -342,31 +370,31 @@ Flags:
   --wrap "command"         Process to wrap (can be specified multiple times)
   --docker-compose PATH    Path to docker-compose.yml file
   --api-port PORT          API server port (default: 9000)
+  --no-tui                 Disable TUI and run in headless mode
 
 Examples:
-  # Wrap a single process
+  # Wrap a single process (TUI launches automatically)
   running-man run --wrap "python server.py"
 
-  # Wrap multiple processes
+  # Wrap multiple processes (TUI shows all sources with tab switching)
   running-man run --wrap "python server.py" --wrap "npm run dev"
 
-  # Tail Docker Compose services
+  # Tail Docker Compose services (TUI shows all containers)
   running-man run --docker-compose ./docker-compose.yml
 
   # Mix Docker and processes
   running-man run --docker-compose ./docker-compose.yml --wrap "npm run dev"
 
-  # Custom API port
-  running-man run --wrap "go run main.go" --api-port 8080
+  # Headless mode for CI/automation (no TUI)
+  running-man run --wrap "go run main.go" --no-tui
 
-  # Query logs while running
+  # Connect TUI to existing running instance
+  running-man tui --api-port 9000
+
+  # Query logs via API while TUI is running (separate terminal)
   curl http://localhost:9000/logs?since=30s
   curl http://localhost:9000/errors
   curl http://localhost:9000/health
-
-  # Launch TUI log viewer (connects to running instance)
-  running-man tui
-  running-man tui --api-port 8080
 
 For more information, visit: github.com/iangeorge/the_running_man
 `)
