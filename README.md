@@ -70,7 +70,7 @@ the_running_man/
 
 ```bash
 # Build
-go build -o running-man cmd/running-man/main.go
+go build -o running-man ./cmd/running-man
 
 # Run tests
 go test ./...

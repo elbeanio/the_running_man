@@ -6,7 +6,7 @@ echo ""
 
 # Build the binary
 echo "1. Building running-man..."
-go build -o running-man cmd/running-man/main.go
+go build -o running-man ./cmd/running-man
 echo "✓ Build successful"
 echo ""
 
