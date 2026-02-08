@@ -248,7 +248,7 @@ func fetchSources(apiURL string) tea.Cmd {
 
 func fetchLogs(apiURL, source string) tea.Cmd {
 	return func() tea.Msg {
-		url := fmt.Sprintf("%s/logs?source=%s&since=5m", apiURL, source)
+		url := fmt.Sprintf("%s/logs?source=%s", apiURL, source)
 		resp, err := http.Get(url)
 		if err != nil {
 			return errMsg{err}
