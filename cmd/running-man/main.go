@@ -102,6 +102,8 @@ func main() {
 	switch command {
 	case "run":
 		runCommand(os.Args[2:])
+	case "tui":
+		tuiCommand(os.Args[2:])
 	case "version":
 		fmt.Println("The Running Man v0.1.0 (Phase 1)")
 		os.Exit(0)
@@ -332,6 +334,7 @@ func printUsage() {
 Usage:
   running-man run --wrap "command" [--wrap "command" ...] [flags]
   running-man run --docker-compose PATH [--wrap "command" ...] [flags]
+  running-man tui [--api-port PORT]
   running-man version
   running-man help
 
@@ -360,6 +363,10 @@ Examples:
   curl http://localhost:9000/logs?since=30s
   curl http://localhost:9000/errors
   curl http://localhost:9000/health
+
+  # Launch TUI log viewer (connects to running instance)
+  running-man tui
+  running-man tui --api-port 8080
 
 For more information, visit: github.com/iangeorge/the_running_man
 `)
