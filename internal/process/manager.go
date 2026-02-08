@@ -209,6 +209,20 @@ func (m *Manager) ListProcesses() []ProcessInfo {
 	return infos
 }
 
+// ProcessNames returns a list of all managed process names.
+// This is more efficient than ListProcesses when only names are needed.
+// This method is safe to call concurrently.
+func (m *Manager) ProcessNames() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	names := make([]string, 0, len(m.processes))
+	for name := range m.processes {
+		names = append(names, name)
+	}
+	return names
+}
+
 // GetProcess returns information about a specific process
 func (m *Manager) GetProcess(name string) (*ProcessInfo, error) {
 	m.mu.RLock()

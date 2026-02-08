@@ -771,3 +771,27 @@ func TestHandleProcessDetail_NotFound(t *testing.T) {
 		t.Errorf("Error should list available processes (proc1, proc2), got: %s", errMsg)
 	}
 }
+
+func TestHandleProcessDetail_WhitespaceOnly(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	server := NewServer(buffer, 9000, nil, nil)
+
+	// URL encode spaces - %20 for space
+	req := httptest.NewRequest("GET", "/processes/%20%20%20", nil)
+	w := httptest.NewRecorder()
+
+	server.handleProcessDetail(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if errMsg, ok := response["error"].(string); !ok || errMsg != "Process name required" {
+		t.Errorf("Expected 'Process name required' error, got: %v", response["error"])
+	}
+}

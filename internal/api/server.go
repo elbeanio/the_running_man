@@ -14,6 +14,11 @@ import (
 	"github.com/iangeorge/the_running_man/internal/storage"
 )
 
+const (
+	// maxProcessNameLength is the maximum allowed length for process names
+	maxProcessNameLength = 255
+)
+
 // LineHandler is called when a log line is captured
 type LineHandler func(source string, line string, timestamp time.Time, isStderr bool)
 
@@ -261,11 +266,15 @@ func (s *Server) handleProcessDetail(w http.ResponseWriter, r *http.Request) {
 
 	// Sanitize process name: prevent path traversal and limit length
 	processName := strings.TrimSpace(path)
+	if processName == "" {
+		s.writeError(w, http.StatusBadRequest, "Process name required")
+		return
+	}
 	if strings.Contains(processName, "/") || strings.Contains(processName, "..") {
 		s.writeError(w, http.StatusBadRequest, "Invalid process name")
 		return
 	}
-	if len(processName) > 255 {
+	if len(processName) > maxProcessNameLength {
 		s.writeError(w, http.StatusBadRequest, "Process name too long")
 		return
 	}
@@ -280,11 +289,7 @@ func (s *Server) handleProcessDetail(w http.ResponseWriter, r *http.Request) {
 	info, err := s.manager.GetProcess(processName)
 	if err != nil {
 		// Provide helpful context about available processes
-		available := s.manager.ListProcesses()
-		names := make([]string, len(available))
-		for i, p := range available {
-			names[i] = p.Name
-		}
+		names := s.manager.ProcessNames()
 		s.writeError(w, http.StatusNotFound,
 			fmt.Sprintf("Process '%s' not found. Available: %s",
 				processName, strings.Join(names, ", ")))

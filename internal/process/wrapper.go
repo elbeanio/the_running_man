@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -31,6 +32,7 @@ type ProcessWrapper struct {
 	killTimer *time.Timer
 	timerMu   sync.Mutex
 	startTime time.Time
+	stateMu   sync.RWMutex // Protects ProcessState reads
 }
 
 // New creates a new ProcessWrapper for the given command
@@ -169,31 +171,50 @@ func (w *ProcessWrapper) Stop() error {
 	return nil
 }
 
-// ExitCode returns the exit code of the process
+// ExitCode returns the exit code of the process, or -1 if still running
 func (w *ProcessWrapper) ExitCode() int {
-	if w.cmd.ProcessState == nil {
-		return -1
-	}
-	return w.cmd.ProcessState.ExitCode()
-}
-
-// PID returns the process ID, or -1 if not started
-func (w *ProcessWrapper) PID() int {
-	if w.cmd.Process == nil {
-		return -1
-	}
-	return w.cmd.Process.Pid
-}
-
-// IsRunning returns true if the process is still running
-func (w *ProcessWrapper) IsRunning() bool {
-	return w.cmd.ProcessState == nil
-}
-
-// GetStatus returns "running", "stopped", or "failed"
-func (w *ProcessWrapper) GetStatus() string {
-	// Read ProcessState once to avoid race conditions
+	w.stateMu.RLock()
 	state := w.cmd.ProcessState
+	w.stateMu.RUnlock()
+
+	if state == nil {
+		return -1
+	}
+	return state.ExitCode()
+}
+
+// PID returns the process ID, or -1 if not started.
+// This method is safe to call concurrently.
+func (w *ProcessWrapper) PID() int {
+	w.stateMu.RLock()
+	proc := w.cmd.Process
+	w.stateMu.RUnlock()
+
+	if proc == nil {
+		return -1
+	}
+	return proc.Pid
+}
+
+// IsRunning returns true if the process is still running.
+// Returns true for processes that haven't been started yet.
+// This method is safe to call concurrently.
+func (w *ProcessWrapper) IsRunning() bool {
+	w.stateMu.RLock()
+	state := w.cmd.ProcessState
+	w.stateMu.RUnlock()
+
+	return state == nil
+}
+
+// GetStatus returns the process status: "running", "stopped", or "failed".
+// A process that exited with code 0 is "stopped", non-zero is "failed".
+// This method is safe to call concurrently.
+func (w *ProcessWrapper) GetStatus() string {
+	w.stateMu.RLock()
+	state := w.cmd.ProcessState
+	w.stateMu.RUnlock()
+
 	if state == nil {
 		return "running"
 	}
@@ -203,20 +224,17 @@ func (w *ProcessWrapper) GetStatus() string {
 	return "failed"
 }
 
-// StartTime returns when the process was started
+// StartTime returns when the process was started.
+// Returns zero time if the process hasn't been started yet.
 func (w *ProcessWrapper) StartTime() time.Time {
 	return w.startTime
 }
 
-// CommandString returns the full command string
+// CommandString returns the full command string including arguments.
+// Returns just the command if no arguments were provided.
 func (w *ProcessWrapper) CommandString() string {
 	if len(w.args) == 0 {
 		return w.command
 	}
-	// Reconstruct command string
-	result := w.command
-	for _, arg := range w.args {
-		result += " " + arg
-	}
-	return result
+	return w.command + " " + strings.Join(w.args, " ")
 }
