@@ -61,7 +61,7 @@ func TestProcessWrapper_ErrorOutput(t *testing.T) {
 	}
 
 	// Use a shell command that writes to stderr
-	wrapper := New("test-stderr", "sh", []string{"-c", "echo 'error message' >&2"}, handler)
+	wrapper := New("test-stderr", "echo 'error message' >&2", []string{}, handler)
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start process: %v", err)
@@ -124,7 +124,7 @@ func TestProcessWrapper_EnvironmentInheritance(t *testing.T) {
 }
 
 func TestProcessWrapper_NonZeroExit(t *testing.T) {
-	wrapper := New("test-fail", "sh", []string{"-c", "exit 42"}, nil)
+	wrapper := New("test-fail", "exit 42", []string{}, nil)
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start process: %v", err)
@@ -202,7 +202,7 @@ func TestGetStatus_Stopped(t *testing.T) {
 }
 
 func TestGetStatus_Failed(t *testing.T) {
-	wrapper := New("test", "sh", []string{"-c", "exit 1"}, nil)
+	wrapper := New("test", "exit 1", []string{}, nil)
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start: %v", err)
@@ -303,4 +303,177 @@ func waitForExit(w *ProcessWrapper, timeout time.Duration) error {
 		time.Sleep(5 * time.Millisecond)
 	}
 	return fmt.Errorf("timeout waiting for process to exit")
+}
+
+// Tests for shell feature support
+
+func TestShellFeature_ChangeDirectory(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+
+	handler := func(source string, line string, timestamp time.Time, isStderr bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, line)
+	}
+
+	// Use cd to change directory and print working directory
+	// This tests that shell execution works
+	wrapper := New("test-cd", "cd /tmp && pwd", []string{}, handler)
+
+	if err := wrapper.Start(); err != nil {
+		t.Fatalf("Failed to start process: %v", err)
+	}
+
+	if err := wrapper.Wait(); err != nil {
+		t.Fatalf("Process failed: %v", err)
+	}
+
+	// Check output contains /tmp
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(lines) == 0 {
+		t.Fatal("Expected to capture output, got none")
+	}
+
+	output := strings.Join(lines, "\n")
+	if !strings.Contains(output, "/tmp") {
+		t.Errorf("Expected output to contain '/tmp', got: %s", output)
+	}
+
+	// Check exit code
+	if code := wrapper.ExitCode(); code != 0 {
+		t.Errorf("Expected exit code 0, got %d", code)
+	}
+}
+
+func TestShellFeature_CommandChaining(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+
+	handler := func(source string, line string, timestamp time.Time, isStderr bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, line)
+	}
+
+	// Test && chaining - both commands should execute
+	wrapper := New("test-chain", "echo first && echo second", []string{}, handler)
+
+	if err := wrapper.Start(); err != nil {
+		t.Fatalf("Failed to start process: %v", err)
+	}
+
+	if err := wrapper.Wait(); err != nil {
+		t.Fatalf("Process failed: %v", err)
+	}
+
+	// Check both outputs appear
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(lines) < 2 {
+		t.Fatalf("Expected at least 2 lines of output, got %d", len(lines))
+	}
+
+	output := strings.Join(lines, "\n")
+	if !strings.Contains(output, "first") {
+		t.Errorf("Expected output to contain 'first', got: %s", output)
+	}
+	if !strings.Contains(output, "second") {
+		t.Errorf("Expected output to contain 'second', got: %s", output)
+	}
+
+	// Check exit code
+	if code := wrapper.ExitCode(); code != 0 {
+		t.Errorf("Expected exit code 0, got %d", code)
+	}
+}
+
+func TestShellFeature_Pipes(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+
+	handler := func(source string, line string, timestamp time.Time, isStderr bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, line)
+	}
+
+	// Test pipes - echo then grep
+	wrapper := New("test-pipe", "echo hello world | grep hello", []string{}, handler)
+
+	if err := wrapper.Start(); err != nil {
+		t.Fatalf("Failed to start process: %v", err)
+	}
+
+	if err := wrapper.Wait(); err != nil {
+		t.Fatalf("Process failed: %v", err)
+	}
+
+	// Check output contains hello (grep should filter it)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(lines) == 0 {
+		t.Fatal("Expected to capture output, got none")
+	}
+
+	output := strings.Join(lines, "\n")
+	if !strings.Contains(output, "hello") {
+		t.Errorf("Expected output to contain 'hello', got: %s", output)
+	}
+
+	// Check exit code
+	if code := wrapper.ExitCode(); code != 0 {
+		t.Errorf("Expected exit code 0, got %d", code)
+	}
+}
+
+func TestShellFeature_ExitCodePropagation(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+
+	handler := func(source string, line string, timestamp time.Time, isStderr bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, line)
+	}
+
+	// Test that exit codes propagate correctly from shell
+	// false command returns exit code 1
+	wrapper := New("test-exit", "false", []string{}, handler)
+
+	if err := wrapper.Start(); err != nil {
+		t.Fatalf("Failed to start process: %v", err)
+	}
+
+	// Wait should return an error for non-zero exit
+	err := wrapper.Wait()
+	if err == nil {
+		t.Fatal("Expected Wait to return error for non-zero exit code")
+	}
+
+	// Check exit code is 1
+	if code := wrapper.ExitCode(); code != 1 {
+		t.Errorf("Expected exit code 1, got %d", code)
+	}
+}
+
+func TestShellFeature_CommandStringDisplay(t *testing.T) {
+	// Verify that CommandString returns the original command, not the shell wrapper
+	wrapper := New("test-display", "cd /tmp && pwd", []string{}, nil)
+
+	cmdStr := wrapper.CommandString()
+	expected := "cd /tmp && pwd"
+
+	if cmdStr != expected {
+		t.Errorf("Expected CommandString to return original command %q, got %q", expected, cmdStr)
+	}
+
+	// Should not contain /bin/sh
+	if strings.Contains(cmdStr, "/bin/sh") {
+		t.Errorf("CommandString should not expose shell wrapper, got: %s", cmdStr)
+	}
 }

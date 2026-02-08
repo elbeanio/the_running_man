@@ -1,3 +1,18 @@
+// Package process provides process wrapping and lifecycle management.
+//
+// SECURITY MODEL: All processes are executed via /bin/sh -c to enable full shell features
+// (cd, &&, ||, pipes, redirections, variable expansion, etc.). This means shell metacharacters
+// and command substitution will be interpreted.
+//
+// This is a local development tool. All commands come from sources the developer controls:
+//   - CLI flags they type themselves
+//   - Config files on their local filesystem
+//   - Docker Compose files they created
+//
+// If an attacker can modify these sources, they already have full access to the system.
+// There is no security boundary to defend - the user is intentionally running arbitrary commands.
+//
+// NOTE: Currently only supports Unix-like systems (macOS, Linux). Uses /bin/sh.
 package process
 
 import (
@@ -35,11 +50,33 @@ type ProcessWrapper struct {
 	stateMu   sync.RWMutex // Protects ProcessState reads
 }
 
-// New creates a new ProcessWrapper for the given command
+// New creates a new ProcessWrapper for the given command.
+//
+// Commands are executed via /bin/sh -c to enable shell features like cd, &&, pipes, etc.
+// The command and args are joined with spaces to form the full shell command string.
+//
+// Example:
+//
+//	New("frontend", "cd", []string{"frontend", "&&", "npm", "start"}, handler)
+//	Executes: /bin/sh -c "cd frontend && npm start"
+//
+// Or more simply:
+//
+//	New("frontend", "cd frontend && npm start", []string{}, handler)
+//	Executes: /bin/sh -c "cd frontend && npm start"
 func New(name string, command string, args []string, handler LineHandler) *ProcessWrapper {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	cmd := exec.CommandContext(ctx, command, args...)
+	// Build the full command string for shell execution
+	var fullCommand string
+	if len(args) == 0 {
+		fullCommand = command
+	} else {
+		fullCommand = command + " " + strings.Join(args, " ")
+	}
+
+	// Execute command in shell to support cd, &&, pipes, etc.
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", fullCommand)
 	cmd.Env = os.Environ() // Inherit environment
 
 	return &ProcessWrapper{

@@ -64,8 +64,8 @@ func TestManager_MultipleProcesses(t *testing.T) {
 
 func TestManager_ExitCodes(t *testing.T) {
 	configs := []ProcessConfig{
-		{Name: "success", Command: "sh", Args: []string{"-c", "exit 0"}},
-		{Name: "fail", Command: "sh", Args: []string{"-c", "exit 42"}},
+		{Name: "success", Command: "exit 0", Args: []string{}},
+		{Name: "fail", Command: "exit 42", Args: []string{}},
 	}
 
 	manager := NewManager(configs, nil)
@@ -213,14 +213,22 @@ func TestManager_StartFailure(t *testing.T) {
 
 	manager := NewManager(configs, nil)
 
-	// Start should fail
+	// With shell execution, Start() succeeds (shell starts), but the command fails
 	err := manager.Start()
-	if err == nil {
-		t.Error("Start should fail for invalid command")
+	if err != nil {
+		t.Fatalf("Failed to start manager: %v", err)
 	}
 
-	if !strings.Contains(err.Error(), "failed to start") {
-		t.Errorf("Error should mention 'failed to start', got: %v", err)
+	// Wait should fail because the command doesn't exist
+	err = manager.Wait()
+	if err == nil {
+		t.Error("Wait should fail for invalid command")
+	}
+
+	// Check exit code is 127 (command not found)
+	codes := manager.ExitCodes()
+	if codes["invalid"] != 127 {
+		t.Errorf("Expected exit code 127 for command not found, got %d", codes["invalid"])
 	}
 }
 
@@ -232,16 +240,24 @@ func TestManager_PartialStartFailure(t *testing.T) {
 
 	manager := NewManager(configs, nil)
 
-	// Start should fail
+	// With shell execution, Start() succeeds (shells start)
 	err := manager.Start()
-	if err == nil {
-		t.Error("Start should fail when any process fails")
+	if err != nil {
+		t.Fatalf("Failed to start manager: %v", err)
 	}
 
-	// No processes should be running (all should be stopped on failure)
+	// Wait for processes to complete
+	_ = manager.Wait()
+
+	// Check that bad command has exit code 127 (command not found)
 	codes := manager.ExitCodes()
-	if len(codes) > 0 {
-		t.Errorf("No processes should be running after start failure, got %d", len(codes))
+	if codes["bad"] != 127 {
+		t.Errorf("Expected exit code 127 for bad command, got %d", codes["bad"])
+	}
+
+	// Good command should have succeeded
+	if codes["good"] != 0 {
+		t.Errorf("Expected exit code 0 for good command, got %d", codes["good"])
 	}
 }
 
