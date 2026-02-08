@@ -86,11 +86,11 @@ func (w *ProcessWrapper) captureStream(stream io.ReadCloser, isStderr bool) {
 		line := scanner.Text()
 		timestamp := time.Now()
 
-		// Pass-through to terminal
+		// Pass-through to terminal with process name prefix
 		if isStderr {
-			fmt.Fprintln(os.Stderr, line)
+			fmt.Fprintf(os.Stderr, "[%s] %s\n", w.name, line)
 		} else {
-			fmt.Println(line)
+			fmt.Printf("[%s] %s\n", w.name, line)
 		}
 
 		// Call handler if provided

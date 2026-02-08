@@ -168,8 +168,8 @@ else
 fi
 echo ""
 
-# Test 10: Terminal output aggregation
-echo "11. Testing terminal output aggregation..."
+# Test 10: Terminal output aggregation with prefixes
+echo "11. Testing terminal output aggregation with process name prefixes..."
 ./running-man run \
     --wrap "echo A" \
     --wrap "echo B" \
@@ -179,13 +179,14 @@ PID=$!
 sleep 2
 kill $PID 2>/dev/null || true
 
-# Check that all output is present (terminal aggregation)
-if grep -q "A" /tmp/running-man-aggregate.log && \
-   grep -q "B" /tmp/running-man-aggregate.log && \
-   grep -q "C" /tmp/running-man-aggregate.log; then
-    echo "✓ Terminal output aggregation works"
+# Check that all output is present with process name prefixes
+if grep -q "\[echo-a\] A" /tmp/running-man-aggregate.log && \
+   grep -q "\[echo-b\] B" /tmp/running-man-aggregate.log && \
+   grep -q "\[echo-c\] C" /tmp/running-man-aggregate.log; then
+    echo "✓ Terminal output aggregation with prefixes works"
 else
     echo "✗ Terminal output aggregation failed"
+    cat /tmp/running-man-aggregate.log | grep -E "\[(echo|A|B|C)"
     exit 1
 fi
 echo ""
