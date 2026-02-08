@@ -7,6 +7,8 @@ processes:
   - name: backend
     command: go run cmd/server/main.go
     # args: ["--port", "8080"]  # Optional: command arguments
+    # restart_on_crash: true     # Optional: auto-restart if process exits with non-zero code
+                                 # Default: false
 
   - name: frontend
     command: npm run dev
@@ -14,6 +16,7 @@ processes:
 
   - name: worker
     command: cd services/worker && python worker.py
+    restart_on_crash: true  # Example: restart worker on crash
 
 # Docker Compose integration (optional)
 # Automatically streams logs from all services in your compose file

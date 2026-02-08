@@ -60,9 +60,10 @@ type Config struct {
 // ProcessConfig represents a single process configuration in YAML.
 // This matches internal/process.ProcessConfig but with YAML tags.
 type ProcessConfig struct {
-	Name    string   `yaml:"name"`
-	Command string   `yaml:"command"`
-	Args    []string `yaml:"args,omitempty"`
+	Name           string   `yaml:"name"`
+	Command        string   `yaml:"command"`
+	Args           []string `yaml:"args,omitempty"`
+	RestartOnCrash bool     `yaml:"restart_on_crash,omitempty"`
 }
 
 // Validate checks the config for errors and returns validation errors.
@@ -135,10 +136,11 @@ func (c *Config) ToProcessConfigs() []process.ProcessConfig {
 	result := make([]process.ProcessConfig, len(c.Processes))
 	for i, proc := range c.Processes {
 		result[i] = process.ProcessConfig{
-			Name:    proc.Name,
-			Command: proc.Command,
-			Args:    proc.Args,
-			Shell:   shell,
+			Name:           proc.Name,
+			Command:        proc.Command,
+			Args:           proc.Args,
+			Shell:          shell,
+			RestartOnCrash: proc.RestartOnCrash,
 		}
 	}
 	return result

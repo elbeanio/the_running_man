@@ -12,10 +12,11 @@ import (
 
 // ProcessConfig represents a process configuration
 type ProcessConfig struct {
-	Name    string
-	Command string
-	Args    []string
-	Shell   string // Shell to use (default: /bin/sh)
+	Name           string
+	Command        string
+	Args           []string
+	Shell          string // Shell to use (default: /bin/sh)
+	RestartOnCrash bool   // Whether to restart process on crash (default: false)
 }
 
 // ProcessInfo contains runtime information about a process
@@ -86,31 +87,86 @@ func (m *Manager) Start() error {
 
 // Wait waits for all processes to complete
 // Returns an error if any process exits with an error
+// Automatically restarts crashed processes if restart_on_crash is enabled
 func (m *Manager) Wait() error {
 	m.mu.RLock()
-	processes := make([]*ProcessWrapper, 0, len(m.processes))
-	for _, p := range m.processes {
-		processes = append(processes, p)
+	processNames := make([]string, 0, len(m.processes))
+	for name := range m.processes {
+		processNames = append(processNames, name)
 	}
 	m.mu.RUnlock()
 
 	var firstErr error
 	var mu sync.Mutex
 
-	// Wait for all processes concurrently
+	// Wait for each process and handle restarts
 	var wg sync.WaitGroup
-	for _, p := range processes {
+	for _, name := range processNames {
 		wg.Add(1)
-		go func(wrapper *ProcessWrapper) {
+		go func(processName string) {
 			defer wg.Done()
-			if err := wrapper.Wait(); err != nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = err
+
+			for {
+				// Get current wrapper
+				m.mu.RLock()
+				wrapper, exists := m.processes[processName]
+				cfg, hasCfg := m.configs[processName]
+				m.mu.RUnlock()
+
+				if !exists || !hasCfg {
+					return
 				}
-				mu.Unlock()
+
+				// Wait for process to exit
+				err := wrapper.Wait()
+				exitCode := wrapper.ExitCode()
+
+				// Check if we should restart
+				shouldRestart := cfg.RestartOnCrash && exitCode != 0
+
+				// Check if we're shutting down (context cancelled)
+				select {
+				case <-m.ctx.Done():
+					// Manager is shutting down, don't restart
+					return
+				default:
+				}
+
+				if !shouldRestart {
+					// Process exited cleanly or restart not enabled
+					if err != nil {
+						mu.Lock()
+						if firstErr == nil {
+							firstErr = err
+						}
+						mu.Unlock()
+					}
+					return
+				}
+
+				// Log restart
+				m.handler(processName, fmt.Sprintf("Process crashed with exit code %d, restarting...", exitCode), time.Now(), true)
+
+				// Create new wrapper and restart
+				newWrapper := New(processName, cfg.Command, cfg.Args, cfg.Shell, m.handler)
+				if err := newWrapper.Start(); err != nil {
+					m.handler(processName, fmt.Sprintf("Failed to restart: %v", err), time.Now(), true)
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = fmt.Errorf("failed to restart process %s: %w", processName, err)
+					}
+					mu.Unlock()
+					return
+				}
+
+				// Update wrapper in map
+				m.mu.Lock()
+				m.processes[processName] = newWrapper
+				m.mu.Unlock()
+
+				// Continue loop to wait for the restarted process
 			}
-		}(p)
+		}(name)
 	}
 
 	wg.Wait()

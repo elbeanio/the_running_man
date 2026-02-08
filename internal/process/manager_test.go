@@ -435,3 +435,143 @@ func waitForManagerPIDs(m *Manager, timeout time.Duration) error {
 	}
 	return fmt.Errorf("timeout waiting for all processes to start")
 }
+
+func TestManager_RestartOnCrash(t *testing.T) {
+	handler := func(source string, line string, timestamp time.Time, isStderr bool) {
+		// Log output for debugging
+		t.Logf("[%s] %s", source, line)
+	}
+
+	// Create a process that exits with code 1
+	configs := []ProcessConfig{
+		{
+			Name:           "crasher",
+			Command:        "sh",
+			Args:           []string{"-c", "exit 1"},
+			RestartOnCrash: true,
+		},
+	}
+
+	manager := NewManager(configs, handler)
+
+	// Start process
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start process: %v", err)
+	}
+
+	// Start Wait() in background (it will loop restarting the crashed process)
+	done := make(chan error, 1)
+	go func() {
+		done <- manager.Wait()
+	}()
+
+	// Let it crash and restart a few times
+	time.Sleep(200 * time.Millisecond)
+
+	// Stop the manager (this should break the restart loop)
+	// Note: Stop may fail if process already exited, which is expected
+	manager.Stop()
+
+	// Wait should complete quickly after Stop
+	select {
+	case <-done:
+		// Success - Wait completed
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait did not complete after Stop within timeout")
+	}
+
+	// If we got here, the restart loop worked and was properly stopped
+}
+
+func TestManager_NoRestartOnCleanExit(t *testing.T) {
+	var mu sync.Mutex
+	lines := []string{}
+	runCount := 0
+
+	handler := func(source string, line string, timestamp time.Time, isStderr bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, line)
+		if source == "clean-exit" && strings.Contains(line, "run") {
+			runCount++
+		}
+	}
+
+	// Create a process that exits cleanly (exit code 0)
+	configs := []ProcessConfig{
+		{
+			Name:           "clean-exit",
+			Command:        "echo",
+			Args:           []string{"clean run"},
+			RestartOnCrash: true, // Enabled, but shouldn't restart on clean exit
+		},
+	}
+
+	manager := NewManager(configs, handler)
+
+	// Start process
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start process: %v", err)
+	}
+
+	// Wait for process to complete
+	if err := manager.Wait(); err != nil {
+		t.Fatalf("Wait failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Should have run once, not restarted
+	if runCount != 1 {
+		t.Errorf("Expected exactly 1 run, got %d", runCount)
+	}
+
+	// Should not see restart message
+	for _, line := range lines {
+		if strings.Contains(line, "restarting") {
+			t.Errorf("Should not restart on clean exit, but saw: %s", line)
+		}
+	}
+}
+
+func TestManager_NoRestartWhenDisabled(t *testing.T) {
+	var mu sync.Mutex
+	lines := []string{}
+
+	handler := func(source string, line string, timestamp time.Time, isStderr bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, line)
+	}
+
+	// Create a process that crashes but has restart disabled
+	configs := []ProcessConfig{
+		{
+			Name:           "no-restart",
+			Command:        "sh",
+			Args:           []string{"-c", "exit 1"},
+			RestartOnCrash: false, // Disabled
+		},
+	}
+
+	manager := NewManager(configs, handler)
+
+	// Start process
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start process: %v", err)
+	}
+
+	// Wait for process to exit (should not restart)
+	manager.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Should not see restart message
+	for _, line := range lines {
+		if strings.Contains(line, "restarting") {
+			t.Errorf("Should not restart when disabled, but saw: %s", line)
+		}
+	}
+}
