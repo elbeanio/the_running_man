@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/iangeorge/the_running_man/internal/api"
+	"github.com/iangeorge/the_running_man/internal/docker"
 	"github.com/iangeorge/the_running_man/internal/parser"
 	"github.com/iangeorge/the_running_man/internal/storage"
 	"github.com/iangeorge/the_running_man/internal/wrapper"
@@ -162,12 +164,6 @@ func runCommand(args []string) {
 
 	fmt.Println("The Running Man - Dev Observability Tool")
 
-	// Show Docker Compose info if provided
-	if *dockerCompose != "" {
-		fmt.Printf("Docker Compose: %s\n", *dockerCompose)
-		fmt.Println("⚠ Note: Docker Compose integration not yet fully implemented")
-	}
-
 	// Show wrapped processes
 	for _, proc := range processes {
 		fmt.Printf("Wrapping [%s]: %s %v\n", proc.Name, proc.Command, proc.Args)
@@ -187,6 +183,73 @@ func runCommand(args []string) {
 		if entry != nil {
 			buffer.Append(entry)
 		}
+	}
+
+	// Docker Compose integration
+	var containerStreamers []*docker.ContainerStreamer
+	var dockerClient *docker.Client
+	ctx := context.Background()
+
+	if *dockerCompose != "" {
+		// Parse compose file
+		compose, err := docker.ParseComposeFile(*dockerCompose)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[running-man] Failed to parse docker-compose.yml: %v\n", err)
+			os.Exit(1)
+		}
+
+		serviceNames := compose.GetServiceNames()
+		if len(serviceNames) == 0 {
+			fmt.Fprintf(os.Stderr, "[running-man] No services found in docker-compose.yml\n")
+			os.Exit(1)
+		}
+
+		fmt.Printf("Docker Compose: %s (services: %s)\n", *dockerCompose, strings.Join(serviceNames, ", "))
+
+		// Create Docker client
+		dockerClient, err = docker.NewClient()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[running-man] Failed to create Docker client: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[running-man] Make sure Docker is running and accessible\n")
+			os.Exit(1)
+		}
+		defer dockerClient.Close()
+
+		// Check Docker availability
+		if err := dockerClient.Ping(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "[running-man] Docker daemon not available: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Discover running containers
+		containers, err := dockerClient.DiscoverContainers(ctx, *dockerCompose, serviceNames)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[running-man] Failed to discover containers: %v\n", err)
+			os.Exit(1)
+		}
+
+		if len(containers) == 0 {
+			fmt.Fprintf(os.Stderr, "[running-man] No running containers found for docker-compose project\n")
+			fmt.Fprintf(os.Stderr, "[running-man] Make sure to run 'docker-compose up' first\n")
+			os.Exit(1)
+		}
+
+		fmt.Printf("Found %d running container(s):\n", len(containers))
+		for _, container := range containers {
+			fmt.Printf("  - [%s] %s\n", container.Name, container.ID[:12])
+		}
+
+		// Start log streamers for each container
+		for _, container := range containers {
+			streamer := docker.NewContainerStreamer(dockerClient, container.ID, container.Name, lineHandler)
+			if err := streamer.Start(); err != nil {
+				fmt.Fprintf(os.Stderr, "[running-man] Failed to start log streamer for %s: %v\n", container.Name, err)
+				continue
+			}
+			containerStreamers = append(containerStreamers, streamer)
+		}
+
+		fmt.Println()
 	}
 
 	// Create process manager for all processes
@@ -212,10 +275,30 @@ func runCommand(args []string) {
 	// Wait for all processes to complete
 	err := manager.Wait()
 
+	// Stop all container streamers
+	for _, streamer := range containerStreamers {
+		streamer.Stop()
+	}
+
+	// Wait for container streamers to finish
+	for _, streamer := range containerStreamers {
+		streamer.Wait()
+	}
+
 	// Flush any remaining multi-line entries for all processes
 	for _, proc := range processes {
 		if flushed := multiParser.Flush(proc.Name); flushed != nil {
 			buffer.Append(flushed)
+		}
+	}
+
+	// Flush container streamers (if any)
+	if *dockerCompose != "" {
+		compose, _ := docker.ParseComposeFile(*dockerCompose)
+		for _, serviceName := range compose.GetServiceNames() {
+			if flushed := multiParser.Flush(serviceName); flushed != nil {
+				buffer.Append(flushed)
+			}
 		}
 	}
 
