@@ -101,6 +101,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/logs", s.handleLogs)
 	mux.HandleFunc("/errors", s.handleErrors)
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/processes/stop-all", s.handleStopAll)  // Must come before /processes/
 	mux.HandleFunc("/processes/", s.handleProcessOrRestart) // Handles both GET /processes/{name} and POST /processes/{name}/restart
 	mux.HandleFunc("/processes", s.handleProcesses)
 
@@ -367,5 +368,35 @@ func (s *Server) handleProcessRestart(w http.ResponseWriter, r *http.Request, pa
 	s.writeJSON(w, map[string]interface{}{
 		"message": fmt.Sprintf("Process '%s' restarted successfully", processName),
 		"process": info,
+	})
+}
+
+func (s *Server) handleStopAll(w http.ResponseWriter, r *http.Request) {
+	// Only allow POST
+	if r.Method != http.MethodPost {
+		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed, use POST")
+		return
+	}
+
+	// Check manager availability
+	if s.manager == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "Process manager not available")
+		return
+	}
+
+	// Get count of processes before stopping
+	processes := s.manager.ListProcesses()
+	count := len(processes)
+
+	// Stop all processes
+	if err := s.manager.Stop(); err != nil {
+		s.writeError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Failed to stop all processes: %v", err))
+		return
+	}
+
+	s.writeJSON(w, map[string]interface{}{
+		"message": fmt.Sprintf("Stopped %d process(es) successfully", count),
+		"count":   count,
 	})
 }

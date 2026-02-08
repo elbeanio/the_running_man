@@ -826,7 +826,7 @@ func waitForManagerPIDs(m *process.Manager, timeout time.Duration) error {
 
 func TestHandleProcessRestart_Success(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	
+
 	configs := []process.ProcessConfig{
 		{Name: "test-echo", Command: "echo", Args: []string{"test"}},
 	}
@@ -835,53 +835,53 @@ func TestHandleProcessRestart_Success(t *testing.T) {
 		t.Fatalf("Failed to start manager: %v", err)
 	}
 	defer manager.Stop()
-	
+
 	if err := waitForManagerPIDs(manager, 1*time.Second); err != nil {
 		t.Fatalf("Process didn't start: %v", err)
 	}
-	
+
 	server := NewServer(buffer, 9000, nil, manager)
-	
+
 	// Get original PID
 	info1, _ := manager.GetProcess("test-echo")
 	originalPID := info1.PID
-	
+
 	// Restart the process
 	req := httptest.NewRequest("POST", "/processes/test-echo/restart", nil)
 	w := httptest.NewRecorder()
-	
+
 	server.handleProcessOrRestart(w, req)
-	
+
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", w.Code)
 	}
-	
+
 	var response map[string]interface{}
 	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
-	
+
 	// Check response has message and process
 	if msg, ok := response["message"].(string); !ok || !strings.Contains(msg, "restarted successfully") {
 		t.Errorf("Expected success message, got: %v", response["message"])
 	}
-	
+
 	processData, ok := response["process"].(map[string]interface{})
 	if !ok {
 		t.Fatal("Expected 'process' field in response")
 	}
-	
+
 	// Wait a bit for restart to complete
 	time.Sleep(50 * time.Millisecond)
-	
+
 	// Verify PID changed
 	info2, _ := manager.GetProcess("test-echo")
 	newPID := info2.PID
-	
+
 	if newPID == originalPID {
 		t.Errorf("PID should have changed after restart, was %d, still %d", originalPID, newPID)
 	}
-	
+
 	// Verify process info in response
 	if name, ok := processData["name"].(string); !ok || name != "test-echo" {
 		t.Errorf("Expected process name 'test-echo', got %v", processData["name"])
@@ -890,7 +890,7 @@ func TestHandleProcessRestart_Success(t *testing.T) {
 
 func TestHandleProcessRestart_NotFound(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	
+
 	configs := []process.ProcessConfig{
 		{Name: "existing", Command: "sleep", Args: []string{"10"}},
 	}
@@ -899,23 +899,23 @@ func TestHandleProcessRestart_NotFound(t *testing.T) {
 		t.Fatalf("Failed to start manager: %v", err)
 	}
 	defer manager.Stop()
-	
+
 	server := NewServer(buffer, 9000, nil, manager)
-	
+
 	req := httptest.NewRequest("POST", "/processes/nonexistent/restart", nil)
 	w := httptest.NewRecorder()
-	
+
 	server.handleProcessOrRestart(w, req)
-	
+
 	if w.Code != http.StatusNotFound {
 		t.Errorf("Expected status 404, got %d", w.Code)
 	}
-	
+
 	var response map[string]interface{}
 	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
-	
+
 	errMsg, ok := response["error"].(string)
 	if !ok || !strings.Contains(errMsg, "not found") {
 		t.Errorf("Expected 'not found' error, got: %v", response["error"])
@@ -924,7 +924,7 @@ func TestHandleProcessRestart_NotFound(t *testing.T) {
 
 func TestHandleProcessRestart_WrongMethod(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	
+
 	configs := []process.ProcessConfig{
 		{Name: "test-proc", Command: "sleep", Args: []string{"10"}},
 	}
@@ -933,15 +933,15 @@ func TestHandleProcessRestart_WrongMethod(t *testing.T) {
 		t.Fatalf("Failed to start manager: %v", err)
 	}
 	defer manager.Stop()
-	
+
 	server := NewServer(buffer, 9000, nil, manager)
-	
+
 	// Try GET on restart endpoint
 	req := httptest.NewRequest("GET", "/processes/test-proc/restart", nil)
 	w := httptest.NewRecorder()
-	
+
 	server.handleProcessOrRestart(w, req)
-	
+
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("Expected status 405, got %d", w.Code)
 	}
@@ -950,13 +950,227 @@ func TestHandleProcessRestart_WrongMethod(t *testing.T) {
 func TestHandleProcessRestart_NoManager(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
 	server := NewServer(buffer, 9000, nil, nil) // nil manager
-	
+
 	req := httptest.NewRequest("POST", "/processes/any-proc/restart", nil)
 	w := httptest.NewRecorder()
-	
+
 	server.handleProcessOrRestart(w, req)
-	
+
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("Expected status 503, got %d", w.Code)
+	}
+}
+
+// Tests for POST /processes/stop-all
+
+func TestHandleStopAll_Success(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+
+	// Create manager with 3 long-running processes
+	configs := []process.ProcessConfig{
+		{Name: "proc1", Command: "sleep", Args: []string{"10"}},
+		{Name: "proc2", Command: "sleep", Args: []string{"10"}},
+		{Name: "proc3", Command: "sleep", Args: []string{"10"}},
+	}
+	manager := process.NewManager(configs, nil)
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start manager: %v", err)
+	}
+	defer manager.Stop()
+
+	if err := waitForManagerPIDs(manager, 1*time.Second); err != nil {
+		t.Fatalf("Processes didn't start: %v", err)
+	}
+
+	server := NewServer(buffer, 9000, nil, manager)
+
+	// Verify all processes are running
+	infos := manager.ListProcesses()
+	runningCount := 0
+	for _, info := range infos {
+		if info.Status == "running" {
+			runningCount++
+		}
+	}
+	if runningCount != 3 {
+		t.Errorf("Expected 3 running processes, got %d", runningCount)
+	}
+
+	// Stop all processes
+	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
+	w := httptest.NewRecorder()
+
+	server.handleStopAll(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// Check response message and count
+	if msg, ok := response["message"].(string); !ok || !strings.Contains(msg, "Stopped") {
+		t.Errorf("Expected 'Stopped' message, got: %v", response["message"])
+	}
+
+	count := int(response["count"].(float64))
+	if count != 3 {
+		t.Errorf("Expected count=3, got %d", count)
+	}
+
+	// Wait for processes to actually terminate
+	if err := manager.Wait(); err != nil {
+		t.Logf("Warning: Wait returned error (may be expected): %v", err)
+	}
+
+	// Verify all processes have exited
+	infos = manager.ListProcesses()
+	for _, info := range infos {
+		if info.Status == "running" {
+			t.Errorf("Expected all processes to be stopped, but %s is still running", info.Name)
+		}
+	}
+}
+
+func TestHandleStopAll_NoProcesses(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+
+	// Create manager with no processes
+	configs := []process.ProcessConfig{}
+	manager := process.NewManager(configs, nil)
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start manager: %v", err)
+	}
+	defer manager.Stop()
+
+	server := NewServer(buffer, 9000, nil, manager)
+
+	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
+	w := httptest.NewRecorder()
+
+	server.handleStopAll(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	count := int(response["count"].(float64))
+	if count != 0 {
+		t.Errorf("Expected count=0 for no processes, got %d", count)
+	}
+}
+
+func TestHandleStopAll_MixedStates(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+
+	// Create manager with mix of quick and long-running processes
+	configs := []process.ProcessConfig{
+		{Name: "quick", Command: "echo", Args: []string{"done"}},
+		{Name: "long", Command: "sleep", Args: []string{"10"}},
+	}
+	manager := process.NewManager(configs, nil)
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start manager: %v", err)
+	}
+	defer manager.Stop()
+
+	// Wait for all PIDs to be assigned
+	if err := waitForManagerPIDs(manager, 1*time.Second); err != nil {
+		t.Fatalf("Processes didn't start: %v", err)
+	}
+
+	// Give quick process time to finish
+	time.Sleep(100 * time.Millisecond)
+
+	server := NewServer(buffer, 9000, nil, manager)
+
+	// Stop-all when some processes are stopped and some running
+	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
+	w := httptest.NewRecorder()
+
+	server.handleStopAll(w, req)
+
+	// Should succeed even with mixed states
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+		return
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// Should report count of all processes
+	count := int(response["count"].(float64))
+	if count != 2 {
+		t.Errorf("Expected count=2, got %d", count)
+	}
+}
+
+func TestHandleStopAll_WrongMethod(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+
+	configs := []process.ProcessConfig{
+		{Name: "proc", Command: "sleep", Args: []string{"10"}},
+	}
+	manager := process.NewManager(configs, nil)
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start manager: %v", err)
+	}
+	defer manager.Stop()
+
+	server := NewServer(buffer, 9000, nil, manager)
+
+	// Try GET instead of POST
+	req := httptest.NewRequest("GET", "/processes/stop-all", nil)
+	w := httptest.NewRecorder()
+
+	server.handleStopAll(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status 405, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	errMsg, ok := response["error"].(string)
+	if !ok || !strings.Contains(errMsg, "Method not allowed") {
+		t.Errorf("Expected 'Method not allowed' error, got: %v", response["error"])
+	}
+}
+
+func TestHandleStopAll_NoManager(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	server := NewServer(buffer, 9000, nil, nil) // nil manager
+
+	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
+	w := httptest.NewRecorder()
+
+	server.handleStopAll(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("Expected status 503, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	errMsg, ok := response["error"].(string)
+	if !ok || !strings.Contains(errMsg, "not available") {
+		t.Errorf("Expected 'not available' error, got: %v", response["error"])
 	}
 }
