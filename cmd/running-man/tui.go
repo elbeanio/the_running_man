@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -107,7 +108,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 	case sourcesMsg:
-		m.sources = msg
+		m.sources = sortSources(msg)
 		if len(m.sources) > 0 {
 			return m, fetchLogs(m.apiURL, m.sources[m.selectedSource])
 		}
@@ -149,6 +150,72 @@ func (m model) View() string {
 	logsView := renderLogs(m.logs, availableHeight, m.width)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, logsView, help)
+}
+
+// sortSources organizes sources into logical groups:
+// Group 1: running-man (internal logs)
+// Group 2: Docker containers (alphabetical)
+// Group 3: Processes (alphabetical)
+func sortSources(sources []string) []string {
+	runningMan := []string{}
+	docker := []string{}
+	processes := []string{}
+
+	for _, source := range sources {
+		if source == "running-man" {
+			runningMan = append(runningMan, source)
+		} else if isDockerContainer(source) {
+			docker = append(docker, source)
+		} else {
+			processes = append(processes, source)
+		}
+	}
+
+	// Sort each group alphabetically
+	sort.Strings(docker)
+	sort.Strings(processes)
+
+	// Combine groups
+	result := []string{}
+	result = append(result, runningMan...)
+	result = append(result, docker...)
+	result = append(result, processes...)
+
+	return result
+}
+
+// isDockerContainer attempts to identify if a source name is a Docker container.
+// Docker Compose containers typically follow the pattern: projectname-servicename-N
+// or projectname_servicename_N (depending on compose version)
+func isDockerContainer(name string) bool {
+	// Look for patterns like "project-service-1" or "project_service_1"
+	// This is a heuristic - containers have multiple segments separated by - or _
+	// and typically end with a number
+
+	parts := strings.FieldsFunc(name, func(r rune) bool {
+		return r == '-' || r == '_'
+	})
+
+	// Docker containers typically have at least 3 parts: project-service-replica
+	if len(parts) < 3 {
+		return false
+	}
+
+	// Last part is often a number (replica index)
+	lastPart := parts[len(parts)-1]
+	if len(lastPart) > 0 {
+		// Check if it's a hex ID (first 12 chars of container ID)
+		// or a replica number
+		if _, err := fmt.Sscanf(lastPart, "%d", new(int)); err == nil {
+			return true
+		}
+		// Could also be a hash - if it's all hex digits
+		if len(lastPart) == 12 {
+			return true
+		}
+	}
+
+	return false
 }
 
 func renderHeader(sources []string, selected int) string {
