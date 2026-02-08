@@ -18,14 +18,16 @@ type LineHandler func(source string, line string, timestamp time.Time, isStderr 
 
 // ProcessWrapper wraps a child process and captures its output
 type ProcessWrapper struct {
-	cmd     *exec.Cmd
-	name    string
-	stdout  io.ReadCloser
-	stderr  io.ReadCloser
-	handler LineHandler
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
+	cmd       *exec.Cmd
+	name      string
+	stdout    io.ReadCloser
+	stderr    io.ReadCloser
+	handler   LineHandler
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	killTimer *time.Timer
+	timerMu   sync.Mutex
 }
 
 // New creates a new ProcessWrapper for the given command
@@ -69,9 +71,6 @@ func (w *ProcessWrapper) Start() error {
 	w.wg.Add(2)
 	go w.captureStream(stdout, false)
 	go w.captureStream(stderr, true)
-
-	// Setup signal handlers
-	w.setupSignalHandlers()
 
 	return nil
 }
@@ -122,6 +121,14 @@ func (w *ProcessWrapper) Wait() error {
 	// Wait for process to exit
 	err := w.cmd.Wait()
 
+	// Cancel kill timer if process exited gracefully
+	w.timerMu.Lock()
+	if w.killTimer != nil {
+		w.killTimer.Stop()
+		w.killTimer = nil
+	}
+	w.timerMu.Unlock()
+
 	// Wait for output streams to finish
 	w.wg.Wait()
 
@@ -138,12 +145,14 @@ func (w *ProcessWrapper) Stop() error {
 		}
 
 		// Give it 5 seconds to shut down gracefully
-		time.AfterFunc(5*time.Second, func() {
+		w.timerMu.Lock()
+		w.killTimer = time.AfterFunc(5*time.Second, func() {
 			if w.cmd.Process != nil {
 				fmt.Fprintf(os.Stderr, "[running-man] Process didn't stop gracefully, killing...\n")
 				w.cmd.Process.Kill()
 			}
 		})
+		w.timerMu.Unlock()
 	}
 
 	// Cancel context

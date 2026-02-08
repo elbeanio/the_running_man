@@ -29,13 +29,6 @@ var (
 	multipleDashesRegex  = regexp.MustCompile(`-+`)
 )
 
-// ProcessConfig represents a process to wrap
-type ProcessConfig struct {
-	Name    string
-	Command string
-	Args    []string
-}
-
 // wrapFlags is a custom flag type for collecting multiple --wrap values
 type wrapFlags []string
 
@@ -137,7 +130,7 @@ func runCommand(args []string) {
 	}
 
 	// Parse wrapped processes
-	var processes []ProcessConfig
+	var processes []wrapper.ProcessConfig
 	nameMap := make(map[string]int)
 
 	for _, cmdStr := range wraps {
@@ -159,7 +152,7 @@ func runCommand(args []string) {
 			nameMap[baseName] = 1
 		}
 
-		processes = append(processes, ProcessConfig{
+		processes = append(processes, wrapper.ProcessConfig{
 			Name:    name,
 			Command: cmd,
 			Args:    cmdArgs,
@@ -186,9 +179,8 @@ func runCommand(args []string) {
 		}
 	}
 
-	// For now, only wrap the first process (multi-process support in next task)
-	proc := processes[0]
-	processWrapper := wrapper.New(proc.Name, proc.Command, proc.Args, lineHandler)
+	// Create process manager for all processes
+	manager := wrapper.NewManager(processes, lineHandler)
 
 	// Start API server in background
 	apiServer := api.NewServer(buffer, *apiPort)
@@ -201,24 +193,36 @@ func runCommand(args []string) {
 	// Give API server time to start
 	time.Sleep(100 * time.Millisecond)
 
-	// Start the wrapped process
-	if err := processWrapper.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "[running-man] Failed to start process: %v\n", err)
+	// Start all wrapped processes
+	if err := manager.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "[running-man] Failed to start processes: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Wait for process to complete
-	err := processWrapper.Wait()
+	// Wait for all processes to complete
+	err := manager.Wait()
 
-	// Flush any remaining multi-line entries
-	if flushed := multiParser.Flush(proc.Name); flushed != nil {
-		buffer.Append(flushed)
+	// Flush any remaining multi-line entries for all processes
+	for _, proc := range processes {
+		if flushed := multiParser.Flush(proc.Name); flushed != nil {
+			buffer.Append(flushed)
+		}
 	}
 
+	// Get exit codes
+	exitCodes := manager.ExitCodes()
+
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\n[running-man] Process exited with error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "\n[running-man] One or more processes exited with error: %v\n", err)
 	} else {
-		fmt.Printf("\n[running-man] Process completed successfully\n")
+		fmt.Printf("\n[running-man] All processes completed successfully\n")
+	}
+
+	// Print exit codes for each process
+	for name, code := range exitCodes {
+		if code != 0 {
+			fmt.Fprintf(os.Stderr, "[running-man] Process %s exited with code %d\n", name, code)
+		}
 	}
 
 	fmt.Printf("[running-man] Captured %d log entries\n", buffer.Stats().TotalEntries)
