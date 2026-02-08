@@ -12,20 +12,20 @@ go install github.com/iangeorge/the_running_man/cmd/running-man@latest
 
 ### Usage
 
-Wrap your development process (TUI launches automatically):
+Run your development processes (TUI launches automatically):
 
 ```bash
 # Python application - TUI shows logs in real-time
-running-man run --wrap "python server.py"
+running-man run --process "python server.py"
 
 # Multiple processes - switch between them with Tab
-running-man run --wrap "python server.py" --wrap "npm run dev"
+running-man run --process "python server.py" --process "npm run dev"
 
 # Docker Compose services - all containers visible in TUI
 running-man run --docker-compose ./docker-compose.yml
 
 # Headless mode for CI/automation
-running-man run --wrap "pytest" --no-tui
+running-man run --process "pytest" --no-tui
 ```
 
 ### TUI Navigation
@@ -57,10 +57,12 @@ curl http://localhost:9000/health
 
 ## Features
 
-- **Process Wrapping**: Capture stdout/stderr from any process
+- **Process Management**: Run and monitor multiple processes simultaneously
+- **TUI Log Viewer**: Interactive terminal UI with tab switching between sources
 - **Smart Parsing**: Detects Python tracebacks, JSON logs, and plain text
 - **Ring Buffer**: Efficient in-memory storage (30min or 50MB default)
 - **Query API**: Filter logs by time, level, source, and content
+- **Docker Compose**: Monitor container logs alongside local processes
 - **Zero Config**: Works out of the box for simple cases
 
 ## Architecture
@@ -69,9 +71,10 @@ curl http://localhost:9000/health
 the_running_man/
 ├── cmd/running-man/        # CLI entry point
 └── internal/
-    ├── wrapper/            # Process spawning and output capture
+    ├── process/            # Process spawning and output capture
     ├── parser/             # Log format detection and parsing
     ├── storage/            # Ring buffer implementation
+    ├── docker/             # Docker Compose integration
     └── api/                # HTTP query endpoints
 ```
 

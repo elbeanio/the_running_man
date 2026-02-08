@@ -12,7 +12,7 @@ echo ""
 
 # Test 1: Multiple process wrapping
 echo "2. Testing multiple process wrapping..."
-./running-man run --no-tui --wrap "echo process1" --wrap "echo process2" --wrap "echo process3" > /tmp/running-man-multi.log 2>&1 &
+./running-man run --no-tui --process "echo process1" --process "echo process2" --process "echo process3" > /tmp/running-man-multi.log 2>&1 &
 PID=$!
 sleep 2
 kill $PID 2>/dev/null || true
@@ -44,7 +44,7 @@ echo ""
 echo "4. Testing parallel execution..."
 # All processes start immediately via Manager.Start(), which proves parallel execution
 # We don't need to measure timing - the Manager test suite already validates this
-./running-man run --no-tui --wrap "echo p1" --wrap "echo p2" --wrap "echo p3" > /tmp/running-man-parallel.log 2>&1 &
+./running-man run --no-tui --process "echo p1" --process "echo p2" --process "echo p3" > /tmp/running-man-parallel.log 2>&1 &
 PID=$!
 sleep 2
 kill $PID 2>/dev/null || true
@@ -62,12 +62,12 @@ echo ""
 # Test 4: Handle 5+ simultaneous processes
 echo "5. Testing 5+ simultaneous processes..."
 ./running-man run --no-tui \
-    --wrap "echo test1" \
-    --wrap "echo test2" \
-    --wrap "echo test3" \
-    --wrap "echo test4" \
-    --wrap "echo test5" \
-    --wrap "echo test6" \
+    --process "echo test1" \
+    --process "echo test2" \
+    --process "echo test3" \
+    --process "echo test4" \
+    --process "echo test5" \
+    --process "echo test6" \
     > /tmp/running-man-five.log 2>&1 &
 PID=$!
 sleep 3
@@ -85,8 +85,8 @@ echo ""
 # Test 5: Source tagging works correctly
 echo "6. Testing source tagging..."
 ./running-man run --no-tui --api-port 9002 \
-    --wrap "python3 -c \"print('python output')\"" \
-    --wrap "echo shell output" \
+    --process "python3 -c \"print('python output')\"" \
+    --process "echo shell output" \
     > /dev/null 2>&1 &
 PID=$!
 sleep 3
@@ -107,9 +107,9 @@ echo ""
 # Test 6: Source filtering via API with glob patterns
 echo "7. Testing glob pattern filtering..."
 ./running-man run --no-tui --api-port 9003 \
-    --wrap "echo 'from python'" \
-    --wrap "echo 'from node'" \
-    --wrap "echo 'from test'" \
+    --process "echo 'from python'" \
+    --process "echo 'from node'" \
+    --process "echo 'from test'" \
     > /dev/null 2>&1 &
 PID=$!
 sleep 2
@@ -170,9 +170,9 @@ echo ""
 # Test 7: Handle mixed success/failure exit codes
 echo "8. Testing mixed exit codes..."
 ./running-man run --no-tui \
-    --wrap "sh -c 'exit 0'" \
-    --wrap "sh -c 'exit 42'" \
-    --wrap "sh -c 'exit 0'" \
+    --process "sh -c 'exit 0'" \
+    --process "sh -c 'exit 42'" \
+    --process "sh -c 'exit 0'" \
     > /tmp/running-man-exit.log 2>&1 &
 PID=$!
 sleep 3
@@ -192,8 +192,8 @@ echo ""
 # Test 8: Complex command strings with arguments
 echo "9. Testing complex command strings..."
 ./running-man run --no-tui \
-    --wrap "python3 -c \"print('arg test')\"" \
-    --wrap "sh -c \"echo complex && echo args\"" \
+    --process "python3 -c \"print('arg test')\"" \
+    --process "sh -c \"echo complex && echo args\"" \
     > /tmp/running-man-complex.log 2>&1 &
 PID=$!
 sleep 3
@@ -212,7 +212,7 @@ echo ""
 
 # Test 9: Quoted arguments in commands
 echo "10. Testing quoted arguments..."
-./running-man run --no-tui --wrap "echo 'hello world'" > /tmp/running-man-quoted.log 2>&1 &
+./running-man run --no-tui --process "echo 'hello world'" > /tmp/running-man-quoted.log 2>&1 &
 PID=$!
 sleep 2
 kill $PID 2>/dev/null || true
@@ -228,9 +228,9 @@ echo ""
 # Test 10: Terminal output aggregation with prefixes
 echo "11. Testing terminal output aggregation with process name prefixes..."
 ./running-man run --no-tui \
-    --wrap "echo A" \
-    --wrap "echo B" \
-    --wrap "echo C" \
+    --process "echo A" \
+    --process "echo B" \
+    --process "echo C" \
     > /tmp/running-man-aggregate.log 2>&1 &
 PID=$!
 sleep 2
@@ -262,7 +262,7 @@ echo ""
 # Test 12: Docker CLI flag validation
 echo "13. Testing --docker-compose CLI flag..."
 # Test that flag is accepted (even though Docker integration isn't complete)
-./running-man run --no-tui --wrap "echo test" --docker-compose ./nonexistent.yml > /tmp/docker-cli-test.log 2>&1 &
+./running-man run --no-tui --process "echo test" --docker-compose ./nonexistent.yml > /tmp/docker-cli-test.log 2>&1 &
 PID=$!
 sleep 2
 kill $PID 2>/dev/null || true
@@ -278,8 +278,8 @@ echo ""
 
 # Test 13: Validate at least one source required
 echo "14. Testing source validation..."
-if ./running-man run --no-tui 2>&1 | grep -q "At least one --wrap flag or --docker-compose is required"; then
-    echo "✓ Source validation works (requires --wrap or --docker-compose)"
+if ./running-man run --no-tui 2>&1 | grep -q "At least one --process flag or --docker-compose is required"; then
+    echo "✓ Source validation works (requires --process or --docker-compose)"
 else
     echo "✗ Source validation failed"
     exit 1
@@ -324,7 +324,7 @@ if command -v docker &> /dev/null && docker info &> /dev/null; then
     fi
     
     # Test mixed Docker + process wrapping
-    ./running-man run --no-tui --docker-compose test-docker-compose.yml --wrap "echo hello-world" > /tmp/running-man-mixed.log 2>&1 &
+    ./running-man run --no-tui --docker-compose test-docker-compose.yml --process "echo hello-world" > /tmp/running-man-mixed.log 2>&1 &
     PID=$!
     sleep 3
     kill $PID 2>/dev/null || true
@@ -346,7 +346,7 @@ echo ""
 
 # Test 16: Self-logging and pattern warnings
 echo "17. Testing self-logging and pattern warnings..."
-./running-man run --no-tui --api-port 9004 --wrap "echo test" > /dev/null 2>&1 &
+./running-man run --no-tui --api-port 9004 --process "echo test" > /dev/null 2>&1 &
 PID=$!
 sleep 2
 

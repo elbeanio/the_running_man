@@ -197,12 +197,12 @@ func TestParseCommandString(t *testing.T) {
 	}
 }
 
-func TestWrapFlags(t *testing.T) {
-	var flags wrapFlags
+func TestProcessFlags(t *testing.T) {
+	var flags processFlags
 
 	// Test initial state
 	if flags.String() != "" {
-		t.Errorf("Empty wrapFlags.String() = %q, want empty string", flags.String())
+		t.Errorf("Empty processFlags.String() = %q, want empty string", flags.String())
 	}
 
 	// Test adding values
@@ -216,18 +216,18 @@ func TestWrapFlags(t *testing.T) {
 	str := flags.String()
 	expected := "echo hello, npm run dev"
 	if str != expected {
-		t.Errorf("wrapFlags.String() = %q, want %q", str, expected)
+		t.Errorf("processFlags.String() = %q, want %q", str, expected)
 	}
 }
 
 // parseFlagsAndValidate extracts flag parsing and validation for testing
-func parseFlagsAndValidate(args []string) (wraps []string, dockerCompose string, apiPort int, err error) {
+func parseFlagsAndValidate(args []string) (procs []string, dockerCompose string, apiPort int, err error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	apiPortFlag := fs.Int("api-port", defaultAPIPort, "API server port")
 	dockerComposeFlag := fs.String("docker-compose", "", "Path to docker-compose.yml file")
 
-	var wrapFlags wrapFlags
-	fs.Var(&wrapFlags, "wrap", "Process to wrap (can be specified multiple times)")
+	var processFlags processFlags
+	fs.Var(&processFlags, "process", "Process to run (can be specified multiple times)")
 
 	// Parse flags
 	if err := fs.Parse(args); err != nil {
@@ -235,35 +235,35 @@ func parseFlagsAndValidate(args []string) (wraps []string, dockerCompose string,
 	}
 
 	// Validate
-	if len(wrapFlags) == 0 && *dockerComposeFlag == "" {
-		return nil, "", 0, fmt.Errorf("at least one --wrap flag or --docker-compose is required")
+	if len(processFlags) == 0 && *dockerComposeFlag == "" {
+		return nil, "", 0, fmt.Errorf("at least one --process flag or --docker-compose is required")
 	}
 
-	return wrapFlags, *dockerComposeFlag, *apiPortFlag, nil
+	return processFlags, *dockerComposeFlag, *apiPortFlag, nil
 }
 
 func TestParseFlagsAndValidate(t *testing.T) {
 	tests := []struct {
 		name        string
 		args        []string
-		wantWraps   []string
+		wantProcs   []string
 		wantCompose string
 		wantPort    int
 		wantErr     bool
 		errContains string
 	}{
 		{
-			name:        "single wrap",
-			args:        []string{"--wrap", "echo hello"},
-			wantWraps:   []string{"echo hello"},
+			name:        "single process",
+			args:        []string{"--process", "echo hello"},
+			wantProcs:   []string{"echo hello"},
 			wantCompose: "",
 			wantPort:    9000,
 			wantErr:     false,
 		},
 		{
-			name:        "multiple wraps",
-			args:        []string{"--wrap", "echo hello", "--wrap", "echo world"},
-			wantWraps:   []string{"echo hello", "echo world"},
+			name:        "multiple processes",
+			args:        []string{"--process", "echo hello", "--process", "echo world"},
+			wantProcs:   []string{"echo hello", "echo world"},
 			wantCompose: "",
 			wantPort:    9000,
 			wantErr:     false,
@@ -271,23 +271,23 @@ func TestParseFlagsAndValidate(t *testing.T) {
 		{
 			name:        "docker-compose only",
 			args:        []string{"--docker-compose", "./docker-compose.yml"},
-			wantWraps:   []string{},
+			wantProcs:   []string{},
 			wantCompose: "./docker-compose.yml",
 			wantPort:    9000,
 			wantErr:     false,
 		},
 		{
-			name:        "wrap and docker-compose",
-			args:        []string{"--wrap", "echo test", "--docker-compose", "./compose.yml"},
-			wantWraps:   []string{"echo test"},
+			name:        "process and docker-compose",
+			args:        []string{"--process", "echo test", "--docker-compose", "./compose.yml"},
+			wantProcs:   []string{"echo test"},
 			wantCompose: "./compose.yml",
 			wantPort:    9000,
 			wantErr:     false,
 		},
 		{
 			name:        "custom api port",
-			args:        []string{"--wrap", "echo test", "--api-port", "8080"},
-			wantWraps:   []string{"echo test"},
+			args:        []string{"--process", "echo test", "--api-port", "8080"},
+			wantProcs:   []string{"echo test"},
 			wantCompose: "",
 			wantPort:    8080,
 			wantErr:     false,
@@ -323,12 +323,12 @@ func TestParseFlagsAndValidate(t *testing.T) {
 			}
 
 			// Compare wraps (handle nil vs empty slice)
-			if len(wraps) != len(tt.wantWraps) {
-				t.Errorf("wraps length = %d, want %d", len(wraps), len(tt.wantWraps))
+			if len(wraps) != len(tt.wantProcs) {
+				t.Errorf("wraps length = %d, want %d", len(wraps), len(tt.wantProcs))
 			} else {
 				for i := range wraps {
-					if wraps[i] != tt.wantWraps[i] {
-						t.Errorf("wraps[%d] = %v, want %v", i, wraps[i], tt.wantWraps[i])
+					if wraps[i] != tt.wantProcs[i] {
+						t.Errorf("wraps[%d] = %v, want %v", i, wraps[i], tt.wantProcs[i])
 					}
 				}
 			}

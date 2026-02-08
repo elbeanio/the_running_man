@@ -13,8 +13,8 @@ import (
 	"github.com/iangeorge/the_running_man/internal/api"
 	"github.com/iangeorge/the_running_man/internal/docker"
 	"github.com/iangeorge/the_running_man/internal/parser"
+	"github.com/iangeorge/the_running_man/internal/process"
 	"github.com/iangeorge/the_running_man/internal/storage"
-	"github.com/iangeorge/the_running_man/internal/wrapper"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -32,15 +32,15 @@ var (
 	multipleDashesRegex  = regexp.MustCompile(`-+`)
 )
 
-// wrapFlags is a custom flag type for collecting multiple --wrap values
-type wrapFlags []string
+// processFlags is a custom flag type for collecting multiple --process values
+type processFlags []string
 
-func (w *wrapFlags) String() string {
-	return strings.Join(*w, ", ")
+func (p *processFlags) String() string {
+	return strings.Join(*p, ", ")
 }
 
-func (w *wrapFlags) Set(value string) error {
-	*w = append(*w, value)
+func (p *processFlags) Set(value string) error {
+	*p = append(*p, value)
 	return nil
 }
 
@@ -125,22 +125,22 @@ func runCommand(args []string) {
 	dockerCompose := fs.String("docker-compose", "", "Path to docker-compose.yml file")
 	noTUI := fs.Bool("no-tui", false, "Disable TUI and run in headless mode")
 
-	var wraps wrapFlags
-	fs.Var(&wraps, "wrap", "Process to wrap (can be specified multiple times)")
+	var procs processFlags
+	fs.Var(&procs, "process", "Process to run (can be specified multiple times)")
 
 	fs.Parse(args)
 
-	if len(wraps) == 0 && *dockerCompose == "" {
-		fmt.Fprintln(os.Stderr, "Error: At least one --wrap flag or --docker-compose is required")
+	if len(procs) == 0 && *dockerCompose == "" {
+		fmt.Fprintln(os.Stderr, "Error: At least one --process flag or --docker-compose is required")
 		printUsage()
 		os.Exit(1)
 	}
 
-	// Parse wrapped processes
-	var processes []wrapper.ProcessConfig
+	// Parse process configurations
+	var processes []process.ProcessConfig
 	nameMap := make(map[string]int)
 
-	for _, cmdStr := range wraps {
+	for _, cmdStr := range procs {
 		cmd, cmdArgs, err := parseCommandString(cmdStr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error parsing command '%s': %v\n", cmdStr, err)
@@ -159,7 +159,7 @@ func runCommand(args []string) {
 			nameMap[baseName] = 1
 		}
 
-		processes = append(processes, wrapper.ProcessConfig{
+		processes = append(processes, process.ProcessConfig{
 			Name:    name,
 			Command: cmd,
 			Args:    cmdArgs,
@@ -168,9 +168,9 @@ func runCommand(args []string) {
 
 	fmt.Println("The Running Man - Dev Observability Tool")
 
-	// Show wrapped processes
+	// Show running processes
 	for _, proc := range processes {
-		fmt.Printf("Wrapping [%s]: %s %v\n", proc.Name, proc.Command, proc.Args)
+		fmt.Printf("Running [%s]: %s %v\n", proc.Name, proc.Command, proc.Args)
 	}
 
 	fmt.Printf("API: http://localhost:%d\n\n", *apiPort)
@@ -257,7 +257,7 @@ func runCommand(args []string) {
 	}
 
 	// Create process manager for all processes
-	manager := wrapper.NewManager(processes, lineHandler)
+	manager := process.NewManager(processes, lineHandler)
 
 	// Start API server in background
 	apiServer := api.NewServer(buffer, *apiPort, lineHandler)
@@ -270,7 +270,7 @@ func runCommand(args []string) {
 	// Give API server time to start
 	time.Sleep(100 * time.Millisecond)
 
-	// Start all wrapped processes
+	// Start all managed processes
 	if err := manager.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "[running-man] Failed to start processes: %v\n", err)
 		os.Exit(1)
@@ -360,33 +360,33 @@ func printUsage() {
 	fmt.Print(`The Running Man - Dev Observability Tool
 
 Usage:
-  running-man run --wrap "command" [--wrap "command" ...] [flags]
-  running-man run --docker-compose PATH [--wrap "command" ...] [flags]
+  running-man run --process "command" [--process "command" ...] [flags]
+  running-man run --docker-compose PATH [--process "command" ...] [flags]
   running-man tui [--api-port PORT]
   running-man version
   running-man help
 
 Flags:
-  --wrap "command"         Process to wrap (can be specified multiple times)
+  --process "command"      Process to run (can be specified multiple times)
   --docker-compose PATH    Path to docker-compose.yml file
   --api-port PORT          API server port (default: 9000)
   --no-tui                 Disable TUI and run in headless mode
 
 Examples:
-  # Wrap a single process (TUI launches automatically)
-  running-man run --wrap "python server.py"
+  # Run a single process (TUI launches automatically)
+  running-man run --process "python server.py"
 
-  # Wrap multiple processes (TUI shows all sources with tab switching)
-  running-man run --wrap "python server.py" --wrap "npm run dev"
+  # Run multiple processes (TUI shows all sources with tab switching)
+  running-man run --process "python server.py" --process "npm run dev"
 
-  # Tail Docker Compose services (TUI shows all containers)
+  # Monitor Docker Compose services (TUI shows all containers)
   running-man run --docker-compose ./docker-compose.yml
 
   # Mix Docker and processes
-  running-man run --docker-compose ./docker-compose.yml --wrap "npm run dev"
+  running-man run --docker-compose ./docker-compose.yml --process "npm run dev"
 
   # Headless mode for CI/automation (no TUI)
-  running-man run --wrap "go run main.go" --no-tui
+  running-man run --process "go run main.go" --no-tui
 
   # Connect TUI to existing running instance
   running-man tui --api-port 9000
