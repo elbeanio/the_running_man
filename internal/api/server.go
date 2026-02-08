@@ -81,6 +81,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/logs", s.handleLogs)
 	mux.HandleFunc("/errors", s.handleErrors)
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/processes", s.handleProcesses)
 
 	addr := fmt.Sprintf(":%d", s.port)
 	s.log(fmt.Sprintf("API server starting on http://localhost%s", addr), false)
@@ -233,4 +234,18 @@ func parseDuration(s string) (time.Duration, error) {
 	}
 
 	return 0, fmt.Errorf("invalid duration format: %s (expected: 30s, 5m, 1h)", s)
+}
+
+func (s *Server) handleProcesses(w http.ResponseWriter, r *http.Request) {
+	if s.manager == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "Process manager not available")
+		return
+	}
+
+	processes := s.manager.ListProcesses()
+
+	s.writeJSON(w, map[string]interface{}{
+		"processes": processes,
+		"count":     len(processes),
+	})
 }

@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // ProcessConfig represents a process configuration
@@ -14,6 +15,16 @@ type ProcessConfig struct {
 	Name    string
 	Command string
 	Args    []string
+}
+
+// ProcessInfo contains runtime information about a process
+type ProcessInfo struct {
+	Name      string    `json:"name"`
+	Command   string    `json:"command"`
+	PID       int       `json:"pid"`
+	Status    string    `json:"status"` // "running", "stopped", "failed"
+	ExitCode  int       `json:"exit_code,omitempty"`
+	StartTime time.Time `json:"start_time"`
 }
 
 // Manager manages multiple ProcessWrappers
@@ -176,6 +187,51 @@ func (m *Manager) ExitCodes() map[string]int {
 		codes[name] = p.ExitCode()
 	}
 	return codes
+}
+
+// ListProcesses returns information about all managed processes
+func (m *Manager) ListProcesses() []ProcessInfo {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	infos := make([]ProcessInfo, 0, len(m.processes))
+	for name, p := range m.processes {
+		info := ProcessInfo{
+			Name:      name,
+			Command:   p.CommandString(),
+			PID:       p.PID(),
+			Status:    p.GetStatus(),
+			StartTime: p.StartTime(),
+		}
+		if !p.IsRunning() {
+			info.ExitCode = p.ExitCode()
+		}
+		infos = append(infos, info)
+	}
+	return infos
+}
+
+// GetProcess returns information about a specific process
+func (m *Manager) GetProcess(name string) (*ProcessInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	p, exists := m.processes[name]
+	if !exists {
+		return nil, fmt.Errorf("process %s not found", name)
+	}
+
+	info := &ProcessInfo{
+		Name:      name,
+		Command:   p.CommandString(),
+		PID:       p.PID(),
+		Status:    p.GetStatus(),
+		StartTime: p.StartTime(),
+	}
+	if !p.IsRunning() {
+		info.ExitCode = p.ExitCode()
+	}
+	return info, nil
 }
 
 // setupSignalHandlers configures graceful shutdown on SIGINT/SIGTERM

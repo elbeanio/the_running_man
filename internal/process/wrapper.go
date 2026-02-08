@@ -20,6 +20,8 @@ type LineHandler func(source string, line string, timestamp time.Time, isStderr 
 type ProcessWrapper struct {
 	cmd       *exec.Cmd
 	name      string
+	command   string
+	args      []string
 	stdout    io.ReadCloser
 	stderr    io.ReadCloser
 	handler   LineHandler
@@ -28,6 +30,7 @@ type ProcessWrapper struct {
 	wg        sync.WaitGroup
 	killTimer *time.Timer
 	timerMu   sync.Mutex
+	startTime time.Time
 }
 
 // New creates a new ProcessWrapper for the given command
@@ -39,6 +42,8 @@ func New(name string, command string, args []string, handler LineHandler) *Proce
 
 	return &ProcessWrapper{
 		name:    name,
+		command: command,
+		args:    args,
 		cmd:     cmd,
 		handler: handler,
 		ctx:     ctx,
@@ -66,6 +71,9 @@ func (w *ProcessWrapper) Start() error {
 	if err := w.cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start process: %w", err)
 	}
+
+	// Record start time
+	w.startTime = time.Now()
 
 	// Start goroutines to read stdout and stderr
 	w.wg.Add(2)
@@ -167,4 +175,46 @@ func (w *ProcessWrapper) ExitCode() int {
 		return -1
 	}
 	return w.cmd.ProcessState.ExitCode()
+}
+
+// PID returns the process ID
+func (w *ProcessWrapper) PID() int {
+	if w.cmd.Process == nil {
+		return 0
+	}
+	return w.cmd.Process.Pid
+}
+
+// IsRunning returns true if the process is still running
+func (w *ProcessWrapper) IsRunning() bool {
+	return w.cmd.ProcessState == nil
+}
+
+// GetStatus returns "running", "stopped", or "failed"
+func (w *ProcessWrapper) GetStatus() string {
+	if w.IsRunning() {
+		return "running"
+	}
+	if w.ExitCode() == 0 {
+		return "stopped"
+	}
+	return "failed"
+}
+
+// StartTime returns when the process was started
+func (w *ProcessWrapper) StartTime() time.Time {
+	return w.startTime
+}
+
+// CommandString returns the full command string
+func (w *ProcessWrapper) CommandString() string {
+	if len(w.args) == 0 {
+		return w.command
+	}
+	// Reconstruct command string
+	result := w.command
+	for _, arg := range w.args {
+		result += " " + arg
+	}
+	return result
 }
