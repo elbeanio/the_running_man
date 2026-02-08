@@ -1174,3 +1174,76 @@ func TestHandleStopAll_NoManager(t *testing.T) {
 		t.Errorf("Expected 'not available' error, got: %v", response["error"])
 	}
 }
+
+// Tests for GET /
+
+func TestHandleRoot_Success(t *testing.T) {
+	server, _ := setupTestServer()
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+
+	server.handleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// Check response structure
+	if name, ok := response["name"].(string); !ok || name == "" {
+		t.Errorf("Expected 'name' field, got: %v", response["name"])
+	}
+
+	if version, ok := response["version"].(string); !ok || version == "" {
+		t.Errorf("Expected 'version' field, got: %v", response["version"])
+	}
+
+	endpoints, ok := response["endpoints"].([]interface{})
+	if !ok {
+		t.Fatal("Expected 'endpoints' array in response")
+	}
+
+	if len(endpoints) < 5 {
+		t.Errorf("Expected at least 5 endpoints, got %d", len(endpoints))
+	}
+
+	// Verify endpoint structure
+	firstEndpoint := endpoints[0].(map[string]interface{})
+	if _, ok := firstEndpoint["path"]; !ok {
+		t.Error("Expected 'path' field in endpoint")
+	}
+	if _, ok := firstEndpoint["method"]; !ok {
+		t.Error("Expected 'method' field in endpoint")
+	}
+	if _, ok := firstEndpoint["description"]; !ok {
+		t.Error("Expected 'description' field in endpoint")
+	}
+}
+
+func TestHandleRoot_NotFound(t *testing.T) {
+	server, _ := setupTestServer()
+
+	// Request a non-root path
+	req := httptest.NewRequest("GET", "/nonexistent", nil)
+	w := httptest.NewRecorder()
+
+	server.handleRoot(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if errMsg, ok := response["error"].(string); !ok || !strings.Contains(errMsg, "Not found") {
+		t.Errorf("Expected 'Not found' error, got: %v", response["error"])
+	}
+}

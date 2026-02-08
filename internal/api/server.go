@@ -98,6 +98,7 @@ func (s *Server) checkPatternComplexity(patterns []string, patternType string) {
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("/", s.handleRoot)
 	mux.HandleFunc("/logs", s.handleLogs)
 	mux.HandleFunc("/errors", s.handleErrors)
 	mux.HandleFunc("/health", s.handleHealth)
@@ -398,5 +399,62 @@ func (s *Server) handleStopAll(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, map[string]interface{}{
 		"message": fmt.Sprintf("Stopped %d process(es) successfully", count),
 		"count":   count,
+	})
+}
+
+func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	// Only handle exact root path
+	if r.URL.Path != "/" {
+		s.writeError(w, http.StatusNotFound, "Not found")
+		return
+	}
+
+	endpoints := []map[string]interface{}{
+		{
+			"path":        "/",
+			"method":      "GET",
+			"description": "List all available API endpoints",
+		},
+		{
+			"path":        "/health",
+			"method":      "GET",
+			"description": "Health check and system status",
+		},
+		{
+			"path":        "/logs",
+			"method":      "GET",
+			"description": "Query logs with filters (level, source, contains, since)",
+		},
+		{
+			"path":        "/errors",
+			"method":      "GET",
+			"description": "Get error logs only",
+		},
+		{
+			"path":        "/processes",
+			"method":      "GET",
+			"description": "List all managed processes",
+		},
+		{
+			"path":        "/processes/{name}",
+			"method":      "GET",
+			"description": "Get details for a specific process",
+		},
+		{
+			"path":        "/processes/{name}/restart",
+			"method":      "POST",
+			"description": "Restart a specific process",
+		},
+		{
+			"path":        "/processes/stop-all",
+			"method":      "POST",
+			"description": "Stop all managed processes",
+		},
+	}
+
+	s.writeJSON(w, map[string]interface{}{
+		"name":      "The Running Man API",
+		"version":   "1.0",
+		"endpoints": endpoints,
 	})
 }
