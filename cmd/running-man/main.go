@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/iangeorge/the_running_man/internal/api"
+	"github.com/iangeorge/the_running_man/internal/config"
 	"github.com/iangeorge/the_running_man/internal/docker"
 	"github.com/iangeorge/the_running_man/internal/parser"
 	"github.com/iangeorge/the_running_man/internal/process"
@@ -120,25 +121,65 @@ func main() {
 func runCommand(args []string) {
 	// Setup flags
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	apiPort := fs.Int("api-port", defaultAPIPort, "API server port")
-	dockerCompose := fs.String("docker-compose", "", "Path to docker-compose.yml file")
+	configPath := fs.String("config", "", "Path to running-man.yml config file")
+	apiPort := fs.Int("api-port", 0, "API server port (overrides config file)")
+	dockerCompose := fs.String("docker-compose", "", "Path to docker-compose.yml file (overrides config file)")
 	noTUI := fs.Bool("no-tui", false, "Disable TUI and run in headless mode")
 
 	var procs processFlags
-	fs.Var(&procs, "process", "Process to run (can be specified multiple times)")
+	fs.Var(&procs, "process", "Process to run (can be specified multiple times, overrides config file)")
 
 	fs.Parse(args)
 
-	if len(procs) == 0 && *dockerCompose == "" {
-		fmt.Fprintln(os.Stderr, "Error: At least one --process flag or --docker-compose is required")
-		printUsage()
+	// Load config file if specified or found
+	cfg, err := config.LoadConfigOrDefault(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Merge config with CLI flags (CLI flags take precedence)
+
+	// Use config docker-compose if not provided via CLI
+	finalDockerCompose := *dockerCompose
+	if finalDockerCompose == "" && cfg != nil {
+		finalDockerCompose = cfg.DockerCompose
+	}
+
+	// Use config API port if not provided via CLI
+	finalAPIPort := *apiPort
+	if finalAPIPort == 0 {
+		if cfg != nil {
+			finalAPIPort = cfg.GetAPIPort()
+		} else {
+			finalAPIPort = defaultAPIPort
+		}
+	}
+
+	// Get retention and buffer settings from config (no CLI flags for these yet)
+	finalRetention := defaultRetention
+	finalMaxEntries := defaultMaxEntries
+	finalMaxBytes := int64(defaultMaxBytes)
+	if cfg != nil {
+		finalRetention = cfg.GetRetentionDuration()
+		finalMaxEntries = cfg.GetMaxEntries()
+		finalMaxBytes = cfg.GetMaxBytes()
 	}
 
 	// Parse process configurations
 	var processes []process.ProcessConfig
 	nameMap := make(map[string]int)
 
+	// First, add processes from config file (if no --process flags provided)
+	if len(procs) == 0 && cfg != nil {
+		processes = cfg.ToProcessConfigs()
+		// Build nameMap for config processes to avoid collisions
+		for _, proc := range processes {
+			nameMap[proc.Name] = 1
+		}
+	}
+
+	// Then, add processes from CLI flags (these override config)
 	for _, cmdStr := range procs {
 		cmd, cmdArgs, err := parseCommandString(cmdStr)
 		if err != nil {
@@ -165,6 +206,13 @@ func runCommand(args []string) {
 		})
 	}
 
+	// Validate that we have at least one source
+	if len(processes) == 0 && finalDockerCompose == "" {
+		fmt.Fprintln(os.Stderr, "Error: At least one --process flag, --docker-compose, or config file with processes is required")
+		printUsage()
+		os.Exit(1)
+	}
+
 	fmt.Println("The Running Man - Dev Observability Tool")
 
 	// Show running processes
@@ -172,10 +220,10 @@ func runCommand(args []string) {
 		fmt.Printf("Running [%s]: %s %v\n", proc.Name, proc.Command, proc.Args)
 	}
 
-	fmt.Printf("API: http://localhost:%d\n\n", *apiPort)
+	fmt.Printf("API: http://localhost:%d\n\n", finalAPIPort)
 
 	// Create ring buffer
-	buffer := storage.NewRingBuffer(defaultMaxEntries, defaultRetention, defaultMaxBytes)
+	buffer := storage.NewRingBuffer(finalMaxEntries, finalRetention, finalMaxBytes)
 
 	// Create parser
 	multiParser := parser.NewMultiParser()
@@ -193,9 +241,9 @@ func runCommand(args []string) {
 	var dockerClient *docker.Client
 	ctx := context.Background()
 
-	if *dockerCompose != "" {
+	if finalDockerCompose != "" {
 		// Parse compose file
-		compose, err := docker.ParseComposeFile(*dockerCompose)
+		compose, err := docker.ParseComposeFile(finalDockerCompose)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] Failed to parse docker-compose.yml: %v\n", err)
 			os.Exit(1)
@@ -207,7 +255,7 @@ func runCommand(args []string) {
 			os.Exit(1)
 		}
 
-		fmt.Printf("Docker Compose: %s (services: %s)\n", *dockerCompose, strings.Join(serviceNames, ", "))
+		fmt.Printf("Docker Compose: %s (services: %s)\n", finalDockerCompose, strings.Join(serviceNames, ", "))
 
 		// Create Docker client
 		dockerClient, err = docker.NewClient()
@@ -225,7 +273,7 @@ func runCommand(args []string) {
 		}
 
 		// Discover running containers
-		containers, err := dockerClient.DiscoverContainers(ctx, *dockerCompose, serviceNames)
+		containers, err := dockerClient.DiscoverContainers(ctx, finalDockerCompose, serviceNames)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] Failed to discover containers: %v\n", err)
 			os.Exit(1)
@@ -259,7 +307,7 @@ func runCommand(args []string) {
 	manager := process.NewManager(processes, lineHandler)
 
 	// Start API server in background
-	apiServer := api.NewServer(buffer, *apiPort, lineHandler, manager)
+	apiServer := api.NewServer(buffer, finalAPIPort, lineHandler, manager)
 	go func() {
 		if err := apiServer.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] API server error: %v\n", err)
@@ -278,7 +326,7 @@ func runCommand(args []string) {
 	// Launch TUI or run in headless mode (don't wait for processes to finish first)
 	if *noTUI {
 		// Headless mode - print info and wait for processes
-		fmt.Printf("[running-man] API available at http://localhost:%d\n", *apiPort)
+		fmt.Printf("[running-man] API available at http://localhost:%d\n", finalAPIPort)
 		fmt.Printf("[running-man] Running in headless mode (--no-tui)\n")
 		fmt.Printf("[running-man] Press Ctrl+C to exit\n")
 
@@ -313,11 +361,11 @@ func runCommand(args []string) {
 	} else {
 		// TUI mode - launch interactive viewer immediately
 		fmt.Printf("[running-man] Starting TUI viewer...\n")
-		fmt.Printf("[running-man] API available at http://localhost:%d\n", *apiPort)
+		fmt.Printf("[running-man] API available at http://localhost:%d\n", finalAPIPort)
 		time.Sleep(200 * time.Millisecond) // Give API a moment to stabilize
 
 		// Run TUI with manager reference so it can stop processes on quit
-		tuiCommandWithManager([]string{fmt.Sprintf("--api-port=%d", *apiPort)}, manager)
+		tuiCommandWithManager([]string{fmt.Sprintf("--api-port=%d", finalAPIPort)}, manager)
 
 		// TUI exited (user pressed 'q') - stop processes and clean up
 		fmt.Printf("\n[running-man] Shutting down processes...\n")
@@ -349,6 +397,7 @@ func printUsage() {
 	fmt.Print(`The Running Man - Dev Observability Tool
 
 Usage:
+  running-man run [--config PATH] [flags]
   running-man run --process "command" [--process "command" ...] [flags]
   running-man run --docker-compose PATH [--process "command" ...] [flags]
   running-man tui [--api-port PORT]
@@ -356,9 +405,10 @@ Usage:
   running-man help
 
 Flags:
-  --process "command"      Process to run (can be specified multiple times)
-  --docker-compose PATH    Path to docker-compose.yml file
-  --api-port PORT          API server port (default: 9000)
+  --config PATH            Path to running-man.yml config file
+  --process "command"      Process to run (can be specified multiple times, overrides config)
+  --docker-compose PATH    Path to docker-compose.yml file (overrides config)
+  --api-port PORT          API server port (default: 9000, overrides config)
   --no-tui                 Disable TUI and run in headless mode
 
 Examples:
