@@ -105,6 +105,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/processes/stop-all", s.handleStopAll)  // Must come before /processes/
 	mux.HandleFunc("/processes/", s.handleProcessOrRestart) // Handles both GET /processes/{name} and POST /processes/{name}/restart
 	mux.HandleFunc("/processes", s.handleProcesses)
+	mux.HandleFunc("/docs/openapi.yaml", s.handleOpenAPISpec)
+	mux.HandleFunc("/docs", s.handleSwaggerUI)
+	mux.HandleFunc("/docs/", s.handleSwaggerUI)
 
 	addr := fmt.Sprintf(":%d", s.port)
 	s.log(fmt.Sprintf("API server starting on http://localhost%s", addr), false)
@@ -450,6 +453,16 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 			"method":      "POST",
 			"description": "Stop all managed processes",
 		},
+		{
+			"path":        "/docs",
+			"method":      "GET",
+			"description": "Interactive API documentation (Swagger UI)",
+		},
+		{
+			"path":        "/docs/openapi.yaml",
+			"method":      "GET",
+			"description": "OpenAPI 3.0 specification",
+		},
 	}
 
 	s.writeJSON(w, map[string]interface{}{
@@ -457,4 +470,69 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		"version":   "1.0",
 		"endpoints": endpoints,
 	})
+}
+
+func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
+	// Serve the OpenAPI spec file
+	specPath := "docs/openapi.yaml"
+
+	// Check if file exists
+	if _, err := os.Stat(specPath); os.IsNotExist(err) {
+		s.writeError(w, http.StatusNotFound, "OpenAPI spec not found")
+		return
+	}
+
+	// Read and serve the file
+	content, err := os.ReadFile(specPath)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to read OpenAPI spec: %v", err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
+	w.Write(content)
+}
+
+func (s *Server) handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
+	// Serve Swagger UI HTML that loads from CDN
+	html := `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Running Man API Documentation</title>
+    <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui.css">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-bundle.js"></script>
+    <script src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-standalone-preset.js"></script>
+    <script>
+        window.onload = function() {
+            window.ui = SwaggerUIBundle({
+                url: "/docs/openapi.yaml",
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIStandalonePreset
+                ],
+                plugins: [
+                    SwaggerUIBundle.plugins.DownloadUrl
+                ],
+                layout: "StandaloneLayout"
+            });
+        };
+    </script>
+</body>
+</html>`
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(html))
 }
