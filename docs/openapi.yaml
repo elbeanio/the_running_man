@@ -1,0 +1,590 @@
+openapi: 3.0.3
+info:
+  title: Running Man API
+  description: |
+    REST API for querying logs and managing processes in Running Man.
+    
+    Running Man is a dev observability tool that aggregates logs from multiple sources
+    (processes and Docker containers) and provides a unified API for querying them.
+    
+    **Security Note**: This API is designed for local development use only and runs on localhost
+    without authentication. It should not be exposed to public networks.
+  version: 1.0.0
+  license:
+    name: MIT
+  contact:
+    name: Running Man
+    url: https://github.com/iangeorge/the_running_man
+
+servers:
+  - url: http://localhost:9000
+    description: Local development server (no authentication required)
+
+tags:
+  - name: logs
+    description: Log query operations
+  - name: processes
+    description: Process management operations
+  - name: health
+    description: Health and status checks
+
+paths:
+  /:
+    get:
+      summary: List available API endpoints
+      description: Returns a list of all available API endpoints with descriptions
+      tags:
+        - health
+      responses:
+        '200':
+          description: List of available endpoints
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  endpoints:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path:
+                          type: string
+                        method:
+                          type: string
+                        description:
+                          type: string
+  
+  /health:
+    get:
+      summary: Get system health and statistics
+      description: Returns system health status, uptime, buffer statistics, and available log sources
+      tags:
+        - health
+      responses:
+        '200':
+          description: System health information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: ok
+                uptime: "1h23m45s"
+                uptime_seconds: 5025
+                buffer:
+                  total_entries: 15420
+                  total_bytes: 2458960
+                  max_entries: 100000
+                  max_bytes: 104857600
+                  max_age: "1h0m0s"
+                  oldest_entry: "2026-02-09T22:00:00Z"
+                  newest_entry: "2026-02-09T23:23:45Z"
+                sources:
+                  - name: "running-man"
+                    entry_count: 150
+                    last_seen: "2026-02-09T23:23:45Z"
+                  - name: "my-api"
+                    entry_count: 8420
+                    last_seen: "2026-02-09T23:23:44Z"
+                  - name: "postgres-1"
+                    entry_count: 6850
+                    last_seen: "2026-02-09T23:23:43Z"
+
+  /logs:
+    get:
+      summary: Query logs with filters
+      description: |
+        Retrieve log entries with optional filtering by time, level, source, and content.
+        Supports glob patterns for source filtering and time-based queries.
+      tags:
+        - logs
+      parameters:
+        - name: since
+          in: query
+          description: Time duration to filter logs (e.g., "30s", "5m", "1h", "2h30m")
+          required: false
+          schema:
+            type: string
+            example: "30s"
+        - name: level
+          in: query
+          description: Comma-separated log levels to filter (debug, info, warn, error)
+          required: false
+          schema:
+            type: string
+            example: "error,warn"
+        - name: source
+          in: query
+          description: Comma-separated source names or glob patterns (e.g., "my-api", "postgres-*")
+          required: false
+          schema:
+            type: string
+            example: "my-api"
+        - name: exclude
+          in: query
+          description: Comma-separated source exclusion patterns (supports globs)
+          required: false
+          schema:
+            type: string
+            example: "test-*"
+        - name: contains
+          in: query
+          description: Filter logs containing this text in the message
+          required: false
+          schema:
+            type: string
+            example: "error connecting"
+      responses:
+        '200':
+          description: List of log entries matching the filters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogsResponse'
+              example:
+                logs:
+                  - timestamp: "2026-02-09T23:15:30Z"
+                    level: "error"
+                    source: "my-api"
+                    message: "Failed to connect to database"
+                    raw: "[2026-02-09 23:15:30] ERROR: Failed to connect to database"
+                    is_error: true
+                    stacktrace: ""
+                  - timestamp: "2026-02-09T23:15:32Z"
+                    level: "warn"
+                    source: "my-api"
+                    message: "Retrying connection in 5s"
+                    raw: "[2026-02-09 23:15:32] WARN: Retrying connection in 5s"
+                    is_error: false
+                    stacktrace: ""
+                count: 2
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "invalid since parameter: invalid duration format: 30x (expected: 30s, 5m, 1h)"
+
+  /errors:
+    get:
+      summary: Get error logs only
+      description: Retrieve only error-level log entries, optionally filtered by time
+      tags:
+        - logs
+      parameters:
+        - name: since
+          in: query
+          description: Time duration to filter errors (e.g., "30s", "5m", "1h")
+          required: false
+          schema:
+            type: string
+            example: "1h"
+      responses:
+        '200':
+          description: List of error log entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorsResponse'
+              example:
+                errors:
+                  - timestamp: "2026-02-09T23:15:30Z"
+                    level: "error"
+                    source: "my-api"
+                    message: "Failed to connect to database"
+                    raw: "[2026-02-09 23:15:30] ERROR: Failed to connect to database"
+                    is_error: true
+                    stacktrace: "Traceback (most recent call last):\n  File \"app.py\", line 42, in connect\n    conn = psycopg2.connect(dsn)\npsycopg2.OperationalError: could not connect to server"
+                count: 1
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /processes:
+    get:
+      summary: List all managed processes
+      description: Returns information about all processes managed by Running Man
+      tags:
+        - processes
+      responses:
+        '200':
+          description: List of managed processes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessesResponse'
+              example:
+                processes:
+                  - name: "my-api"
+                    command: "python server.py"
+                    pid: 12345
+                    status: "running"
+                    exit_code: -1
+                    start_time: "2026-02-09T22:00:00Z"
+                  - name: "worker"
+                    command: "npm run worker"
+                    pid: 12346
+                    status: "running"
+                    exit_code: -1
+                    start_time: "2026-02-09T22:00:05Z"
+                count: 2
+        '503':
+          description: Process manager not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Process manager not available"
+
+  /processes/{name}:
+    get:
+      summary: Get process details
+      description: Returns detailed information about a specific managed process
+      tags:
+        - processes
+      parameters:
+        - name: name
+          in: path
+          description: Name of the process
+          required: true
+          schema:
+            type: string
+            example: "my-api"
+      responses:
+        '200':
+          description: Process details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessInfo'
+              example:
+                name: "my-api"
+                command: "python server.py"
+                pid: 12345
+                status: "running"
+                exit_code: -1
+                start_time: "2026-02-09T22:00:00Z"
+        '400':
+          description: Invalid process name
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Invalid process name"
+        '404':
+          description: Process not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Process not found: my-api"
+        '503':
+          description: Process manager not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /processes/{name}/restart:
+    post:
+      summary: Restart a process
+      description: Stops and restarts the specified managed process
+      tags:
+        - processes
+      parameters:
+        - name: name
+          in: path
+          description: Name of the process to restart
+          required: true
+          schema:
+            type: string
+            example: "my-api"
+      responses:
+        '200':
+          description: Process restart initiated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  process:
+                    $ref: '#/components/schemas/ProcessInfo'
+              example:
+                message: "Process restarted successfully"
+                process:
+                  name: "my-api"
+                  command: "python server.py"
+                  pid: 12347
+                  status: "running"
+                  exit_code: -1
+                  start_time: "2026-02-09T23:25:00Z"
+        '400':
+          description: Invalid process name
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Process not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to restart process
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Failed to restart process: exit status 1"
+        '503':
+          description: Process manager not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /processes/stop-all:
+    post:
+      summary: Stop all managed processes
+      description: Gracefully stops all processes managed by Running Man
+      tags:
+        - processes
+      responses:
+        '200':
+          description: All processes stopped successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  stopped_count:
+                    type: integer
+              example:
+                message: "All processes stopped"
+                stopped_count: 2
+        '503':
+          description: Process manager not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    LogEntry:
+      type: object
+      description: A single log entry
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of when the log was captured
+        level:
+          type: string
+          enum: [debug, info, warn, error]
+          description: Log severity level
+        source:
+          type: string
+          description: Name of the source that generated this log (process or container name)
+        message:
+          type: string
+          description: Parsed log message content
+        raw:
+          type: string
+          description: Original unparsed log line
+        is_error:
+          type: boolean
+          description: Whether this log came from stderr
+        stacktrace:
+          type: string
+          description: Stack trace if this is an error with traceback (Python, etc.)
+      required:
+        - timestamp
+        - level
+        - source
+        - message
+        - raw
+        - is_error
+        - stacktrace
+
+    LogsResponse:
+      type: object
+      properties:
+        logs:
+          type: array
+          items:
+            $ref: '#/components/schemas/LogEntry'
+        count:
+          type: integer
+          description: Number of log entries returned
+      required:
+        - logs
+        - count
+
+    ErrorsResponse:
+      type: object
+      properties:
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/LogEntry'
+        count:
+          type: integer
+          description: Number of error entries returned
+      required:
+        - errors
+        - count
+
+    ProcessInfo:
+      type: object
+      description: Information about a managed process
+      properties:
+        name:
+          type: string
+          description: Unique name of the process
+        command:
+          type: string
+          description: Command used to start the process
+        pid:
+          type: integer
+          description: Process ID (-1 if not started)
+        status:
+          type: string
+          enum: [running, stopped, failed]
+          description: Current process status
+        exit_code:
+          type: integer
+          description: Exit code of the process (-1 for running processes)
+        start_time:
+          type: string
+          format: date-time
+          description: When the process was started
+      required:
+        - name
+        - command
+        - pid
+        - status
+        - exit_code
+        - start_time
+
+    ProcessesResponse:
+      type: object
+      properties:
+        processes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProcessInfo'
+        count:
+          type: integer
+          description: Number of processes
+      required:
+        - processes
+        - count
+
+    SourceInfo:
+      type: object
+      description: Statistics about a log source
+      properties:
+        name:
+          type: string
+          description: Name of the source
+        entry_count:
+          type: integer
+          description: Number of log entries from this source
+        last_seen:
+          type: string
+          format: date-time
+          description: Timestamp of the most recent log from this source
+      required:
+        - name
+        - entry_count
+        - last_seen
+
+    BufferStats:
+      type: object
+      description: Statistics about the log buffer
+      properties:
+        total_entries:
+          type: integer
+          description: Total number of log entries in buffer
+        total_bytes:
+          type: integer
+          format: int64
+          description: Total size of log entries in bytes
+        max_entries:
+          type: integer
+          description: Maximum number of entries buffer can hold
+        max_bytes:
+          type: integer
+          format: int64
+          description: Maximum size of buffer in bytes
+        max_age:
+          type: string
+          description: Maximum age of logs before eviction (duration string)
+        oldest_entry:
+          type: string
+          format: date-time
+          description: Timestamp of oldest log entry
+        newest_entry:
+          type: string
+          format: date-time
+          description: Timestamp of newest log entry
+      required:
+        - total_entries
+        - total_bytes
+        - max_entries
+        - max_bytes
+        - max_age
+        - oldest_entry
+        - newest_entry
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Overall system status
+          example: "ok"
+        uptime:
+          type: string
+          description: Human-readable uptime duration
+          example: "1h23m45s"
+        uptime_seconds:
+          type: integer
+          description: Uptime in seconds
+        buffer:
+          $ref: '#/components/schemas/BufferStats'
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceInfo'
+      required:
+        - status
+        - uptime
+        - uptime_seconds
+        - buffer
+        - sources
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+      required:
+        - error
