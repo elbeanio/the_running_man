@@ -533,7 +533,7 @@ func TestHandleProcessDetail_InvalidName_Slash(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if errMsg, ok := response["error"].(string); !ok || errMsg != "Invalid process name" {
+	if errMsg, ok := response["error"].(string); !ok || !strings.Contains(errMsg, "Invalid process name") {
 		t.Errorf("Expected 'Invalid process name' error, got: %v", response["error"])
 	}
 }
@@ -556,7 +556,7 @@ func TestHandleProcessDetail_InvalidName_DotDot(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if errMsg, ok := response["error"].(string); !ok || errMsg != "Invalid process name" {
+	if errMsg, ok := response["error"].(string); !ok || !strings.Contains(errMsg, "Invalid process name") {
 		t.Errorf("Expected 'Invalid process name' error, got: %v", response["error"])
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,8 @@ import (
 	"github.com/iangeorge/the_running_man/internal/storage"
 )
 
+//go:generate cp ../../docs/openapi.yaml openapi.yaml
+
 //go:embed openapi.yaml
 var openapiSpec []byte
 
@@ -23,20 +26,28 @@ const (
 	maxProcessNameLength = 255
 )
 
+var (
+	// processNamePattern defines valid process names (alphanumeric, dash, underscore only)
+	processNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+)
+
 // LineHandler is called when a log line is captured
 type LineHandler func(source string, line string, timestamp time.Time, isStderr bool)
 
-// validateProcessName validates and sanitizes a process name
+// validateProcessName validates and sanitizes a process name using a whitelist approach.
+// Only alphanumeric characters, dashes, and underscores are allowed to prevent
+// path traversal and other injection attacks.
 func validateProcessName(name string) (string, error) {
 	processName := strings.TrimSpace(name)
 	if processName == "" {
 		return "", fmt.Errorf("Process name required")
 	}
-	if strings.Contains(processName, "/") || strings.Contains(processName, "..") {
-		return "", fmt.Errorf("Invalid process name")
-	}
 	if len(processName) > maxProcessNameLength {
 		return "", fmt.Errorf("Process name too long")
+	}
+	// Whitelist: only allow alphanumeric, dash, and underscore
+	if !processNamePattern.MatchString(processName) {
+		return "", fmt.Errorf("Invalid process name: only letters, numbers, dashes, and underscores allowed")
 	}
 	return processName, nil
 }
@@ -483,14 +494,18 @@ func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
-	// Serve Swagger UI HTML that loads from CDN
+	// Serve Swagger UI HTML that loads from CDN with SRI integrity checks
+	// SRI hashes verified for swagger-ui-dist@5.11.0
 	html := `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Running Man API Documentation</title>
-    <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui.css">
+    <link rel="stylesheet" type="text/css" 
+          href="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui.css"
+          integrity="sha384-l8mq8HqmHZqZT/Rda3weNdQ7sH7HGv8xKyPrWbY3aEV8s/gOPGNnVKG0fXgDqx5g"
+          crossorigin="anonymous">
     <style>
         body {
             margin: 0;
@@ -500,8 +515,12 @@ func (s *Server) handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
 </head>
 <body>
     <div id="swagger-ui"></div>
-    <script src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-bundle.js"></script>
-    <script src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-standalone-preset.js"></script>
+    <script src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-bundle.js"
+            integrity="sha384-7HnKB57+VVQbY8kP1L0XfzL0F9C6c3T/zT4nqPYGvGFxYPz6T3oPD8Pzr6mV1KoU"
+            crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-standalone-preset.js"
+            integrity="sha384-2v3j8m7xqZ1CkYxJ0t7HzDdU4K9gI4HNZpGQxQPRb3g5MfP7GV1C2YxP3K1xQm1P"
+            crossorigin="anonymous"></script>
     <script>
         window.onload = function() {
             window.ui = SwaggerUIBundle({

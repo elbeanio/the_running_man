@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"sort"
@@ -16,7 +17,12 @@ import (
 	"github.com/iangeorge/the_running_man/internal/process"
 )
 
-const defaultPollInterval = 2 * time.Second
+const (
+	defaultPollInterval = 2 * time.Second
+
+	// Approximate UI element heights for scroll calculations
+	uiHeaderFooterHeight = 5 // Tab bar + help text + padding
+)
 
 // Model holds the TUI state
 type model struct {
@@ -122,12 +128,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "pgup":
 			// Scroll up one page
 			m.autoScroll = false
-			availableHeight := m.height - 5 // Approximate height for logs
+			availableHeight := m.height - uiHeaderFooterHeight
 			m.scrollOffset += availableHeight
 
 		case "pgdown":
 			// Scroll down one page
-			availableHeight := m.height - 5
+			availableHeight := m.height - uiHeaderFooterHeight
 			m.scrollOffset -= availableHeight
 			if m.scrollOffset <= 0 {
 				m.scrollOffset = 0
@@ -137,7 +143,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "home":
 			// Jump to oldest logs
 			m.autoScroll = false
-			m.scrollOffset = 1000000 // Large number to ensure we see oldest logs
+			m.scrollOffset = math.MaxInt // Scroll to top, renderLogs will clamp to actual max
 
 		case "end":
 			// Jump to newest logs
@@ -282,6 +288,14 @@ func renderHeader(sources []string, selected int) string {
 }
 
 func renderLogs(logs []logEntry, height, width, scrollOffset int) string {
+	// Validate inputs
+	if height <= 0 || width <= 0 {
+		return logStyle.Render("Invalid terminal dimensions")
+	}
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+
 	if len(logs) == 0 {
 		return logStyle.Render("No logs yet...")
 	}

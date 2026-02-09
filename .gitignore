@@ -37,3 +37,4 @@ the_running_man
 
 # Beads export state
 .beads/export-state/
+internal/api/openapi.yaml
