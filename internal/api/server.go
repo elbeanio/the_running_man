@@ -1,6 +1,7 @@
 package api
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,9 @@ import (
 	"github.com/iangeorge/the_running_man/internal/process"
 	"github.com/iangeorge/the_running_man/internal/storage"
 )
+
+//go:embed openapi.yaml
+var openapiSpec []byte
 
 const (
 	// maxProcessNameLength is the maximum allowed length for process names
@@ -473,24 +477,9 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
-	// Serve the OpenAPI spec file
-	specPath := "docs/openapi.yaml"
-
-	// Check if file exists
-	if _, err := os.Stat(specPath); os.IsNotExist(err) {
-		s.writeError(w, http.StatusNotFound, "OpenAPI spec not found")
-		return
-	}
-
-	// Read and serve the file
-	content, err := os.ReadFile(specPath)
-	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to read OpenAPI spec: %v", err))
-		return
-	}
-
+	// Serve the embedded OpenAPI spec file
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
-	w.Write(content)
+	w.Write(openapiSpec)
 }
 
 func (s *Server) handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
