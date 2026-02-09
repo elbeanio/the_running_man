@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -79,7 +80,7 @@ func TestRenderLogs_MultilineMessages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := renderLogs(tt.logs, tt.height, tt.width)
+			result := renderLogs(tt.logs, tt.height, tt.width, 0)
 
 			// Count lines in the rendered output
 			// lipgloss uses \n to join lines
@@ -103,7 +104,7 @@ func TestRenderLogs_ContinuationIndentation(t *testing.T) {
 		},
 	}
 
-	result := renderLogs(logs, 10, 80)
+	result := renderLogs(logs, 10, 80, 0)
 	lines := strings.Split(strings.TrimSpace(result), "\n")
 
 	if len(lines) != 3 {
@@ -144,7 +145,7 @@ func TestRenderLogs_HeightLimit(t *testing.T) {
 	}
 
 	// Total lines: 6, but height limit is 4
-	result := renderLogs(logs, 4, 80)
+	result := renderLogs(logs, 4, 80, 0)
 	lines := strings.Split(strings.TrimSpace(result), "\n")
 
 	// Should show only the last 4 lines
@@ -154,10 +155,64 @@ func TestRenderLogs_HeightLimit(t *testing.T) {
 }
 
 func TestRenderLogs_EmptyLogs(t *testing.T) {
-	result := renderLogs([]logEntry{}, 10, 80)
+	result := renderLogs([]logEntry{}, 10, 80, 0)
 
 	if !strings.Contains(result, "No logs yet") {
 		t.Errorf("Expected 'No logs yet' message, got: %s", result)
+	}
+}
+
+func TestRenderLogs_ScrollOffset(t *testing.T) {
+	// Create logs that produce 10 lines total
+	logs := []logEntry{}
+	for i := 1; i <= 10; i++ {
+		logs = append(logs, logEntry{
+			Timestamp: fmt.Sprintf("2026-02-08T12:34:%02dZ", i),
+			Level:     "INFO",
+			Message:   fmt.Sprintf("Line %d", i),
+			IsError:   false,
+		})
+	}
+
+	height := 5 // Show only 5 lines at a time
+
+	// Test showing most recent (scrollOffset = 0)
+	result := renderLogs(logs, height, 80, 0)
+	lines := strings.Split(strings.TrimSpace(result), "\n")
+	if len(lines) != 5 {
+		t.Errorf("Expected 5 lines with scrollOffset=0, got %d", len(lines))
+	}
+	// Should contain "Line 10" (most recent)
+	stripped := stripANSI(result)
+	if !strings.Contains(stripped, "Line 10") {
+		t.Errorf("scrollOffset=0 should show most recent log (Line 10)")
+	}
+
+	// Test scrolling up 2 lines (scrollOffset = 2)
+	result = renderLogs(logs, height, 80, 2)
+	lines = strings.Split(strings.TrimSpace(result), "\n")
+	if len(lines) != 5 {
+		t.Errorf("Expected 5 lines with scrollOffset=2, got %d", len(lines))
+	}
+	// Should contain "Line 8" (2 lines before the end)
+	stripped = stripANSI(result)
+	if !strings.Contains(stripped, "Line 8") {
+		t.Errorf("scrollOffset=2 should show Line 8 at bottom, got: %s", stripped)
+	}
+	if strings.Contains(stripped, "Line 9") || strings.Contains(stripped, "Line 10") {
+		t.Errorf("scrollOffset=2 should not show Line 9 or 10")
+	}
+
+	// Test scrolling to oldest logs (large scrollOffset)
+	result = renderLogs(logs, height, 80, 1000)
+	lines = strings.Split(strings.TrimSpace(result), "\n")
+	if len(lines) != 5 {
+		t.Errorf("Expected 5 lines with large scrollOffset, got %d", len(lines))
+	}
+	// Should contain "Line 1" (oldest)
+	stripped = stripANSI(result)
+	if !strings.Contains(stripped, "Line 1") {
+		t.Errorf("Large scrollOffset should show oldest logs (Line 1)")
 	}
 }
 

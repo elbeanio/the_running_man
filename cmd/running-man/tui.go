@@ -28,6 +28,8 @@ type model struct {
 	width          int
 	height         int
 	manager        *process.Manager // Process manager to stop on quit
+	scrollOffset   int              // Number of lines scrolled from bottom (0 = showing latest)
+	autoScroll     bool             // Whether to auto-scroll to bottom on new logs
 }
 
 type logEntry struct {
@@ -69,6 +71,8 @@ func initialModel(apiURL string, manager *process.Manager) model {
 		width:          80,
 		height:         24,
 		manager:        manager,
+		scrollOffset:   0,
+		autoScroll:     true, // Start with auto-scroll enabled
 	}
 }
 
@@ -101,6 +105,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, fetchLogs(m.apiURL, m.sources[m.selectedSource])
 			}
+
+		case "up":
+			// Scroll up one line
+			m.autoScroll = false
+			m.scrollOffset++
+
+		case "down":
+			// Scroll down one line
+			m.scrollOffset--
+			if m.scrollOffset <= 0 {
+				m.scrollOffset = 0
+				m.autoScroll = true
+			}
+
+		case "pgup":
+			// Scroll up one page
+			m.autoScroll = false
+			availableHeight := m.height - 5 // Approximate height for logs
+			m.scrollOffset += availableHeight
+
+		case "pgdown":
+			// Scroll down one page
+			availableHeight := m.height - 5
+			m.scrollOffset -= availableHeight
+			if m.scrollOffset <= 0 {
+				m.scrollOffset = 0
+				m.autoScroll = true
+			}
+
+		case "home":
+			// Jump to oldest logs
+			m.autoScroll = false
+			m.scrollOffset = 1000000 // Large number to ensure we see oldest logs
+
+		case "end":
+			// Jump to newest logs
+			m.scrollOffset = 0
+			m.autoScroll = true
 		}
 
 	case tea.WindowSizeMsg:
@@ -115,6 +157,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case logsMsg:
 		m.logs = msg
+		// Reset scroll offset when auto-scroll is enabled (user is at bottom)
+		if m.autoScroll {
+			m.scrollOffset = 0
+		}
 
 	case tickMsg:
 		if len(m.sources) > 0 {
@@ -141,13 +187,13 @@ func (m model) View() string {
 	header := renderHeader(m.sources, m.selectedSource)
 
 	// Help footer
-	help := helpStyle.Render("\n←/→ or Tab: Switch source | q: Quit")
+	help := helpStyle.Render("\n←/→ Tab: Switch source | ↑/↓ PgUp/PgDn Home/End: Scroll | q: Quit")
 
 	// Calculate available height for logs
 	availableHeight := m.height - lipgloss.Height(header) - lipgloss.Height(help) - 2
 
 	// Render logs
-	logsView := renderLogs(m.logs, availableHeight, m.width)
+	logsView := renderLogs(m.logs, availableHeight, m.width, m.scrollOffset)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, logsView, help)
 }
@@ -235,7 +281,7 @@ func renderHeader(sources []string, selected int) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
 }
 
-func renderLogs(logs []logEntry, height, width int) string {
+func renderLogs(logs []logEntry, height, width, scrollOffset int) string {
 	if len(logs) == 0 {
 		return logStyle.Render("No logs yet...")
 	}
@@ -276,13 +322,36 @@ func renderLogs(logs []logEntry, height, width int) string {
 		}
 	}
 
-	// Show most recent lines that fit in the available height
-	startIdx := 0
-	if len(allLines) > height {
-		startIdx = len(allLines) - height
+	// Calculate start index based on scroll offset
+	// scrollOffset = 0 means show most recent (bottom)
+	// scrollOffset > 0 means scroll up from bottom
+	totalLines := len(allLines)
+	if totalLines <= height {
+		// All lines fit, no scrolling needed
+		return lipgloss.JoinVertical(lipgloss.Left, allLines...)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, allLines[startIdx:]...)
+	// Start from the bottom and move up by scrollOffset
+	endIdx := totalLines - scrollOffset
+	startIdx := endIdx - height
+
+	// Clamp to valid ranges
+	if endIdx < height {
+		// Scrolled too far up, show the oldest logs
+		startIdx = 0
+		endIdx = height
+	} else if endIdx > totalLines {
+		// Should never happen with valid scrollOffset, but clamp anyway
+		endIdx = totalLines
+		startIdx = totalLines - height
+	} else {
+		// Normal scrolling case
+		if startIdx < 0 {
+			startIdx = 0
+		}
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, allLines[startIdx:endIdx]...)
 }
 
 // Commands
