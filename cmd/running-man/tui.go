@@ -277,10 +277,26 @@ func renderHeader(sources []string, selected int) string {
 
 	tabs := []string{}
 	for i, source := range sources {
-		style := tabStyle
-		if i == selected {
-			style = selectedTabStyle
+		// Determine style based on source group
+		var normalStyle, selectedStyle lipgloss.Style
+
+		if source == "running-man" {
+			normalStyle = runningManTabStyle
+			selectedStyle = runningManSelectedTabStyle
+		} else if isDockerContainer(source) {
+			normalStyle = dockerTabStyle
+			selectedStyle = dockerSelectedTabStyle
+		} else {
+			normalStyle = processTabStyle
+			selectedStyle = processSelectedTabStyle
 		}
+
+		// Use selected style if this is the active tab
+		style := normalStyle
+		if i == selected {
+			style = selectedStyle
+		}
+
 		tabs = append(tabs, style.Render(fmt.Sprintf(" %s ", source)))
 	}
 
@@ -432,6 +448,43 @@ var (
 			Foreground(lipgloss.Color("15")).
 			Background(lipgloss.Color("57"))
 
+	// Tab styles for running-man (system logs) - Cyan/Blue
+	runningManTabStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("250")).
+				Background(lipgloss.Color("24")). // Dark blue
+				Padding(0, 1)
+
+	runningManSelectedTabStyle = lipgloss.NewStyle().
+					Bold(true).
+					Foreground(lipgloss.Color("15")).
+					Background(lipgloss.Color("39")). // Bright blue
+					Padding(0, 1)
+
+	// Tab styles for Docker containers - Green
+	dockerTabStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("250")).
+			Background(lipgloss.Color("22")). // Dark green
+			Padding(0, 1)
+
+	dockerSelectedTabStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("15")).
+				Background(lipgloss.Color("34")). // Bright green
+				Padding(0, 1)
+
+	// Tab styles for processes - Yellow/Orange
+	processTabStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("250")).
+			Background(lipgloss.Color("94")). // Dark orange
+			Padding(0, 1)
+
+	processSelectedTabStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("15")).
+				Background(lipgloss.Color("214")). // Bright orange
+				Padding(0, 1)
+
+	// Legacy generic tab styles (kept for compatibility)
 	tabStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("250")).
 			Background(lipgloss.Color("235")).
