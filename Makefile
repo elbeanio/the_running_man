@@ -5,6 +5,8 @@ all: build
 
 # Build the binary
 build:
+	@echo "Generating embedded files..."
+	@go generate ./internal/api/...
 	@echo "Building running-man..."
 	@go build -o running-man ./cmd/running-man
 	@echo "✓ Build successful"
