@@ -1,4 +1,4 @@
-.PHONY: build test clean install run-tests help
+.PHONY: build test clean install install-local run-tests help
 
 # Default target
 all: build
@@ -49,6 +49,13 @@ install:
 	@echo "Installing to GOPATH..."
 	@go install ./cmd/running-man
 
+# Install binary to ~/bin
+install-local: build
+	@echo "Installing to ~/bin..."
+	@mkdir -p ~/bin
+	@cp running-man ~/bin/
+	@echo "✓ Installed to ~/bin/running-man"
+
 # Format code
 fmt:
 	@echo "Formatting code..."
@@ -70,6 +77,7 @@ help:
 	@echo "  clean            - Remove build artifacts"
 	@echo "  deps             - Install/update dependencies"
 	@echo "  install          - Install to GOPATH"
+	@echo "  install-local    - Install to ~/bin"
 	@echo "  fmt              - Format code"
 	@echo "  lint             - Run linter"
 	@echo "  help             - Show this help"
