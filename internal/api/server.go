@@ -120,6 +120,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/processes/stop-all", s.handleStopAll)  // Must come before /processes/
 	mux.HandleFunc("/processes/", s.handleProcessOrRestart) // Handles both GET /processes/{name} and POST /processes/{name}/restart
 	mux.HandleFunc("/processes", s.handleProcesses)
+	mux.Handle("/mcp", s.createMCPHandler()) // MCP endpoint for AI agent integration
 	mux.HandleFunc("/docs/openapi.yaml", s.handleOpenAPISpec)
 	mux.HandleFunc("/docs", s.handleSwaggerUI)
 	mux.HandleFunc("/docs/", s.handleSwaggerUI)
