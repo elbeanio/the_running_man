@@ -133,11 +133,24 @@ func (s *Server) Start() error {
 // corsMiddleware adds CORS headers for browser access
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Note: Wildcard origin (*) is used for development convenience
+		// TODO: Restrict to specific origins in production (see task the_running_man-19g)
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+
+		// MCP Protocol headers:
+		// - Mcp-Session-Id: Client sends to resume sessions
+		// - Mcp-Protocol-Version: Protocol version negotiation (e.g., "2025-11-25")
+		// - Last-Event-ID: SSE reconnection with event replay
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID")
+
+		// Expose Mcp-Session-Id so clients can read session IDs from responses
+		// (required for MCP session creation/resumption flow)
+		w.Header().Set("Access-Control-Expose-Headers", "Mcp-Session-Id")
 
 		if r.Method == "OPTIONS" {
+			// Cache preflight response for 24 hours to reduce latency
+			w.Header().Set("Access-Control-Max-Age", "86400")
 			w.WriteHeader(http.StatusOK)
 			return
 		}
