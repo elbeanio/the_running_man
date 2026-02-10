@@ -1,14 +1,22 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// createMCPHandler creates an HTTP handler for the MCP endpoint
-// This provides AI agents with access to log querying and process management
+// createMCPHandler creates an HTTP handler for the Model Context Protocol (MCP) endpoint.
+// MCP provides a standardized interface for AI agents to query logs, check process status,
+// and retrieve operational data. This enables integration with Claude, GPT, and other AI systems.
+//
+// The handler uses StreamableHTTPHandler which provides:
+// - Session management with Mcp-Session-Id header
+// - SSE (Server-Sent Events) for streaming responses
+// - Support for GET (SSE stream), POST (messages), and DELETE (session termination)
+// - Automatic message routing and JSON-RPC protocol handling
+//
+// Note: This endpoint is currently unauthenticated. See task the_running_man-19g for adding auth.
 func (s *Server) createMCPHandler() http.Handler {
 	// Create MCP server with implementation details
 	server := mcp.NewServer(&mcp.Implementation{
@@ -23,30 +31,22 @@ func (s *Server) createMCPHandler() http.Handler {
 	s.registerGetProcessStatusTool(server)
 	s.registerGetStartupLogsTool(server)
 
-	// Wrap MCP server in HTTP handler
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// MCP protocol typically uses POST with JSON-RPC
-		if r.Method != http.MethodPost {
-			s.writeError(w, http.StatusMethodNotAllowed, "MCP endpoint requires POST")
-			return
-		}
+	// Log that MCP endpoint is being initialized
+	s.log("Initializing MCP endpoint with streamable HTTP handler", false)
 
-		// TODO: Implement proper MCP protocol handling
-		// For now, return a placeholder response
-		s.log("MCP request received (handler skeleton only)", false)
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"jsonrpc": "2.0",
-			"result": map[string]interface{}{
-				"server": map[string]string{
-					"name":    "the-running-man",
-					"version": "0.1.0",
-				},
-				"status": "skeleton - tools not yet implemented",
-			},
-		})
-	})
+	// Return streamable HTTP handler that handles full MCP protocol
+	// The SDK automatically handles:
+	// - Session lifecycle (create/resume/terminate)
+	// - SSE streaming for server-to-client messages
+	// - JSON-RPC message routing
+	// - Protocol version negotiation
+	return mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
+		// Return the same server instance for all sessions since all tools
+		// are stateless queries against shared resources (RingBuffer, ProcessManager).
+		// If per-session state is needed in the future (e.g., user preferences,
+		// session-specific auth context), create a new server instance per session.
+		return server
+	}, nil)
 }
 
 // registerSearchLogsTool registers the search_logs MCP tool
