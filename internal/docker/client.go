@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -13,38 +14,34 @@ import (
 	"github.com/docker/docker/client"
 )
 
-// findDockerSocket searches for an available Docker socket
-func findDockerSocket() string {
-	// Check DOCKER_HOST environment variable first (most explicit)
+// getDockerEndpoint resolves the Docker host using the Docker CLI context system
+func getDockerEndpoint() string {
+	// First check DOCKER_HOST env var (explicit override)
 	if dockerHost := os.Getenv("DOCKER_HOST"); dockerHost != "" {
 		return dockerHost
 	}
 
-	// Get user info for path expansion
-	homeDir, _ := os.UserHomeDir()
-	uid := os.Getuid()
-
-	// Common socket paths to try
-	socketPaths := []string{
-		"/var/run/docker.sock", // Standard Linux/macOS
+	// Determine which context to use
+	contextName := os.Getenv("DOCKER_CONTEXT")
+	if contextName == "" {
+		// Get current context from docker CLI config
+		cmd := exec.Command("docker", "context", "show")
+		out, err := cmd.Output()
+		if err == nil {
+			contextName = strings.TrimSpace(string(out))
+		}
+	}
+	if contextName == "" {
+		contextName = "default"
 	}
 
-	// Add user-specific paths if we have home directory
-	if homeDir != "" {
-		socketPaths = append(socketPaths, []string{
-			homeDir + "/.colima/default/docker.sock",                           // Colima
-			homeDir + "/.rd/docker.sock",                                       // Rancher Desktop
-			homeDir + "/Library/Containers/com.docker.docker/Data/docker.sock", // Docker Desktop macOS
-		}...)
-	}
-
-	// Add podman socket (user-specific by UID)
-	socketPaths = append(socketPaths, fmt.Sprintf("/run/user/%d/docker.sock", uid))
-
-	// Try each path
-	for _, path := range socketPaths {
-		if _, err := os.Stat(path); err == nil {
-			return "unix://" + path
+	// Get the endpoint from docker context inspect
+	cmd := exec.Command("docker", "context", "inspect", contextName, "--format", "{{.Endpoints.docker.Host}}")
+	out, err := cmd.Output()
+	if err == nil {
+		endpoint := strings.TrimSpace(string(out))
+		if endpoint != "" {
+			return endpoint
 		}
 	}
 
@@ -60,9 +57,9 @@ type Client struct {
 func NewClient() (*Client, error) {
 	var opts []client.Opt
 
-	// Try to find an available Docker socket
-	if socket := findDockerSocket(); socket != "" {
-		opts = append(opts, client.WithHost(socket))
+	// Try to get Docker endpoint from context system
+	if endpoint := getDockerEndpoint(); endpoint != "" {
+		opts = append(opts, client.WithHost(endpoint))
 	}
 
 	opts = append(opts, client.FromEnv, client.WithAPIVersionNegotiation())
