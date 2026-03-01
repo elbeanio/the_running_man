@@ -662,6 +662,37 @@ func TestRenderLogs_WithCurrentMatchIdx(t *testing.T) {
 	}
 }
 
+func TestCountMatches_IncludesLevelAndTimestamp(t *testing.T) {
+	// Regression: searching for a log level (e.g. "info") must count matches in the
+	// rendered [HH:MM:SS] [INFO] prefix, not just the message body.
+	logs := []logEntry{
+		{Timestamp: "2026-03-01T10:00:01Z", Level: "INFO", Message: "startup complete"},
+		{Timestamp: "2026-03-01T10:00:02Z", Level: "ERROR", Message: "something failed"},
+		{Timestamp: "2026-03-01T10:00:03Z", Level: "INFO", Message: "request handled"},
+	}
+
+	count := countMatches(logs, "info")
+	if count != 2 {
+		t.Errorf("expected 2 matches for 'info' (in [INFO] prefix), got %d", count)
+	}
+
+	// And n/p navigation should be non-zero
+	m := initialModel("http://localhost:9000", nil)
+	m.logs = logs
+	m.searchQuery = "info"
+	m.searchMatchIdx = 0
+	m.height = 20
+	m.width = 120
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}
+	newModel, _ := m.updateNormalMode(msg)
+	nm := newModel.(model)
+
+	if nm.searchMatchIdx != 1 {
+		t.Errorf("expected searchMatchIdx=1 after pressing n with 'info' query, got %d", nm.searchMatchIdx)
+	}
+}
+
 func TestScrollToMatch_PositionsViewCorrectly(t *testing.T) {
 	// Create enough logs that they exceed one screen
 	logs := []logEntry{}

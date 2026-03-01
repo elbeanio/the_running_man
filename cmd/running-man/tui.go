@@ -640,16 +640,10 @@ func tickCmd() tea.Cmd {
 }
 
 func countMatches(logs []logEntry, query string) int {
-	if query == "" {
-		return 0
-	}
-	lowerQuery := strings.ToLower(query)
-	count := 0
-	for _, log := range logs {
-		lowerMsg := strings.ToLower(log.Message)
-		count += strings.Count(lowerMsg, lowerQuery)
-	}
-	return count
+	// Delegate to buildMatchLineIndex so the count matches exactly what is
+	// highlighted in the rendered output (full line including timestamp/level prefix).
+	// Use a large width so truncation never fires and no matches are cut off.
+	return len(buildMatchLineIndex(logs, 1<<20, query))
 }
 
 func isPrintableKey(msg tea.Msg) bool {
