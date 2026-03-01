@@ -56,11 +56,11 @@ func (s *Server) createMCPHandler() http.Handler {
 
 // SearchLogsArgs defines the parameters for the search_logs MCP tool
 type SearchLogsArgs struct {
-	Source   string `json:"source,omitempty" jsonschema:"description=Filter by source (supports glob patterns like 'backend*'),example=backend"`
-	Since    string `json:"since,omitempty" jsonschema:"description=Time window (e.g. '5m' '1h' '30s'),example=5m"`
-	Level    string `json:"level,omitempty" jsonschema:"description=Filter by log level (error/warn/info/debug),example=error"`
-	Contains string `json:"contains,omitempty" jsonschema:"description=Search for text in log messages,example=database"`
-	Limit    int    `json:"limit,omitempty" jsonschema:"description=Maximum number of log entries to return,default=50,minimum=1,maximum=1000"`
+	Source   string `json:"source,omitempty" jsonschema:"description=Filter by source (supports glob patterns like backend*)"`
+	Since    string `json:"since,omitempty" jsonschema:"description=Time window (e.g. 5m, 1h, 30s)"`
+	Level    string `json:"level,omitempty" jsonschema:"description=Filter by log level (error/warn/info/debug)"`
+	Contains string `json:"contains,omitempty" jsonschema:"description=Search for text in log messages"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"description=Maximum number of log entries to return;default=50;minimum=1;maximum=1000"`
 }
 
 // registerSearchLogsTool registers the search_logs MCP tool
