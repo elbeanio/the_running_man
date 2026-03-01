@@ -23,6 +23,7 @@ type LogEntry struct {
 	Raw        string
 	IsError    bool
 	Stacktrace string
+	TraceID    string
 }
 
 // MultiParser manages multiple parsers and maintains state

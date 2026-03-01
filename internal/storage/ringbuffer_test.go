@@ -533,3 +533,119 @@ func TestRingBuffer_InvalidGlobPattern(t *testing.T) {
 		t.Errorf("Expected 0 entries for invalid glob pattern, got %d", len(result))
 	}
 }
+
+func TestRingBuffer_TraceCorrelation(t *testing.T) {
+	rb := NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+
+	// Add entries with trace IDs
+	entries := []*parser.LogEntry{
+		{
+			Timestamp: time.Now(),
+			Level:     parser.LevelInfo,
+			Source:    "service-a",
+			Message:   "Processing request",
+			Raw:       "Processing request",
+			TraceID:   "trace-123",
+		},
+		{
+			Timestamp: time.Now(),
+			Level:     parser.LevelError,
+			Source:    "service-a",
+			Message:   "Database error",
+			Raw:       "Database error",
+			IsError:   true,
+			TraceID:   "trace-123",
+		},
+		{
+			Timestamp: time.Now(),
+			Level:     parser.LevelInfo,
+			Source:    "service-b",
+			Message:   "Cache hit",
+			Raw:       "Cache hit",
+			TraceID:   "trace-456",
+		},
+		{
+			Timestamp: time.Now(),
+			Level:     parser.LevelInfo,
+			Source:    "service-c",
+			Message:   "No trace ID",
+			Raw:       "No trace ID",
+			TraceID:   "", // Empty trace ID
+		},
+	}
+
+	for _, entry := range entries {
+		rb.Append(entry)
+	}
+
+	// Test GetLogsByTraceID for trace-123
+	logs1 := rb.GetLogsByTraceID("trace-123")
+	if len(logs1) != 2 {
+		t.Errorf("Expected 2 logs for trace-123, got %d", len(logs1))
+	}
+	for _, log := range logs1 {
+		if log.TraceID != "trace-123" {
+			t.Errorf("Expected trace ID 'trace-123', got '%s'", log.TraceID)
+		}
+	}
+
+	// Test GetLogsByTraceID for trace-456
+	logs2 := rb.GetLogsByTraceID("trace-456")
+	if len(logs2) != 1 {
+		t.Errorf("Expected 1 log for trace-456, got %d", len(logs2))
+	}
+	if len(logs2) > 0 && logs2[0].TraceID != "trace-456" {
+		t.Errorf("Expected trace ID 'trace-456', got '%s'", logs2[0].TraceID)
+	}
+
+	// Test GetLogsByTraceID for non-existent trace
+	logs3 := rb.GetLogsByTraceID("nonexistent")
+	if len(logs3) != 0 {
+		t.Errorf("Expected 0 logs for nonexistent trace, got %d", len(logs3))
+	}
+
+	// Test GetLogsByTraceID for empty trace ID
+	logs4 := rb.GetLogsByTraceID("")
+	if len(logs4) != 0 {
+		t.Errorf("Expected 0 logs for empty trace ID, got %d", len(logs4))
+	}
+
+	// Test that eviction cleans up trace index
+	// Create a small buffer and add many entries to trigger eviction
+	smallRb := NewRingBuffer(2, 30*time.Minute, 50*1024*1024)
+
+	// Add 3 entries with same trace ID (buffer size is 2, so first should be evicted)
+	smallRb.Append(&parser.LogEntry{
+		Timestamp: time.Now(),
+		Level:     parser.LevelInfo,
+		Source:    "test",
+		Message:   "First",
+		Raw:       "First",
+		TraceID:   "test-trace",
+	})
+
+	smallRb.Append(&parser.LogEntry{
+		Timestamp: time.Now(),
+		Level:     parser.LevelInfo,
+		Source:    "test",
+		Message:   "Second",
+		Raw:       "Second",
+		TraceID:   "test-trace",
+	})
+
+	// This should evict the first entry
+	smallRb.Append(&parser.LogEntry{
+		Timestamp: time.Now(),
+		Level:     parser.LevelInfo,
+		Source:    "test",
+		Message:   "Third",
+		Raw:       "Third",
+		TraceID:   "test-trace",
+	})
+
+	// Should have 2 entries for test-trace (second and third)
+	logs5 := smallRb.GetLogsByTraceID("test-trace")
+	if len(logs5) != 2 {
+		t.Errorf("After eviction, expected 2 logs for test-trace, got %d", len(logs5))
+	}
+}

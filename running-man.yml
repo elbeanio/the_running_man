@@ -42,6 +42,23 @@ max_bytes: 52428800  # Maximum total bytes of logs (50MB)
 shell: /bin/sh  # Default: /bin/sh
                 # Options: /bin/sh, /bin/bash, /bin/zsh, /usr/bin/bash, /usr/bin/zsh
 
+# OpenTelemetry tracing configuration (Phase 4)
+tracing:
+  # Enable OTLP trace ingestion (default: true)
+  # Set to false to disable tracing completely
+  enabled: true
+  
+  # OTLP HTTP receiver port (default: 4318)
+  # Change if port 4318 is already in use
+  port: 4318
+  
+  # Maximum number of spans to keep in memory (default: 10000)
+  max_spans: 10000
+  
+  # Maximum age of spans to keep (e.g., "30m", "1h", "24h")
+  # Default: 30m (same as log retention)
+  max_span_age: 30m
+
 # Usage:
 #   running-man run                    # Auto-discovers this file
 #   running-man run --config path.yml  # Use specific config file
@@ -49,3 +66,5 @@ shell: /bin/sh  # Default: /bin/sh
 # CLI flags override config file values:
 #   running-man run --api-port 8080    # Overrides api_port from config
 #   running-man run --process "cmd"    # Ignores processes from config
+#   running-man run --tracing false    # Disables tracing (overrides config)
+#   running-man run --tracing-port 4321 # Changes tracing port

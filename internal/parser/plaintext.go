@@ -80,6 +80,15 @@ func (p *PlainTextParser) Parse(source string, line string, timestamp time.Time)
 
 	// Default to info
 	entry.Level = LevelInfo
+
+	// Try to extract trace_id from plain text (common patterns)
+	// Look for patterns like "trace_id=abc123", "trace: abc123", "traceId=abc123"
+	// Also support hex strings (a-f0-9) and UUIDs (with hyphens)
+	traceIDRegex := regexp.MustCompile(`(?i)(?:trace[_-]?id|trace)[=:]\s*([a-fA-F0-9\-]+)`)
+	if matches := traceIDRegex.FindStringSubmatch(line); matches != nil && len(matches) > 1 {
+		entry.TraceID = matches[1]
+	}
+
 	return entry
 }
 

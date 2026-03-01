@@ -16,7 +16,7 @@ import (
 
 func setupTestServer() (*Server, *storage.RingBuffer) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil) // nil lineHandler and manager for tests
+	server := NewServer(buffer, 9000, nil, nil, nil) // nil lineHandler, manager, and traceStorage for tests
 	return server, buffer
 }
 
@@ -334,7 +334,7 @@ func TestSelfLogging(t *testing.T) {
 		}{source, line, isStderr})
 	}
 
-	server := NewServer(buffer, 9000, lineHandler, nil)
+	server := NewServer(buffer, 9000, lineHandler, nil, nil)
 
 	// Test normal log
 	server.log("Test message", false)
@@ -369,7 +369,7 @@ func TestSelfLogging(t *testing.T) {
 
 func TestSelfLogging_NilHandler(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil)
+	server := NewServer(buffer, 9000, nil, nil, nil)
 
 	// Should not panic with nil handler
 	server.log("Test message", false)
@@ -384,7 +384,7 @@ func TestCheckPatternComplexity(t *testing.T) {
 		warnings = append(warnings, line)
 	}
 
-	server := NewServer(buffer, 9000, lineHandler, nil)
+	server := NewServer(buffer, 9000, lineHandler, nil, nil)
 
 	tests := []struct {
 		name         string
@@ -484,7 +484,7 @@ func TestPatternWarnings_Integration(t *testing.T) {
 		buffer.Append(entry)
 	}
 
-	server := NewServer(buffer, 9000, lineHandler, nil)
+	server := NewServer(buffer, 9000, lineHandler, nil, nil)
 
 	// Make a request with problematic patterns
 	req := httptest.NewRequest("GET", "/logs?source=************test", nil)
@@ -532,7 +532,7 @@ func findSubstring(s, substr string) bool {
 
 func TestHandleProcessDetail_InvalidName_Slash(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil)
+	server := NewServer(buffer, 9000, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/processes/foo/bar", nil)
 	w := httptest.NewRecorder()
@@ -555,7 +555,7 @@ func TestHandleProcessDetail_InvalidName_Slash(t *testing.T) {
 
 func TestHandleProcessDetail_InvalidName_DotDot(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil)
+	server := NewServer(buffer, 9000, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/processes/../etc/passwd", nil)
 	w := httptest.NewRecorder()
@@ -578,7 +578,7 @@ func TestHandleProcessDetail_InvalidName_DotDot(t *testing.T) {
 
 func TestHandleProcessDetail_TooLong(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil)
+	server := NewServer(buffer, 9000, nil, nil, nil)
 
 	longName := strings.Repeat("a", 300)
 	req := httptest.NewRequest("GET", "/processes/"+longName, nil)
@@ -602,7 +602,7 @@ func TestHandleProcessDetail_TooLong(t *testing.T) {
 
 func TestHandleProcessDetail_EmptyName(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil)
+	server := NewServer(buffer, 9000, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/processes/", nil)
 	w := httptest.NewRecorder()
@@ -625,7 +625,7 @@ func TestHandleProcessDetail_EmptyName(t *testing.T) {
 
 func TestHandleProcessDetail_NoManager(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil) // nil manager
+	server := NewServer(buffer, 9000, nil, nil, nil) // nil manager
 
 	req := httptest.NewRequest("GET", "/processes/any-name", nil)
 	w := httptest.NewRecorder()
@@ -665,7 +665,7 @@ func TestHandleProcessDetail_Success_Running(t *testing.T) {
 		t.Fatalf("Process didn't start: %v", err)
 	}
 
-	server := NewServer(buffer, 9000, nil, manager)
+	server := NewServer(buffer, 9000, nil, manager, nil)
 
 	req := httptest.NewRequest("GET", "/processes/test-sleep", nil)
 	w := httptest.NewRecorder()
@@ -715,7 +715,7 @@ func TestHandleProcessDetail_Success_Stopped(t *testing.T) {
 	// Wait for process to actually complete
 	manager.Wait()
 
-	server := NewServer(buffer, 9000, nil, manager)
+	server := NewServer(buffer, 9000, nil, manager, nil)
 
 	req := httptest.NewRequest("GET", "/processes/test-echo", nil)
 	w := httptest.NewRecorder()
@@ -761,7 +761,7 @@ func TestHandleProcessDetail_NotFound(t *testing.T) {
 		t.Fatalf("Processes didn't start: %v", err)
 	}
 
-	server := NewServer(buffer, 9000, nil, manager)
+	server := NewServer(buffer, 9000, nil, manager, nil)
 
 	req := httptest.NewRequest("GET", "/processes/nonexistent", nil)
 	w := httptest.NewRecorder()
@@ -793,7 +793,7 @@ func TestHandleProcessDetail_NotFound(t *testing.T) {
 
 func TestHandleProcessDetail_WhitespaceOnly(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil)
+	server := NewServer(buffer, 9000, nil, nil, nil)
 
 	// URL encode spaces - %20 for space
 	req := httptest.NewRequest("GET", "/processes/%20%20%20", nil)
@@ -855,7 +855,7 @@ func TestHandleProcessRestart_Success(t *testing.T) {
 		t.Fatalf("Process didn't start: %v", err)
 	}
 
-	server := NewServer(buffer, 9000, nil, manager)
+	server := NewServer(buffer, 9000, nil, manager, nil)
 
 	// Get original PID
 	info1, _ := manager.GetProcess("test-echo")
@@ -915,7 +915,7 @@ func TestHandleProcessRestart_NotFound(t *testing.T) {
 	}
 	defer manager.Stop()
 
-	server := NewServer(buffer, 9000, nil, manager)
+	server := NewServer(buffer, 9000, nil, manager, nil)
 
 	req := httptest.NewRequest("POST", "/processes/nonexistent/restart", nil)
 	w := httptest.NewRecorder()
@@ -949,7 +949,7 @@ func TestHandleProcessRestart_WrongMethod(t *testing.T) {
 	}
 	defer manager.Stop()
 
-	server := NewServer(buffer, 9000, nil, manager)
+	server := NewServer(buffer, 9000, nil, manager, nil)
 
 	// Try GET on restart endpoint
 	req := httptest.NewRequest("GET", "/processes/test-proc/restart", nil)
@@ -964,7 +964,7 @@ func TestHandleProcessRestart_WrongMethod(t *testing.T) {
 
 func TestHandleProcessRestart_NoManager(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil) // nil manager
+	server := NewServer(buffer, 9000, nil, nil, nil) // nil manager
 
 	req := httptest.NewRequest("POST", "/processes/any-proc/restart", nil)
 	w := httptest.NewRecorder()
@@ -997,7 +997,7 @@ func TestHandleStopAll_Success(t *testing.T) {
 		t.Fatalf("Processes didn't start: %v", err)
 	}
 
-	server := NewServer(buffer, 9000, nil, manager)
+	server := NewServer(buffer, 9000, nil, manager, nil)
 
 	// Verify all processes are running
 	infos := manager.ListProcesses()
@@ -1061,7 +1061,7 @@ func TestHandleStopAll_NoProcesses(t *testing.T) {
 	}
 	defer manager.Stop()
 
-	server := NewServer(buffer, 9000, nil, manager)
+	server := NewServer(buffer, 9000, nil, manager, nil)
 
 	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
 	w := httptest.NewRecorder()
@@ -1105,7 +1105,7 @@ func TestHandleStopAll_MixedStates(t *testing.T) {
 	// Give quick process time to finish
 	time.Sleep(100 * time.Millisecond)
 
-	server := NewServer(buffer, 9000, nil, manager)
+	server := NewServer(buffer, 9000, nil, manager, nil)
 
 	// Stop-all when some processes are stopped and some running
 	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
@@ -1143,7 +1143,7 @@ func TestHandleStopAll_WrongMethod(t *testing.T) {
 	}
 	defer manager.Stop()
 
-	server := NewServer(buffer, 9000, nil, manager)
+	server := NewServer(buffer, 9000, nil, manager, nil)
 
 	// Try GET instead of POST
 	req := httptest.NewRequest("GET", "/processes/stop-all", nil)
@@ -1168,7 +1168,7 @@ func TestHandleStopAll_WrongMethod(t *testing.T) {
 
 func TestHandleStopAll_NoManager(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil) // nil manager
+	server := NewServer(buffer, 9000, nil, nil, nil) // nil manager
 
 	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
 	w := httptest.NewRecorder()

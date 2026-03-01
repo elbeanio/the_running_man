@@ -267,9 +267,10 @@ func runCommand(args []string) {
 
 	// Create tracing storage and receiver if enabled
 	var tracingReceiver *tracing.Receiver
+	var spanStorage *tracing.SpanStorage
 	if finalTracingEnabled {
 		fmt.Printf("Tracing: OTLP receiver on http://localhost:%d\n", finalTracingPort)
-		spanStorage := tracing.NewSpanStorage(finalMaxSpans, finalMaxSpanAge)
+		spanStorage = tracing.NewSpanStorage(finalMaxSpans, finalMaxSpanAge)
 		tracingReceiver = tracing.NewReceiver(spanStorage, finalTracingPort)
 	}
 
@@ -363,7 +364,11 @@ func runCommand(args []string) {
 	}
 
 	// Start API server in background
-	apiServer := api.NewServer(buffer, finalAPIPort, lineHandler, manager)
+	var traceStorage *tracing.SpanStorage
+	if spanStorage != nil {
+		traceStorage = spanStorage
+	}
+	apiServer := api.NewServer(buffer, finalAPIPort, lineHandler, manager, traceStorage)
 	go func() {
 		if err := apiServer.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] API server error: %v\n", err)

@@ -14,6 +14,7 @@ import (
 	"github.com/iangeorge/the_running_man/internal/parser"
 	"github.com/iangeorge/the_running_man/internal/process"
 	"github.com/iangeorge/the_running_man/internal/storage"
+	"github.com/iangeorge/the_running_man/internal/tracing"
 )
 
 //go:generate cp ../../docs/openapi.yaml openapi.yaml
@@ -54,21 +55,23 @@ func validateProcessName(name string) (string, error) {
 
 // Server provides the HTTP API for querying logs
 type Server struct {
-	buffer      *storage.RingBuffer
-	port        int
-	startTime   time.Time
-	lineHandler LineHandler
-	manager     *process.Manager
+	buffer       *storage.RingBuffer
+	port         int
+	startTime    time.Time
+	lineHandler  LineHandler
+	manager      *process.Manager
+	traceStorage *tracing.SpanStorage // Optional, nil if tracing disabled
 }
 
 // NewServer creates a new API server
-func NewServer(buffer *storage.RingBuffer, port int, lineHandler LineHandler, manager *process.Manager) *Server {
+func NewServer(buffer *storage.RingBuffer, port int, lineHandler LineHandler, manager *process.Manager, traceStorage *tracing.SpanStorage) *Server {
 	return &Server{
-		buffer:      buffer,
-		port:        port,
-		startTime:   time.Now(),
-		lineHandler: lineHandler,
-		manager:     manager,
+		buffer:       buffer,
+		port:         port,
+		startTime:    time.Now(),
+		lineHandler:  lineHandler,
+		manager:      manager,
+		traceStorage: traceStorage,
 	}
 }
 
@@ -124,6 +127,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/docs/openapi.yaml", s.handleOpenAPISpec)
 	mux.HandleFunc("/docs", s.handleSwaggerUI)
 	mux.HandleFunc("/docs/", s.handleSwaggerUI)
+
+	// Trace endpoints
+	mux.HandleFunc("/traces", s.handleTraces)
+	mux.HandleFunc("/traces/", s.handleTraceDetail) // Handles /traces/{id} and /traces/{id}/logs
 
 	addr := fmt.Sprintf(":%d", s.port)
 	s.log(fmt.Sprintf("API server starting on http://localhost%s", addr), false)
@@ -483,6 +490,21 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 			"description": "Stop all managed processes",
 		},
 		{
+			"path":        "/traces",
+			"method":      "GET",
+			"description": "Query traces with filters (since, service, trace_id, span_name, status)",
+		},
+		{
+			"path":        "/traces/{id}",
+			"method":      "GET",
+			"description": "Get all spans for a specific trace",
+		},
+		{
+			"path":        "/traces/{id}/logs",
+			"method":      "GET",
+			"description": "Get all logs correlated with a specific trace",
+		},
+		{
 			"path":        "/docs",
 			"method":      "GET",
 			"description": "Interactive API documentation (Swagger UI)",
@@ -505,6 +527,133 @@ func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 	// Serve the embedded OpenAPI spec file
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
 	w.Write(openapiSpec)
+}
+
+func (s *Server) handleTraces(w http.ResponseWriter, r *http.Request) {
+	if s.traceStorage == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "Tracing not enabled")
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed, use GET")
+		return
+	}
+
+	// Parse query parameters
+	filters := tracing.SpanQueryFilters{}
+
+	// Parse 'since' parameter (e.g., "30s", "5m", "1h")
+	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
+		duration, err := parseDuration(sinceStr)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid since parameter: %v", err))
+			return
+		}
+		filters.Since = duration
+	}
+
+	// Parse 'service' parameter
+	if serviceName := r.URL.Query().Get("service"); serviceName != "" {
+		filters.ServiceName = serviceName
+	}
+
+	// Parse 'trace_id' parameter
+	if traceID := r.URL.Query().Get("trace_id"); traceID != "" {
+		filters.TraceID = traceID
+	}
+
+	// Parse 'span_name' parameter
+	if spanName := r.URL.Query().Get("span_name"); spanName != "" {
+		filters.SpanName = spanName
+	}
+
+	// Parse 'status' parameter
+	if status := r.URL.Query().Get("status"); status != "" {
+		filters.Status = status
+	}
+
+	// Parse 'limit' parameter
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		limit, err := strconv.Atoi(limitStr)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid limit parameter: %v", err))
+			return
+		}
+		filters.Limit = limit
+	}
+
+	// Query the trace storage
+	spans := s.traceStorage.Query(filters)
+
+	// Apply limit if specified
+	if filters.Limit > 0 && len(spans) > filters.Limit {
+		spans = spans[:filters.Limit]
+	}
+
+	// Return JSON response
+	s.writeJSON(w, map[string]interface{}{
+		"traces": spans,
+		"count":  len(spans),
+	})
+}
+
+func (s *Server) handleTraceDetail(w http.ResponseWriter, r *http.Request) {
+	if s.traceStorage == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "Tracing not enabled")
+		return
+	}
+
+	// Extract path after /traces/
+	path := strings.TrimPrefix(r.URL.Path, "/traces/")
+	if path == "" || path == r.URL.Path {
+		s.writeError(w, http.StatusBadRequest, "Trace ID required")
+		return
+	}
+
+	// Check if this is a logs request: /traces/{id}/logs
+	if strings.HasSuffix(path, "/logs") {
+		if r.Method != http.MethodGet {
+			s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed, use GET")
+			return
+		}
+		traceID := strings.TrimSuffix(path, "/logs")
+		s.handleTraceLogs(w, r, traceID)
+		return
+	}
+
+	// Otherwise, handle GET /traces/{id}
+	if r.Method != http.MethodGet {
+		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed, use GET")
+		return
+	}
+	s.handleTraceSpans(w, r, path)
+}
+
+func (s *Server) handleTraceSpans(w http.ResponseWriter, r *http.Request, traceID string) {
+	// Get all spans for this trace
+	spans := s.traceStorage.GetTrace(traceID)
+	if len(spans) == 0 {
+		s.writeError(w, http.StatusNotFound, fmt.Sprintf("Trace %s not found", traceID))
+		return
+	}
+
+	s.writeJSON(w, map[string]interface{}{
+		"trace_id": traceID,
+		"spans":    spans,
+		"count":    len(spans),
+	})
+}
+
+func (s *Server) handleTraceLogs(w http.ResponseWriter, r *http.Request, traceID string) {
+	// Get logs for this trace from the buffer
+	logs := s.buffer.GetLogsByTraceID(traceID)
+
+	s.writeJSON(w, map[string]interface{}{
+		"trace_id": traceID,
+		"logs":     logs,
+		"count":    len(logs),
+	})
 }
 
 func (s *Server) handleSwaggerUI(w http.ResponseWriter, r *http.Request) {

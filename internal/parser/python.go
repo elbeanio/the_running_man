@@ -101,7 +101,7 @@ func (p *PythonParser) buildEntry(source string) *LogEntry {
 		}
 	}
 
-	return &LogEntry{
+	entry := &LogEntry{
 		Timestamp:  p.firstTime,
 		Level:      LevelError,
 		Source:     source,
@@ -110,6 +110,17 @@ func (p *PythonParser) buildEntry(source string) *LogEntry {
 		IsError:    true,
 		Stacktrace: stacktrace,
 	}
+
+	// Try to extract trace_id from the traceback
+	traceIDRegex := regexp.MustCompile(`(?i)(?:trace[_-]?id|trace)[=:]\s*([a-f0-9\-]+)`)
+	for _, line := range p.lines {
+		if matches := traceIDRegex.FindStringSubmatch(line); matches != nil && len(matches) > 1 {
+			entry.TraceID = matches[1]
+			break
+		}
+	}
+
+	return entry
 }
 
 func (p *PythonParser) reset() {

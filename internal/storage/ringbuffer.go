@@ -18,16 +18,19 @@ type RingBuffer struct {
 	currentSize int64
 	maxBytes    int64
 	startTime   time.Time
+	// Trace index for fast lookup of logs by trace_id
+	traceIndex map[string][]*parser.LogEntry
 }
 
 // NewRingBuffer creates a new ring buffer
 func NewRingBuffer(maxSize int, maxAge time.Duration, maxBytes int64) *RingBuffer {
 	return &RingBuffer{
-		entries:   make([]*parser.LogEntry, 0, maxSize),
-		maxSize:   maxSize,
-		maxAge:    maxAge,
-		maxBytes:  maxBytes,
-		startTime: time.Now(),
+		entries:    make([]*parser.LogEntry, 0, maxSize),
+		maxSize:    maxSize,
+		maxAge:     maxAge,
+		maxBytes:   maxBytes,
+		startTime:  time.Now(),
+		traceIndex: make(map[string][]*parser.LogEntry),
 	}
 }
 
@@ -44,6 +47,11 @@ func (rb *RingBuffer) Append(entry *parser.LogEntry) {
 	// Add the new entry
 	rb.entries = append(rb.entries, entry)
 	rb.currentSize += entrySize
+
+	// Update trace index if entry has a trace_id
+	if entry.TraceID != "" {
+		rb.traceIndex[entry.TraceID] = append(rb.traceIndex[entry.TraceID], entry)
+	}
 }
 
 // evictIfNeeded removes old entries to make room for new ones
@@ -56,6 +64,10 @@ func (rb *RingBuffer) evictIfNeeded(newEntrySize int64) {
 		removed := rb.entries[0]
 		rb.entries = rb.entries[1:]
 		rb.currentSize -= int64(len(removed.Raw))
+		// Clean up trace index for removed entry
+		if removed.TraceID != "" {
+			rb.removeFromTraceIndex(removed.TraceID, removed)
+		}
 	}
 
 	// Remove oldest entries if we're over size limit
@@ -63,6 +75,10 @@ func (rb *RingBuffer) evictIfNeeded(newEntrySize int64) {
 		removed := rb.entries[0]
 		rb.entries = rb.entries[1:]
 		rb.currentSize -= int64(len(removed.Raw))
+		// Clean up trace index for removed entry
+		if removed.TraceID != "" {
+			rb.removeFromTraceIndex(removed.TraceID, removed)
+		}
 	}
 
 	// Remove oldest entries if we're over count limit
@@ -70,6 +86,10 @@ func (rb *RingBuffer) evictIfNeeded(newEntrySize int64) {
 		removed := rb.entries[0]
 		rb.entries = rb.entries[1:]
 		rb.currentSize -= int64(len(removed.Raw))
+		// Clean up trace index for removed entry
+		if removed.TraceID != "" {
+			rb.removeFromTraceIndex(removed.TraceID, removed)
+		}
 	}
 }
 
@@ -231,6 +251,24 @@ func (rb *RingBuffer) newestEntry() time.Time {
 	return rb.entries[len(rb.entries)-1].Timestamp
 }
 
+// removeFromTraceIndex removes a specific entry from the trace index
+func (rb *RingBuffer) removeFromTraceIndex(traceID string, entry *parser.LogEntry) {
+	if entries, exists := rb.traceIndex[traceID]; exists {
+		// Find and remove the entry
+		for i, e := range entries {
+			if e == entry {
+				// Remove the entry from slice
+				rb.traceIndex[traceID] = append(entries[:i], entries[i+1:]...)
+				// If slice is empty, delete the traceID from map
+				if len(rb.traceIndex[traceID]) == 0 {
+					delete(rb.traceIndex, traceID)
+				}
+				break
+			}
+		}
+	}
+}
+
 // Clear removes all entries from the buffer
 func (rb *RingBuffer) Clear() {
 	rb.mu.Lock()
@@ -238,6 +276,21 @@ func (rb *RingBuffer) Clear() {
 
 	rb.entries = make([]*parser.LogEntry, 0, rb.maxSize)
 	rb.currentSize = 0
+	rb.traceIndex = make(map[string][]*parser.LogEntry)
+}
+
+// GetLogsByTraceID returns all log entries for a specific trace ID
+func (rb *RingBuffer) GetLogsByTraceID(traceID string) []*parser.LogEntry {
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
+
+	if entries, exists := rb.traceIndex[traceID]; exists {
+		// Return a copy to avoid concurrent modification issues
+		result := make([]*parser.LogEntry, len(entries))
+		copy(result, entries)
+		return result
+	}
+	return nil
 }
 
 // QueryFilters specifies which logs to retrieve

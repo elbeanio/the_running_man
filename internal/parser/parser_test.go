@@ -16,6 +16,7 @@ func TestJSONParser(t *testing.T) {
 		wantLevel   LogLevel
 		wantMessage string
 		wantParsed  bool
+		wantTraceID string
 	}{
 		{
 			name:        "basic json log",
@@ -23,6 +24,7 @@ func TestJSONParser(t *testing.T) {
 			wantLevel:   LevelInfo,
 			wantMessage: "server started",
 			wantParsed:  true,
+			wantTraceID: "",
 		},
 		{
 			name:        "json error with stack",
@@ -30,11 +32,29 @@ func TestJSONParser(t *testing.T) {
 			wantLevel:   LevelError,
 			wantMessage: "database failed",
 			wantParsed:  true,
+			wantTraceID: "",
 		},
 		{
-			name:       "not json",
-			input:      "plain text log line",
-			wantParsed: false,
+			name:        "not json",
+			input:       "plain text log line",
+			wantParsed:  false,
+			wantTraceID: "",
+		},
+		{
+			name:        "json with trace_id",
+			input:       `{"level":"info","message":"processing request","trace_id":"abc123","span_id":"def456"}`,
+			wantLevel:   LevelInfo,
+			wantMessage: "processing request",
+			wantParsed:  true,
+			wantTraceID: "abc123",
+		},
+		{
+			name:        "json with traceId (camelCase)",
+			input:       `{"level":"error","msg":"database error","traceId":"xyz789"}`,
+			wantLevel:   LevelError,
+			wantMessage: "database error",
+			wantParsed:  true,
+			wantTraceID: "xyz789",
 		},
 	}
 
@@ -55,6 +75,9 @@ func TestJSONParser(t *testing.T) {
 				}
 				if entry.Level == LevelError && !entry.IsError {
 					t.Error("Expected IsError = true for error level")
+				}
+				if entry.TraceID != tt.wantTraceID {
+					t.Errorf("TraceID = %v, want %v", entry.TraceID, tt.wantTraceID)
 				}
 			}
 		})

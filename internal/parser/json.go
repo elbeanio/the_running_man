@@ -68,6 +68,21 @@ func (p *JSONParser) Parse(source string, line string, timestamp time.Time) (*Lo
 		entry.IsError = true
 	}
 
+	// Extract trace_id if present (common OTEL field names)
+	if traceID, ok := data["trace_id"].(string); ok && traceID != "" {
+		entry.TraceID = traceID
+	} else if traceID, ok := data["traceId"].(string); ok && traceID != "" {
+		entry.TraceID = traceID
+	} else if traceID, ok := data["traceID"].(string); ok && traceID != "" {
+		entry.TraceID = traceID
+	} else if traceID, ok := data["trace"].(string); ok && traceID != "" {
+		entry.TraceID = traceID
+	} else if spanID, ok := data["span_id"].(string); ok && spanID != "" {
+		// Some logs might have span_id but not trace_id
+		// We'll extract trace_id from span context if available
+		entry.TraceID = spanID
+	}
+
 	// Extract timestamp if present
 	if ts, ok := data["timestamp"].(string); ok {
 		if parsed, err := time.Parse(time.RFC3339, ts); err == nil {

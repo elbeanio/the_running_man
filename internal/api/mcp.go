@@ -10,6 +10,7 @@ import (
 	"github.com/iangeorge/the_running_man/internal/parser"
 	"github.com/iangeorge/the_running_man/internal/process"
 	"github.com/iangeorge/the_running_man/internal/storage"
+	"github.com/iangeorge/the_running_man/internal/tracing"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -51,6 +52,7 @@ func (s *Server) createMCPHandler() http.Handler {
 	s.registerStopAllProcessesTool(server)
 	s.registerGetProcessDetailTool(server)
 	s.registerGetHealthStatusTool(server)
+	s.registerTraceTools(server)
 
 	// Log that MCP endpoint is being initialized
 	s.log("Initializing MCP endpoint with streamable HTTP handler", false)
@@ -1223,4 +1225,634 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// TraceQueryArgs defines the parameters for trace-related MCP tools
+type TraceQueryArgs struct {
+	Since       string `json:"since,omitempty" jsonschema:"Search traces from this time window. Duration format: '5m' (5 min), '1h' (1 hour), '30s' (30 sec). Example: '2h' for last 2 hours"`
+	ServiceName string `json:"service_name,omitempty" jsonschema:"Filter by service name from traces. Example: 'web-server' or 'database'"`
+	TraceID     string `json:"trace_id,omitempty" jsonschema:"Get specific trace by ID. Example: 'abc123def456'"`
+	SpanName    string `json:"span_name,omitempty" jsonschema:"Filter by span name (supports partial match). Example: 'http.request'"`
+	Status      string `json:"status,omitempty" jsonschema:"Filter by span status. Options: 'ok', 'error', 'unset'. Example: 'error' for traces with errors"`
+	Limit       int    `json:"limit,omitempty" jsonschema:"Maximum traces or spans to return. Default: 50, Max: 1000. Example: 100"`
+}
+
+// SlowTraceArgs defines parameters for finding slow traces
+type SlowTraceArgs struct {
+	Since       string `json:"since,omitempty" jsonschema:"Search traces from this time window. Duration format: '5m' (5 min), '1h' (1 hour), '30s' (30 sec)"`
+	Threshold   string `json:"threshold,omitempty" jsonschema:"Duration threshold for slow traces. Example: '1s' for traces longer than 1 second, '100ms' for traces longer than 100 milliseconds"`
+	ServiceName string `json:"service_name,omitempty" jsonschema:"Filter by service name. Example: 'web-server' or 'database'"`
+	Limit       int    `json:"limit,omitempty" jsonschema:"Maximum traces to return. Default: 20, Max: 100"`
+}
+
+// registerTraceTools registers all trace-related MCP tools
+func (s *Server) registerTraceTools(server *mcp.Server) {
+	if s.traceStorage == nil {
+		// Tracing not enabled, don't register trace tools
+		return
+	}
+
+	s.registerGetTracesTool(server)
+	s.registerGetTraceTool(server)
+	s.registerGetCorrelatedLogsTool(server)
+	s.registerFindSlowTracesTool(server)
+	s.registerTraceErrorsTool(server)
+}
+
+// registerGetTracesTool registers the get_traces MCP tool
+func (s *Server) registerGetTracesTool(server *mcp.Server) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "get_traces",
+		Description: `List recent traces captured by running-man's OpenTelemetry tracing system.
+
+IMPORTANT: running-man includes built-in OpenTelemetry tracing support. When tracing is enabled, it:
+1. Receives traces from instrumented applications via OTLP (port 4318)
+2. Stores traces in memory with configurable retention (default: 30 minutes)
+3. Automatically correlates traces with logs via trace_id
+4. Provides querying and visualization capabilities
+
+Use this tool to explore traces across your application. You can filter by:
+- Time window using duration strings like "5m" (5 minutes), "1h" (1 hour)
+- Service name (e.g., "web-server", "database")
+- Span name (supports partial match, e.g., "http.request")
+- Trace status: "ok", "error", "unset"
+- Specific trace ID
+
+Examples:
+- List recent traces: {}
+- Find traces with errors: {"status": "error", "since": "10m"}
+- Search for database traces: {"service_name": "database", "limit": 20}
+- Find traces containing API calls: {"span_name": "api", "since": "5m"}
+
+Each trace includes its spans, duration, service, and status.`,
+	}, s.getTracesHandler)
+
+	s.log("Registered MCP tool: get_traces", false)
+}
+
+// getTracesHandler implements the get_traces MCP tool
+func (s *Server) getTracesHandler(ctx context.Context, req *mcp.CallToolRequest, args *TraceQueryArgs) (*mcp.CallToolResult, any, error) {
+	// Build query filters
+	filters := tracing.SpanQueryFilters{}
+
+	// Parse time window
+	if args.Since != "" {
+		duration, err := parseDuration(args.Since)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid 'since' parameter: %v", err)
+		}
+		if duration < 0 {
+			return nil, nil, fmt.Errorf("invalid 'since' parameter: duration cannot be negative")
+		}
+		filters.Since = duration
+	}
+
+	// Set other filters
+	if args.ServiceName != "" {
+		filters.ServiceName = args.ServiceName
+	}
+	if args.TraceID != "" {
+		filters.TraceID = args.TraceID
+	}
+	if args.SpanName != "" {
+		filters.SpanName = args.SpanName
+	}
+	if args.Status != "" {
+		filters.Status = args.Status
+	}
+	if args.Limit > 0 {
+		filters.Limit = min(args.Limit, 1000)
+	} else {
+		filters.Limit = 50
+	}
+
+	// Query traces
+	spans := s.traceStorage.Query(filters)
+
+	// Group spans by trace ID
+	traceMap := make(map[string][]*tracing.SpanEntry)
+	for _, span := range spans {
+		traceMap[span.TraceID] = append(traceMap[span.TraceID], span)
+	}
+
+	// Convert to trace summaries
+	var traces []map[string]interface{}
+	for traceID, spanList := range traceMap {
+		if len(spanList) == 0 {
+			continue
+		}
+
+		// Calculate trace duration
+		var startTime, endTime time.Time
+		var hasError bool
+		services := make(map[string]bool)
+
+		for _, span := range spanList {
+			if startTime.IsZero() || span.StartTime.Before(startTime) {
+				startTime = span.StartTime
+			}
+			if endTime.IsZero() || span.EndTime.After(endTime) {
+				endTime = span.EndTime
+			}
+			if span.Status == "error" {
+				hasError = true
+			}
+			if span.ServiceName != "" {
+				services[span.ServiceName] = true
+			}
+		}
+
+		duration := endTime.Sub(startTime)
+
+		// Build service list
+		serviceList := make([]string, 0, len(services))
+		for service := range services {
+			serviceList = append(serviceList, service)
+		}
+
+		traces = append(traces, map[string]interface{}{
+			"trace_id":    traceID,
+			"span_count":  len(spanList),
+			"duration_ms": duration.Milliseconds(),
+			"start_time":  startTime,
+			"end_time":    endTime,
+			"has_error":   hasError,
+			"services":    serviceList,
+			"status":      map[bool]string{true: "error", false: "ok"}[hasError],
+		})
+	}
+
+	// Sort by start time (newest first)
+	// This is a simple sort - in production you might want more sophisticated sorting
+	for i := 0; i < len(traces); i++ {
+		for j := i + 1; j < len(traces); j++ {
+			timeI := traces[i]["start_time"].(time.Time)
+			timeJ := traces[j]["start_time"].(time.Time)
+			if timeJ.After(timeI) {
+				traces[i], traces[j] = traces[j], traces[i]
+			}
+		}
+	}
+
+	// Apply limit
+	if filters.Limit > 0 && len(traces) > filters.Limit {
+		traces = traces[:filters.Limit]
+	}
+
+	return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf("Found %d trace(s)", len(traces))},
+			},
+		}, map[string]interface{}{
+			"traces": traces,
+			"count":  len(traces),
+		}, nil
+}
+
+// registerGetTraceTool registers the get_trace MCP tool
+func (s *Server) registerGetTraceTool(server *mcp.Server) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "get_trace",
+		Description: `Get detailed information about a specific trace including all spans.
+
+Use this tool to examine a specific trace in detail. Provide a trace_id to get:
+- All spans in the trace with their hierarchy
+- Span durations, timestamps, and attributes
+- Service names and operation names
+- Error status and error messages
+- Parent-child relationships between spans
+
+Parameters:
+- trace_id: Required. The trace ID to retrieve (e.g., "abc123def456")
+
+Example:
+- Get trace details: {"trace_id": "abc123def456"}
+
+The response includes the full span tree which you can use to understand the flow of execution and identify bottlenecks or errors.`,
+	}, s.getTraceHandler)
+
+	s.log("Registered MCP tool: get_trace", false)
+}
+
+// getTraceHandler implements the get_trace MCP tool
+func (s *Server) getTraceHandler(ctx context.Context, req *mcp.CallToolRequest, args *TraceQueryArgs) (*mcp.CallToolResult, any, error) {
+	if args.TraceID == "" {
+		return nil, nil, fmt.Errorf("trace_id parameter is required")
+	}
+
+	// Get all spans for this trace
+	spans := s.traceStorage.GetTrace(args.TraceID)
+	if len(spans) == 0 {
+		return nil, nil, fmt.Errorf("trace %s not found", args.TraceID)
+	}
+
+	// Calculate trace statistics
+	var startTime, endTime time.Time
+	var hasError bool
+	services := make(map[string]bool)
+
+	for _, span := range spans {
+		if startTime.IsZero() || span.StartTime.Before(startTime) {
+			startTime = span.StartTime
+		}
+		if endTime.IsZero() || span.EndTime.After(endTime) {
+			endTime = span.EndTime
+		}
+		if span.Status == "error" {
+			hasError = true
+		}
+		if span.ServiceName != "" {
+			services[span.ServiceName] = true
+		}
+	}
+
+	duration := endTime.Sub(startTime)
+
+	// Build service list
+	serviceList := make([]string, 0, len(services))
+	for service := range services {
+		serviceList = append(serviceList, service)
+	}
+
+	// Build span tree (simplified - just list spans for now)
+	// In a more advanced implementation, you could build the actual tree structure
+	spanList := make([]map[string]interface{}, len(spans))
+	for i, span := range spans {
+		spanList[i] = map[string]interface{}{
+			"span_id":        span.SpanID,
+			"name":           span.Name,
+			"parent_span_id": span.ParentSpanID,
+			"service":        span.ServiceName,
+			"start_time":     span.StartTime,
+			"end_time":       span.EndTime,
+			"duration_ms":    span.Duration.Milliseconds(),
+			"status":         span.Status,
+			"attributes":     span.Attributes,
+		}
+	}
+
+	return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf("Trace %s: %d spans, duration %v, status: %s",
+					args.TraceID, len(spans), duration, map[bool]string{true: "error", false: "ok"}[hasError])},
+			},
+		}, map[string]interface{}{
+			"trace_id":    args.TraceID,
+			"span_count":  len(spans),
+			"duration_ms": duration.Milliseconds(),
+			"start_time":  startTime,
+			"end_time":    endTime,
+			"has_error":   hasError,
+			"services":    serviceList,
+			"status":      map[bool]string{true: "error", false: "ok"}[hasError],
+			"spans":       spanList,
+		}, nil
+}
+
+// registerGetCorrelatedLogsTool registers the get_correlated_logs MCP tool
+func (s *Server) registerGetCorrelatedLogsTool(server *mcp.Server) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "get_correlated_logs",
+		Description: `Get logs correlated with a specific trace via trace_id.
+
+running-man automatically correlates logs with traces when logs contain trace_id fields. This tool lets you see all logs associated with a specific trace, which is invaluable for debugging distributed transactions.
+
+Parameters:
+- trace_id: Required. The trace ID to get logs for (e.g., "abc123def456")
+
+Example:
+- Get logs for trace: {"trace_id": "abc123def456"}
+
+The response includes all log entries that have the specified trace_id, showing you the complete picture of what happened during that trace across all services.`,
+	}, s.getCorrelatedLogsHandler)
+
+	s.log("Registered MCP tool: get_correlated_logs", false)
+}
+
+// getCorrelatedLogsHandler implements the get_correlated_logs MCP tool
+func (s *Server) getCorrelatedLogsHandler(ctx context.Context, req *mcp.CallToolRequest, args *TraceQueryArgs) (*mcp.CallToolResult, any, error) {
+	if args.TraceID == "" {
+		return nil, nil, fmt.Errorf("trace_id parameter is required")
+	}
+
+	// Get logs for this trace
+	logs := s.buffer.GetLogsByTraceID(args.TraceID)
+
+	// Format logs for response
+	logList := make([]map[string]interface{}, len(logs))
+	for i, log := range logs {
+		logList[i] = map[string]interface{}{
+			"timestamp":  log.Timestamp,
+			"level":      string(log.Level),
+			"source":     log.Source,
+			"message":    log.Message,
+			"is_error":   log.IsError,
+			"stacktrace": log.Stacktrace,
+		}
+	}
+
+	return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf("Found %d log(s) for trace %s", len(logs), args.TraceID)},
+			},
+		}, map[string]interface{}{
+			"trace_id": args.TraceID,
+			"logs":     logList,
+			"count":    len(logs),
+		}, nil
+}
+
+// registerFindSlowTracesTool registers the find_slow_traces MCP tool
+func (s *Server) registerFindSlowTracesTool(server *mcp.Server) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "find_slow_traces",
+		Description: `Find traces that exceed a duration threshold (slow traces).
+
+Use this tool to identify performance issues in your application. It finds traces that took longer than the specified threshold, helping you pinpoint slow operations.
+
+Parameters:
+- threshold: Required. Duration threshold for slow traces (e.g., "1s", "100ms", "500ms")
+- since: Optional. Time window to search (e.g., "5m", "1h", "30s")
+- service_name: Optional. Filter by service name
+- limit: Optional. Maximum traces to return (default: 20, max: 100)
+
+Examples:
+- Find traces slower than 1 second: {"threshold": "1s", "since": "10m"}
+- Find slow database operations: {"threshold": "500ms", "service_name": "database"}
+- Find very slow API calls: {"threshold": "2s", "limit": 10}
+
+Slow traces are often indicators of performance bottlenecks that need optimization.`,
+	}, s.findSlowTracesHandler)
+
+	s.log("Registered MCP tool: find_slow_traces", false)
+}
+
+// findSlowTracesHandler implements the find_slow_traces MCP tool
+func (s *Server) findSlowTracesHandler(ctx context.Context, req *mcp.CallToolRequest, args *SlowTraceArgs) (*mcp.CallToolResult, any, error) {
+	if args.Threshold == "" {
+		return nil, nil, fmt.Errorf("threshold parameter is required")
+	}
+
+	// Parse threshold duration
+	threshold, err := parseDuration(args.Threshold)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid 'threshold' parameter: %v", err)
+	}
+	if threshold <= 0 {
+		return nil, nil, fmt.Errorf("threshold must be positive")
+	}
+
+	// Build query filters
+	filters := tracing.SpanQueryFilters{}
+
+	// Parse time window
+	if args.Since != "" {
+		duration, err := parseDuration(args.Since)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid 'since' parameter: %v", err)
+		}
+		if duration < 0 {
+			return nil, nil, fmt.Errorf("invalid 'since' parameter: duration cannot be negative")
+		}
+		filters.Since = duration
+	}
+
+	// Set other filters
+	if args.ServiceName != "" {
+		filters.ServiceName = args.ServiceName
+	}
+	if args.Limit > 0 {
+		filters.Limit = min(args.Limit, 100)
+	} else {
+		filters.Limit = 20
+	}
+
+	// Query all spans in time window
+	spans := s.traceStorage.Query(filters)
+
+	// Group spans by trace ID and calculate trace durations
+	traceMap := make(map[string][]*tracing.SpanEntry)
+	for _, span := range spans {
+		traceMap[span.TraceID] = append(traceMap[span.TraceID], span)
+	}
+
+	// Find slow traces
+	var slowTraces []map[string]interface{}
+	for traceID, spanList := range traceMap {
+		if len(spanList) == 0 {
+			continue
+		}
+
+		// Calculate trace duration
+		var startTime, endTime time.Time
+		var hasError bool
+		services := make(map[string]bool)
+
+		for _, span := range spanList {
+			if startTime.IsZero() || span.StartTime.Before(startTime) {
+				startTime = span.StartTime
+			}
+			if endTime.IsZero() || span.EndTime.After(endTime) {
+				endTime = span.EndTime
+			}
+			if span.Status == "error" {
+				hasError = true
+			}
+			if span.ServiceName != "" {
+				services[span.ServiceName] = true
+			}
+		}
+
+		duration := endTime.Sub(startTime)
+
+		// Check if trace exceeds threshold
+		if duration >= threshold {
+			// Build service list
+			serviceList := make([]string, 0, len(services))
+			for service := range services {
+				serviceList = append(serviceList, service)
+			}
+
+			slowTraces = append(slowTraces, map[string]interface{}{
+				"trace_id":      traceID,
+				"span_count":    len(spanList),
+				"duration_ms":   duration.Milliseconds(),
+				"threshold_ms":  threshold.Milliseconds(),
+				"start_time":    startTime,
+				"end_time":      endTime,
+				"has_error":     hasError,
+				"services":      serviceList,
+				"status":        map[bool]string{true: "error", false: "ok"}[hasError],
+				"exceeds_by_ms": (duration - threshold).Milliseconds(),
+			})
+		}
+	}
+
+	// Sort by duration (slowest first)
+	for i := 0; i < len(slowTraces); i++ {
+		for j := i + 1; j < len(slowTraces); j++ {
+			durationI := slowTraces[i]["duration_ms"].(int64)
+			durationJ := slowTraces[j]["duration_ms"].(int64)
+			if durationJ > durationI {
+				slowTraces[i], slowTraces[j] = slowTraces[j], slowTraces[i]
+			}
+		}
+	}
+
+	// Apply limit
+	if filters.Limit > 0 && len(slowTraces) > filters.Limit {
+		slowTraces = slowTraces[:filters.Limit]
+	}
+
+	return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf("Found %d slow trace(s) exceeding %v threshold", len(slowTraces), threshold)},
+			},
+		}, map[string]interface{}{
+			"slow_traces": slowTraces,
+			"count":       len(slowTraces),
+			"threshold":   threshold.String(),
+		}, nil
+}
+
+// registerTraceErrorsTool registers the trace_errors MCP tool
+func (s *Server) registerTraceErrorsTool(server *mcp.Server) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "trace_errors",
+		Description: `Find traces that contain errors (spans with error status).
+
+Use this tool to identify failing operations in your application. It finds traces that contain at least one span with error status, helping you debug failures.
+
+Parameters:
+- since: Optional. Time window to search (e.g., "5m", "1h", "30s")
+- service_name: Optional. Filter by service name
+- limit: Optional. Maximum traces to return (default: 20, max: 100)
+
+Examples:
+- Find recent error traces: {"since": "10m"}
+- Find database error traces: {"service_name": "database", "since": "5m"}
+- Get all error traces: {"limit": 50}
+
+Error traces show you which operations failed and can help you understand the root cause of failures.`,
+	}, s.traceErrorsHandler)
+
+	s.log("Registered MCP tool: trace_errors", false)
+}
+
+// traceErrorsHandler implements the trace_errors MCP tool
+func (s *Server) traceErrorsHandler(ctx context.Context, req *mcp.CallToolRequest, args *TraceQueryArgs) (*mcp.CallToolResult, any, error) {
+	// Build query filters
+	filters := tracing.SpanQueryFilters{
+		Status: "error",
+	}
+
+	// Parse time window
+	if args.Since != "" {
+		duration, err := parseDuration(args.Since)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid 'since' parameter: %v", err)
+		}
+		if duration < 0 {
+			return nil, nil, fmt.Errorf("invalid 'since' parameter: duration cannot be negative")
+		}
+		filters.Since = duration
+	}
+
+	// Set other filters
+	if args.ServiceName != "" {
+		filters.ServiceName = args.ServiceName
+	}
+	if args.Limit > 0 {
+		filters.Limit = min(args.Limit, 100)
+	} else {
+		filters.Limit = 20
+	}
+
+	// Query error spans
+	errorSpans := s.traceStorage.Query(filters)
+
+	// Group error spans by trace ID
+	traceMap := make(map[string][]*tracing.SpanEntry)
+	for _, span := range errorSpans {
+		traceMap[span.TraceID] = append(traceMap[span.TraceID], span)
+	}
+
+	// Get full trace for each error trace
+	var errorTraces []map[string]interface{}
+	for traceID, errorSpanList := range traceMap {
+		// Get all spans for this trace
+		allSpans := s.traceStorage.GetTrace(traceID)
+		if len(allSpans) == 0 {
+			continue
+		}
+
+		// Calculate trace statistics
+		var startTime, endTime time.Time
+		services := make(map[string]bool)
+
+		for _, span := range allSpans {
+			if startTime.IsZero() || span.StartTime.Before(startTime) {
+				startTime = span.StartTime
+			}
+			if endTime.IsZero() || span.EndTime.After(endTime) {
+				endTime = span.EndTime
+			}
+			if span.ServiceName != "" {
+				services[span.ServiceName] = true
+			}
+		}
+
+		duration := endTime.Sub(startTime)
+
+		// Build service list
+		serviceList := make([]string, 0, len(services))
+		for service := range services {
+			serviceList = append(serviceList, service)
+		}
+
+		// Get error messages from error spans
+		errorMessages := make([]string, 0, len(errorSpanList))
+		for _, span := range errorSpanList {
+			if msg, ok := span.Attributes["error.message"]; ok && msg != "" {
+				errorMessages = append(errorMessages, msg)
+			}
+		}
+
+		errorTraces = append(errorTraces, map[string]interface{}{
+			"trace_id":         traceID,
+			"span_count":       len(allSpans),
+			"error_span_count": len(errorSpanList),
+			"duration_ms":      duration.Milliseconds(),
+			"start_time":       startTime,
+			"end_time":         endTime,
+			"services":         serviceList,
+			"error_messages":   errorMessages,
+			"error_spans":      errorSpanList,
+		})
+	}
+
+	// Sort by start time (newest first)
+	for i := 0; i < len(errorTraces); i++ {
+		for j := i + 1; j < len(errorTraces); j++ {
+			timeI := errorTraces[i]["start_time"].(time.Time)
+			timeJ := errorTraces[j]["start_time"].(time.Time)
+			if timeJ.After(timeI) {
+				errorTraces[i], errorTraces[j] = errorTraces[j], errorTraces[i]
+			}
+		}
+	}
+
+	// Apply limit
+	if filters.Limit > 0 && len(errorTraces) > filters.Limit {
+		errorTraces = errorTraces[:filters.Limit]
+	}
+
+	return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf("Found %d error trace(s)", len(errorTraces))},
+			},
+		}, map[string]interface{}{
+			"error_traces": errorTraces,
+			"count":        len(errorTraces),
+		}, nil
 }
