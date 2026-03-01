@@ -338,3 +338,82 @@ api_port: 9000
 		t.Errorf("expected docker_compose 'docker-compose.yml', got '%s'", cfg.DockerCompose)
 	}
 }
+
+func TestLoadConfig_EnvVarExpansion(t *testing.T) {
+	// Set up environment variables for testing
+	t.Setenv("BUILD_MODE", "development")
+	t.Setenv("PORT", "3000")
+	t.Setenv("SHELL_PATH", "/bin/bash")
+	t.Setenv("COMPOSE_FILE", "docker-compose.dev.yml")
+
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yml")
+
+	content := `
+processes:
+  - name: web
+    command: npm run ${BUILD_MODE}
+    args:
+      - "--port"
+      - "${PORT}"
+  - name: api
+    command: go run main.go --env $BUILD_MODE  # $VAR syntax also works
+docker_compose: ${COMPOSE_FILE}
+shell: ${SHELL_PATH}
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Verify environment variable expansion
+	if cfg.Processes[0].Command != "npm run development" {
+		t.Errorf("expected command 'npm run development', got '%s'", cfg.Processes[0].Command)
+	}
+
+	if len(cfg.Processes[0].Args) != 2 || cfg.Processes[0].Args[1] != "3000" {
+		t.Errorf("expected args ['--port', '3000'], got %v", cfg.Processes[0].Args)
+	}
+
+	// $BUILD_MODE should also expand
+	if cfg.Processes[1].Command != "go run main.go --env development" {
+		t.Errorf("expected command 'go run main.go --env development', got '%s'", cfg.Processes[1].Command)
+	}
+
+	if cfg.DockerCompose != "docker-compose.dev.yml" {
+		t.Errorf("expected docker_compose 'docker-compose.dev.yml', got '%s'", cfg.DockerCompose)
+	}
+
+	if cfg.Shell != "/bin/bash" {
+		t.Errorf("expected shell '/bin/bash', got '%s'", cfg.Shell)
+	}
+}
+
+func TestLoadConfig_EnvVarExpansion_Undefined(t *testing.T) {
+	// Test with undefined environment variables (should expand to empty string)
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yml")
+
+	content := `
+processes:
+  - name: test
+    command: echo ${UNDEFINED_VAR}
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Undefined environment variables should expand to empty string
+	if cfg.Processes[0].Command != "echo " {
+		t.Errorf("expected command 'echo ', got '%s'", cfg.Processes[0].Command)
+	}
+}

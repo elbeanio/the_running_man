@@ -39,6 +39,9 @@ func LoadConfig(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file %s: %w", path, err)
 	}
 
+	// Expand environment variables in command fields
+	cfg.expandEnvVars()
+
 	// Validate
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config in %s: %w", path, err)

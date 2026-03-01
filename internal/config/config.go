@@ -11,6 +11,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/iangeorge/the_running_man/internal/process"
@@ -191,4 +192,29 @@ func (c *Config) GetShell() string {
 		return DefaultShell
 	}
 	return c.Shell
+}
+
+// expandEnvVars expands environment variables in command fields.
+// Supports ${VAR} and $VAR syntax using os.ExpandEnv().
+// References to undefined variables are replaced by empty string.
+func (c *Config) expandEnvVars() {
+	for i := range c.Processes {
+		// Expand environment variables in command
+		c.Processes[i].Command = os.ExpandEnv(c.Processes[i].Command)
+
+		// Also expand in args if they exist
+		for j := range c.Processes[i].Args {
+			c.Processes[i].Args[j] = os.ExpandEnv(c.Processes[i].Args[j])
+		}
+	}
+
+	// Expand in shell if specified
+	if c.Shell != "" {
+		c.Shell = os.ExpandEnv(c.Shell)
+	}
+
+	// Expand in docker_compose path if specified
+	if c.DockerCompose != "" {
+		c.DockerCompose = os.ExpandEnv(c.DockerCompose)
+	}
 }

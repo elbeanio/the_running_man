@@ -1,6 +1,9 @@
 
 # Example configuration file for The Running Man
 # Copy this file to running-man.yml and customize for your project
+#
+# Environment variable substitution is supported in command, args, shell, and docker_compose fields.
+# Use ${VAR} or $VAR syntax. Undefined variables expand to empty string.
 
 # Processes to run and manage
 processes:
@@ -11,11 +14,11 @@ processes:
                                  # Default: false
 
   - name: frontend
-    command: npm run dev
+    command: npm run ${BUILD_MODE}  # Use BUILD_MODE env var (set BUILD_MODE=dev/prod)
     # Shell features work! Use cd, &&, pipes, etc.
 
   - name: worker
-    command: cd services/worker && python worker.py
+    command: cd services/worker && python worker.py --port ${WORKER_PORT}
     restart_on_crash: true  # Example: restart worker on crash
 
 # Docker Compose integration (optional)
