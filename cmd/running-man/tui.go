@@ -191,17 +191,31 @@ func (m model) View() string {
 	}
 
 	// Calculate help text based on mode
-	helpText := "\n←/→ Tab: Switch source | ↑/↓ PgUp/PgDn Home/End: Scroll | /: Search | q: Quit"
-	if m.mode == ModeSearch {
-		helpText = "\nEsc: Exit search | Enter: Confirm"
+	var helpText string
+	switch m.mode {
+	case ModeSearch:
+		helpText = "\nEsc: Exit search | Enter: Jump to first match"
+	case ModeNormal:
+		if m.searchQuery != "" {
+			matchCount := countMatches(m.logs, m.searchQuery)
+			var matchStatus string
+			if matchCount == 0 {
+				matchStatus = "no matches"
+			} else {
+				matchStatus = fmt.Sprintf("%d of %d", m.searchMatchIdx+1, matchCount)
+			}
+			helpText = fmt.Sprintf("\n←/→ Tab: Switch source | ↑/↓ PgUp/PgDn Home/End: Scroll | n/p: Match nav (%s) | /: Search | q: Quit", matchStatus)
+		} else {
+			helpText = "\n←/→ Tab: Switch source | ↑/↓ PgUp/PgDn Home/End: Scroll | /: Search | q: Quit"
+		}
 	}
 	help := helpStyle.Render(helpText)
 
 	// Calculate available height for logs
 	availableHeight := m.height - lipgloss.Height(header) - lipgloss.Height(searchBar) - lipgloss.Height(help) - 2
 
-	// Render logs with search highlighting
-	logsView := renderLogs(m.logs, availableHeight, m.width, m.scrollOffset, m.searchQuery)
+	// Render logs with search highlighting and current match index
+	logsView := renderLogs(m.logs, availableHeight, m.width, m.scrollOffset, m.searchQuery, m.searchMatchIdx)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, searchBar, logsView, help)
 }
@@ -332,7 +346,7 @@ func renderSearchBar(active bool, query string, logs []logEntry, matchIdx int) s
 		searchBarStyle.Width(40).Render(" "+status)
 }
 
-func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery string) string {
+func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery string, currentMatchIdx int) string {
 	// Validate inputs
 	if height <= 0 || width <= 0 {
 		return logStyle.Render("Invalid terminal dimensions")
@@ -346,6 +360,10 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 	}
 
 	highlight := searchQuery != ""
+	lowerQuery := strings.ToLower(searchQuery)
+
+	// runningMatchCount tracks which global match index we're at as we iterate lines.
+	runningMatchCount := 0
 
 	// Collect all lines (splitting multiline messages)
 	allLines := []string{}
@@ -381,7 +399,10 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 
 			// Apply highlighting if search query exists
 			if highlight {
-				line = highlightMatches(line, searchQuery)
+				lineMatchOffset := runningMatchCount
+				occurrences := strings.Count(strings.ToLower(line), lowerQuery)
+				line = highlightMatchesWithCurrent(line, searchQuery, lineMatchOffset, currentMatchIdx)
+				runningMatchCount += occurrences
 			}
 
 			allLines = append(allLines, style.Render(line))
@@ -420,7 +441,77 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 	return lipgloss.JoinVertical(lipgloss.Left, allLines[startIdx:endIdx]...)
 }
 
-func highlightMatches(line, query string) string {
+// buildMatchLineIndex returns a slice where each element is the rendered-line index
+// (in the flat allLines array that renderLogs would produce) for each global match
+// occurrence of query across all logs. Used to compute scrollOffset for n/p navigation.
+func buildMatchLineIndex(logs []logEntry, width int, query string) []int {
+	if query == "" {
+		return nil
+	}
+	lowerQuery := strings.ToLower(query)
+	var result []int
+	lineIdx := 0
+
+	for _, log := range logs {
+		timestamp := log.Timestamp
+		if len(timestamp) > 19 {
+			timestamp = timestamp[:19]
+		}
+		messageLines := strings.Split(log.Message, "\n")
+
+		for i, msgLine := range messageLines {
+			var line string
+			if i == 0 {
+				line = fmt.Sprintf("[%s] [%s] %s", timestamp[11:19], log.Level, msgLine)
+			} else {
+				line = fmt.Sprintf("                    %s", msgLine)
+			}
+			if len(line) > width-2 {
+				line = line[:width-5] + "..."
+			}
+
+			lowerLine := strings.ToLower(line)
+			count := strings.Count(lowerLine, lowerQuery)
+			for k := 0; k < count; k++ {
+				result = append(result, lineIdx)
+			}
+			lineIdx++
+		}
+	}
+
+	return result
+}
+
+// scrollOffsetForMatch computes the scrollOffset needed to center rendered line
+// targetLineIdx within a viewport of the given height, given totalLines total
+// rendered lines.
+func scrollOffsetForMatch(targetLineIdx, totalLines, height int) int {
+	// Place the target line in the middle of the viewport.
+	// The viewport's last visible line is at: totalLines - scrollOffset - 1
+	// so: scrollOffset = totalLines - targetLineIdx - 1 - height/2
+	offset := totalLines - targetLineIdx - 1 - height/2
+	if offset < 0 {
+		offset = 0
+	}
+	return offset
+}
+
+// countAllLines returns the total number of rendered lines that logs would produce,
+// using the same logic as renderLogs / buildMatchLineIndex.
+func countAllLines(logs []logEntry, width int) int {
+	count := 0
+	for _, log := range logs {
+		count += len(strings.Split(log.Message, "\n"))
+	}
+	return count
+}
+
+// highlightMatchesWithCurrent highlights all occurrences of query in line.
+// The occurrence whose global index equals currentMatchIdx gets a bold+inverted style
+// (the "current" match); all others get a dim style.
+// lineMatchOffset is the global index of the first match on this line.
+// Pass currentMatchIdx = -1 to use uniform dim highlighting for all occurrences.
+func highlightMatchesWithCurrent(line, query string, lineMatchOffset, currentMatchIdx int) string {
 	if query == "" || len(line) == 0 {
 		return line
 	}
@@ -432,10 +523,18 @@ func highlightMatches(line, query string) string {
 		return line
 	}
 
-	// Find all match positions
+	currentStyle := lipgloss.NewStyle().
+		Bold(true).
+		Reverse(true) // inverted fg/bg — stands out clearly
+
+	otherStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("240")). // dark gray
+		Foreground(lipgloss.Color("15"))   // white
+
 	idx := 0
-	result := ""
 	pos := 0
+	result := ""
+	matchOnLine := 0
 
 	for {
 		matchIdx := strings.Index(lowerLine[idx:], lowerQuery)
@@ -444,7 +543,6 @@ func highlightMatches(line, query string) string {
 			break
 		}
 
-		// Add text before match
 		beforeMatch := pos + matchIdx
 		if beforeMatch > len(line) {
 			result += line[pos:]
@@ -452,25 +550,36 @@ func highlightMatches(line, query string) string {
 		}
 		result += line[pos:beforeMatch]
 
-		// Add highlighted match
 		matchStart := beforeMatch
-		matchEnd := matchStart + len(query)
+		matchEnd := matchStart + len(lowerQuery)
 		if matchEnd > len(line) {
 			matchEnd = len(line)
 		}
-		highlightStyle := lipgloss.NewStyle().
-			Background(lipgloss.Color("240")). // Dark gray background
-			Foreground(lipgloss.Color("15"))   // White text
-		result += highlightStyle.Render(line[matchStart:matchEnd])
+
+		globalIdx := lineMatchOffset + matchOnLine
+		var style lipgloss.Style
+		if currentMatchIdx >= 0 && globalIdx == currentMatchIdx {
+			style = currentStyle
+		} else {
+			style = otherStyle
+		}
+		result += style.Render(line[matchStart:matchEnd])
 
 		pos = matchEnd
-		idx = matchIdx + len(query)
+		idx = matchIdx + len(lowerQuery)
+		matchOnLine++
 		if pos >= len(line) {
 			break
 		}
 	}
 
 	return result
+}
+
+// highlightMatches is the original uniform-highlight version, kept for compatibility.
+// It delegates to highlightMatchesWithCurrent with no current match.
+func highlightMatches(line, query string) string {
+	return highlightMatchesWithCurrent(line, query, 0, -1)
 }
 
 // Commands
@@ -639,6 +748,12 @@ func (m model) updateSearchMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searchMatchIdx = 0
 		case "enter":
 			m.mode = ModeNormal
+			// Jump to first match (less-style: Enter confirms and navigates to match 0)
+			m.searchMatchIdx = 0
+			total := countMatches(m.logs, m.searchQuery)
+			if total > 0 {
+				m = scrollToMatch(m)
+			}
 		}
 	}
 
@@ -708,9 +823,49 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "end":
 		m.scrollOffset = 0
 		m.autoScroll = true
+
+	case "n":
+		if m.searchQuery != "" {
+			total := countMatches(m.logs, m.searchQuery)
+			if total > 0 {
+				m.searchMatchIdx = (m.searchMatchIdx + 1) % total
+				m = scrollToMatch(m)
+			}
+		}
+
+	case "p":
+		if m.searchQuery != "" {
+			total := countMatches(m.logs, m.searchQuery)
+			if total > 0 {
+				m.searchMatchIdx = (m.searchMatchIdx - 1 + total) % total
+				m = scrollToMatch(m)
+			}
+		}
 	}
 
 	return m, nil
+}
+
+// scrollToMatch sets m.scrollOffset so that the line containing the current
+// searchMatchIdx is centered in the viewport. Disables autoScroll.
+func scrollToMatch(m model) model {
+	matchLineIndices := buildMatchLineIndex(m.logs, m.width, m.searchQuery)
+	if m.searchMatchIdx >= len(matchLineIndices) {
+		return m
+	}
+	targetLineIdx := matchLineIndices[m.searchMatchIdx]
+	totalLines := countAllLines(m.logs, m.width)
+
+	// availableHeight mirrors the View() calculation (approx — uiHeaderFooterHeight
+	// accounts for header, help, searchBar, padding)
+	availableHeight := m.height - uiHeaderFooterHeight
+	if availableHeight < 1 {
+		availableHeight = 1
+	}
+
+	m.scrollOffset = scrollOffsetForMatch(targetLineIdx, totalLines, availableHeight)
+	m.autoScroll = false
+	return m
 }
 
 func tuiCommand(args []string) {

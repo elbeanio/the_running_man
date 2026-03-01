@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestRenderLogs_MultilineMessages(t *testing.T) {
@@ -82,7 +83,7 @@ func TestRenderLogs_MultilineMessages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := renderLogs(tt.logs, tt.height, tt.width, 0, "")
+			result := renderLogs(tt.logs, tt.height, tt.width, 0, "", -1)
 
 			// Count lines in the rendered output
 			// lipgloss uses \n to join lines
@@ -106,7 +107,7 @@ func TestRenderLogs_ContinuationIndentation(t *testing.T) {
 		},
 	}
 
-	result := renderLogs(logs, 10, 80, 0, "")
+	result := renderLogs(logs, 10, 80, 0, "", -1)
 	lines := strings.Split(strings.TrimSpace(result), "\n")
 
 	if len(lines) != 3 {
@@ -147,7 +148,7 @@ func TestRenderLogs_HeightLimit(t *testing.T) {
 	}
 
 	// Total lines: 6, but height limit is 4
-	result := renderLogs(logs, 4, 80, 0, "")
+	result := renderLogs(logs, 4, 80, 0, "", -1)
 	lines := strings.Split(strings.TrimSpace(result), "\n")
 
 	// Should show only the last 4 lines
@@ -157,7 +158,7 @@ func TestRenderLogs_HeightLimit(t *testing.T) {
 }
 
 func TestRenderLogs_EmptyLogs(t *testing.T) {
-	result := renderLogs([]logEntry{}, 10, 80, 0, "")
+	result := renderLogs([]logEntry{}, 10, 80, 0, "", -1)
 
 	if !strings.Contains(result, "No logs yet") {
 		t.Errorf("Expected 'No logs yet' message, got: %s", result)
@@ -179,7 +180,7 @@ func TestRenderLogs_ScrollOffset(t *testing.T) {
 	height := 5 // Show only 5 lines at a time
 
 	// Test showing most recent (scrollOffset = 0)
-	result := renderLogs(logs, height, 80, 0, "")
+	result := renderLogs(logs, height, 80, 0, "", -1)
 	lines := strings.Split(strings.TrimSpace(result), "\n")
 	if len(lines) != 5 {
 		t.Errorf("Expected 5 lines with scrollOffset=0, got %d", len(lines))
@@ -191,7 +192,7 @@ func TestRenderLogs_ScrollOffset(t *testing.T) {
 	}
 
 	// Test scrolling up 2 lines (scrollOffset = 2)
-	result = renderLogs(logs, height, 80, 2, "")
+	result = renderLogs(logs, height, 80, 2, "", -1)
 	lines = strings.Split(strings.TrimSpace(result), "\n")
 	if len(lines) != 5 {
 		t.Errorf("Expected 5 lines with scrollOffset=2, got %d", len(lines))
@@ -206,7 +207,7 @@ func TestRenderLogs_ScrollOffset(t *testing.T) {
 	}
 
 	// Test scrolling to oldest logs (large scrollOffset)
-	result = renderLogs(logs, height, 80, 1000, "")
+	result = renderLogs(logs, height, 80, 1000, "", -1)
 	lines = strings.Split(strings.TrimSpace(result), "\n")
 	if len(lines) != 5 {
 		t.Errorf("Expected 5 lines with large scrollOffset, got %d", len(lines))
@@ -398,4 +399,302 @@ func TestSearchInput_ModelHasTextinput(t *testing.T) {
 
 	// Verify textinput field exists
 	var _ textinput.Model = m.searchInput
+}
+
+// --- Tests for n/p navigation and match-line indexing ---
+
+func makeTestLogs() []logEntry {
+	return []logEntry{
+		{Timestamp: "2026-03-01T10:00:01Z", Level: "INFO", Message: "apple banana cherry"},
+		{Timestamp: "2026-03-01T10:00:02Z", Level: "INFO", Message: "banana split\nbanana bread"},
+		{Timestamp: "2026-03-01T10:00:03Z", Level: "INFO", Message: "cherry pie"},
+		{Timestamp: "2026-03-01T10:00:04Z", Level: "INFO", Message: "no fruit here"},
+		{Timestamp: "2026-03-01T10:00:05Z", Level: "INFO", Message: "banana foster"},
+	}
+}
+
+func TestBuildMatchLineIndex_SingleLineMatches(t *testing.T) {
+	logs := makeTestLogs()
+	// "banana" appears on:
+	//   line 0: "apple banana cherry"      → 1 occurrence (global 0)
+	//   line 1: "banana split"             → 1 occurrence (global 1)
+	//   line 2: "banana bread"             → 1 occurrence (global 2)  [continuation line of log[1]]
+	//   line 4: "banana foster"            → 1 occurrence (global 3)
+	idx := buildMatchLineIndex(logs, 120, "banana")
+	if len(idx) != 4 {
+		t.Fatalf("expected 4 match positions, got %d: %v", len(idx), idx)
+	}
+	// Line 0 = log[0]
+	if idx[0] != 0 {
+		t.Errorf("match 0 should be on rendered line 0, got %d", idx[0])
+	}
+	// Line 1 = first rendered line of log[1] ("banana split")
+	if idx[1] != 1 {
+		t.Errorf("match 1 should be on rendered line 1, got %d", idx[1])
+	}
+	// Line 2 = continuation line of log[1] ("banana bread")
+	if idx[2] != 2 {
+		t.Errorf("match 2 should be on rendered line 2, got %d", idx[2])
+	}
+	// Line 4 = log[4] ("banana foster"); log[2]="cherry pie" is line 3, log[3]="no fruit here" is line 4... wait:
+	// log[0] → line 0
+	// log[1] → lines 1,2 (split on \n)
+	// log[2] → line 3
+	// log[3] → line 4
+	// log[4] → line 5
+	if idx[3] != 5 {
+		t.Errorf("match 3 should be on rendered line 5, got %d", idx[3])
+	}
+}
+
+func TestBuildMatchLineIndex_NoMatches(t *testing.T) {
+	logs := makeTestLogs()
+	idx := buildMatchLineIndex(logs, 120, "zzznomatch")
+	if len(idx) != 0 {
+		t.Errorf("expected 0 matches, got %d", len(idx))
+	}
+}
+
+func TestBuildMatchLineIndex_EmptyQuery(t *testing.T) {
+	logs := makeTestLogs()
+	idx := buildMatchLineIndex(logs, 120, "")
+	if len(idx) != 0 {
+		t.Errorf("expected 0 matches for empty query, got %d", len(idx))
+	}
+}
+
+func TestBuildMatchLineIndex_MultipleOccurrencesOnOneLine(t *testing.T) {
+	logs := []logEntry{
+		{Timestamp: "2026-03-01T10:00:01Z", Level: "INFO", Message: "foo foo foo"},
+	}
+	idx := buildMatchLineIndex(logs, 120, "foo")
+	if len(idx) != 3 {
+		t.Fatalf("expected 3 match positions, got %d: %v", len(idx), idx)
+	}
+	// All three on rendered line 0
+	for i, lineIdx := range idx {
+		if lineIdx != 0 {
+			t.Errorf("match %d should be on line 0, got %d", i, lineIdx)
+		}
+	}
+}
+
+func TestBuildMatchLineIndex_CaseInsensitive(t *testing.T) {
+	logs := []logEntry{
+		{Timestamp: "2026-03-01T10:00:01Z", Level: "INFO", Message: "Hello HELLO hello"},
+	}
+	idx := buildMatchLineIndex(logs, 120, "hello")
+	if len(idx) != 3 {
+		t.Fatalf("expected 3 matches (case-insensitive), got %d", len(idx))
+	}
+}
+
+func TestHighlightMatchesWithCurrent_CurrentMatchStyle(t *testing.T) {
+	line := "foo bar foo"
+	result := highlightMatchesWithCurrent(line, "foo", 0, 0) // lineMatchOffset=0, currentMatchIdx=0 → first "foo" is current
+	// Text content must be preserved regardless of styling
+	stripped := stripANSI(result)
+	if stripped != line {
+		t.Errorf("text content should be preserved, got %q", stripped)
+	}
+}
+
+func TestHighlightMatchesWithCurrent_NonCurrentMatchStyle(t *testing.T) {
+	line := "foo bar foo"
+	// lineMatchOffset=0, currentMatchIdx=5 (some other match) → neither "foo" here is current
+	result := highlightMatchesWithCurrent(line, "foo", 0, 5)
+	// Text content must be preserved regardless of styling
+	stripped := stripANSI(result)
+	if stripped != line {
+		t.Errorf("text content should be preserved, got %q", stripped)
+	}
+}
+
+func TestHighlightMatchesWithCurrent_PreservesAllText(t *testing.T) {
+	// Verify the full line text is preserved with multiple matches at various positions
+	tests := []struct {
+		line            string
+		query           string
+		lineMatchOffset int
+		currentMatchIdx int
+	}{
+		{"hello world hello", "hello", 0, 0}, // first is current
+		{"hello world hello", "hello", 0, 1}, // second is current
+		{"hello world hello", "hello", 3, 3}, // offset=3, first on this line is current
+		{"no match here", "zzz", 0, 0},       // no matches
+		{"UPPER lower Upper", "upper", 0, 1}, // case-insensitive
+	}
+	for _, tt := range tests {
+		result := highlightMatchesWithCurrent(tt.line, tt.query, tt.lineMatchOffset, tt.currentMatchIdx)
+		stripped := stripANSI(result)
+		if stripped != tt.line {
+			t.Errorf("highlightMatchesWithCurrent(%q, %q, %d, %d): text content changed: got %q",
+				tt.line, tt.query, tt.lineMatchOffset, tt.currentMatchIdx, stripped)
+		}
+	}
+}
+
+func TestHighlightMatchesWithCurrent_NoQuery(t *testing.T) {
+	line := "hello world"
+	result := highlightMatchesWithCurrent(line, "", 0, 0)
+	if result != line {
+		t.Errorf("empty query should return line unchanged, got %q", result)
+	}
+}
+
+func TestNormalMode_N_IncreasesMatchIdx(t *testing.T) {
+	m := initialModel("http://localhost:9000", nil)
+	m.logs = makeTestLogs()
+	m.searchQuery = "banana"
+	m.searchMatchIdx = 0
+	m.height = 40
+	m.width = 120
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}
+	newModel, _ := m.updateNormalMode(msg)
+	nm := newModel.(model)
+
+	if nm.searchMatchIdx != 1 {
+		t.Errorf("expected searchMatchIdx=1 after pressing n, got %d", nm.searchMatchIdx)
+	}
+}
+
+func TestNormalMode_P_DecreasesMatchIdx(t *testing.T) {
+	m := initialModel("http://localhost:9000", nil)
+	m.logs = makeTestLogs()
+	m.searchQuery = "banana"
+	m.searchMatchIdx = 2
+	m.height = 40
+	m.width = 120
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")}
+	newModel, _ := m.updateNormalMode(msg)
+	nm := newModel.(model)
+
+	if nm.searchMatchIdx != 1 {
+		t.Errorf("expected searchMatchIdx=1 after pressing p, got %d", nm.searchMatchIdx)
+	}
+}
+
+func TestNormalMode_N_WrapAround(t *testing.T) {
+	m := initialModel("http://localhost:9000", nil)
+	m.logs = makeTestLogs()
+	m.searchQuery = "banana"
+	m.searchMatchIdx = 3 // last match (0-indexed, 4 total)
+	m.height = 40
+	m.width = 120
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}
+	newModel, _ := m.updateNormalMode(msg)
+	nm := newModel.(model)
+
+	if nm.searchMatchIdx != 0 {
+		t.Errorf("expected searchMatchIdx to wrap to 0, got %d", nm.searchMatchIdx)
+	}
+}
+
+func TestNormalMode_P_WrapAround(t *testing.T) {
+	m := initialModel("http://localhost:9000", nil)
+	m.logs = makeTestLogs()
+	m.searchQuery = "banana"
+	m.searchMatchIdx = 0
+	m.height = 40
+	m.width = 120
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")}
+	newModel, _ := m.updateNormalMode(msg)
+	nm := newModel.(model)
+
+	if nm.searchMatchIdx != 3 {
+		t.Errorf("expected searchMatchIdx to wrap to 3 (last), got %d", nm.searchMatchIdx)
+	}
+}
+
+func TestNormalMode_N_NoQuery_NoOp(t *testing.T) {
+	m := initialModel("http://localhost:9000", nil)
+	m.logs = makeTestLogs()
+	m.searchQuery = "" // no active search
+	m.searchMatchIdx = 0
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}
+	newModel, _ := m.updateNormalMode(msg)
+	nm := newModel.(model)
+
+	if nm.searchMatchIdx != 0 {
+		t.Errorf("expected no change when no query, got %d", nm.searchMatchIdx)
+	}
+}
+
+func TestNormalMode_N_SetsScrollOffset(t *testing.T) {
+	m := initialModel("http://localhost:9000", nil)
+	m.logs = makeTestLogs()
+	m.searchQuery = "banana"
+	m.searchMatchIdx = 0
+	m.height = 10
+	m.width = 120
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}
+	newModel, _ := m.updateNormalMode(msg)
+	nm := newModel.(model)
+
+	// scrollOffset should be non-zero (scrolled to show the match)
+	// We don't assert the exact value here, just that it's been set to something reasonable
+	// (not negative, and autoScroll is off)
+	if nm.scrollOffset < 0 {
+		t.Errorf("scrollOffset should not be negative, got %d", nm.scrollOffset)
+	}
+	if nm.autoScroll {
+		t.Errorf("autoScroll should be disabled when navigating matches")
+	}
+}
+
+func TestRenderLogs_WithCurrentMatchIdx(t *testing.T) {
+	logs := []logEntry{
+		{Timestamp: "2026-03-01T10:00:01Z", Level: "INFO", Message: "apple banana cherry"},
+		{Timestamp: "2026-03-01T10:00:02Z", Level: "INFO", Message: "banana split"},
+	}
+
+	// Should not panic, and should contain text
+	result := renderLogs(logs, 20, 120, 0, "banana", 0)
+	stripped := stripANSI(result)
+	if !strings.Contains(stripped, "banana") {
+		t.Errorf("expected 'banana' in output, got: %s", stripped)
+	}
+}
+
+func TestScrollToMatch_PositionsViewCorrectly(t *testing.T) {
+	// Create enough logs that they exceed one screen
+	logs := []logEntry{}
+	for i := 0; i < 30; i++ {
+		msg := fmt.Sprintf("line %d", i)
+		if i == 25 {
+			msg = "banana target line"
+		}
+		logs = append(logs, logEntry{
+			Timestamp: fmt.Sprintf("2026-03-01T10:00:%02dZ", i%60),
+			Level:     "INFO",
+			Message:   msg,
+		})
+	}
+
+	m := initialModel("http://localhost:9000", nil)
+	m.logs = logs
+	m.searchQuery = "banana"
+	m.searchMatchIdx = 0
+	m.height = 10
+	m.width = 120
+
+	// Navigate to the match
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}
+	newModel, _ := m.updateNormalMode(msg)
+	nm := newModel.(model)
+
+	// Render and check the target line is visible
+	availableHeight := nm.height - uiHeaderFooterHeight
+	result := renderLogs(nm.logs, availableHeight, nm.width, nm.scrollOffset, nm.searchQuery, nm.searchMatchIdx)
+	stripped := stripANSI(result)
+	if !strings.Contains(stripped, "banana target line") {
+		t.Errorf("after navigating to match, 'banana target line' should be visible in viewport\nscrollOffset=%d\noutput:\n%s",
+			nm.scrollOffset, stripped)
+	}
 }
