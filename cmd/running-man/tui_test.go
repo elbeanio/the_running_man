@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/bubbles/textinput"
 )
 
 func TestRenderLogs_MultilineMessages(t *testing.T) {
@@ -360,4 +362,40 @@ func TestIsDockerContainer(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMode(t *testing.T) {
+	if ModeNormal != 0 {
+		t.Errorf("ModeNormal should be 0, got %d", ModeNormal)
+	}
+	if ModeSearch != 1 {
+		t.Errorf("ModeSearch should be 1, got %d", ModeSearch)
+	}
+}
+
+func TestSearchInput_InitialState(t *testing.T) {
+	m := initialModel("http://localhost:9000", nil)
+
+	// Should start in normal mode
+	if m.mode != ModeNormal {
+		t.Errorf("Expected ModeNormal initially, got %v", m.mode)
+	}
+
+	// Search query should be empty
+	if m.searchQuery != "" {
+		t.Errorf("Expected empty searchQuery initially, got %q", m.searchQuery)
+	}
+
+	// searchInput should be focused (textinput tracks this internally)
+	// We can verify it exists and has empty value
+	if m.searchInput.Value() != "" {
+		t.Errorf("Expected textinput to have empty value initially, got %q", m.searchInput.Value())
+	}
+}
+
+func TestSearchInput_ModelHasTextinput(t *testing.T) {
+	m := initialModel("http://localhost:9000", nil)
+
+	// Verify textinput field exists
+	var _ textinput.Model = m.searchInput
 }
