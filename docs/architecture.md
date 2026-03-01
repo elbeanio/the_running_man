@@ -132,34 +132,40 @@ YAML configuration with validation and defaults.
 6. TUI polls API ← Developer views
 ```
 
-## Extension Points (Phase 3)
+## Extension Points (Phase 3 - Complete)
 
-### Skills Framework
+### MCP Server Implementation
 
-```
-POST /skills/{skill_name}
-  - YAML skill definitions
-  - Composable debugging patterns
-  - Agent-friendly abstractions
-```
+**Endpoint:** `GET /mcp` - Model Context Protocol server for AI agent integration
 
-### Agent Integration
+**Available Tools:**
+- `search_logs` - Search logs with filters (source, time, level, content)
+- `get_recent_errors` - Get errors with surrounding context
+- `get_process_status` - Check status of managed processes
+- `get_startup_logs` - View logs from process startup
+- `get_health_status` - System health and buffer statistics
+- `get_process_detail` - Detailed process information
+- `restart_process` - Restart a managed process (with safety checks)
+- `stop_all_processes` - Stop all processes (requires confirmation)
 
-```
-GET /context/errors      - Recent errors + context
-GET /context/startup     - Process startup logs  
-GET /context/source/{id} - All logs for a source
-```
+**Integration:**
+- OpenCode: Direct remote MCP connection to `http://localhost:9000/mcp`
+- Claude Desktop: Requires HTTP proxy server (`@modelcontextprotocol/server-http`)
+- Permissions: `running-man_*` wildcard or individual tool permissions
 
-### MCP Server (if needed)
+### Agent Integration Patterns
 
-```
-Tools:
-  - search_logs
-  - get_errors
-  - get_process_status
-  - restart_process
-```
+**Common Workflows:**
+1. **Error investigation:** `get_recent_errors` → `search_logs` for context
+2. **Startup debugging:** `get_startup_logs` for failed process initialization
+3. **Process monitoring:** `get_process_status` → `get_process_detail` for specifics
+4. **System health:** `get_health_status` for buffer stats and uptime
+
+**Safety Features:**
+- Read-only tools by default
+- Destructive operations require explicit confirmation
+- Error handling for invalid process names
+- Local-only access (localhost:9000)
 
 ## File Structure
 

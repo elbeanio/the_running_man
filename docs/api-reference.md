@@ -133,20 +133,32 @@ curl "http://localhost:9000/processes"
 
 ---
 
-## Coming in Phase 3: Skills API
+## MCP API (Phase 3 - Complete)
 
-### POST /skills/{skill_name}
+### GET /mcp
 
-Execute a debugging skill.
+Model Context Protocol server for AI agent integration.
 
-**Example:**
-```bash
-curl -X POST "http://localhost:9000/skills/recent_errors" \
-  -H "Content-Type: application/json" \
-  -d '{"since": "5m", "context_lines": 10}'
-```
+**Protocol:** MCP over HTTP/SSE
+**Tools:** 8 debugging tools for AI agents
+**Authentication:** None (local development tool)
 
-Details TBD during Phase 3 implementation.
+**Available Tools via MCP:**
+1. `search_logs` - Search logs with filters
+2. `get_recent_errors` - Get errors with context
+3. `get_process_status` - Process status monitoring
+4. `get_startup_logs` - Startup log viewing
+5. `get_health_status` - System health checks
+6. `get_process_detail` - Detailed process info
+7. `restart_process` - Process restart (with safety)
+8. `stop_all_processes` - Stop all processes (requires confirm)
+
+**Integration:**
+- OpenCode: Direct remote MCP connection (no external commands needed)
+- Claude Desktop: Requires HTTP proxy server
+- Permissions: Add `running-man_*` to OpenCode permissions
+
+See [agent-integration.md](agent-integration.md) for complete setup and usage guide.
 
 ---
 

@@ -14,23 +14,24 @@ When debugging with Claude Code or OpenCode, you spend too much time:
 
 Running Man solves this by capturing everything automatically and exposing it via a queryable API that your coding agent can use.
 
-## Current Capabilities (Phase 2 Complete)
+## Current Capabilities (Phase 3 Complete)
 
 - **Multi-process management** - Run multiple processes with shell support (cd, &&, pipes, etc.)
 - **Docker Compose integration** - Automatically capture logs from all your containers
 - **YAML configuration** - Auto-discovery with CLI override support
 - **Interactive TUI** - Tab switching between log sources, real-time updates
 - **REST API** - Query logs by time, source, level, or content
+- **MCP Server** - AI agent integration with 8 debugging tools (Claude Code, OpenCode)
 - **Smart parsing** - Detects Python tracebacks, JSON logs, plain text
 - **Ring buffer** - 30-minute retention survives app crashes
 - **Configurable shell** - Use bash, zsh, or any shell you prefer
 
 ## What's Next
 
-- **Phase 2.5:** Polish TUI (fix rendering bugs, better navigation)
-- **Phase 3:** Agent integration (skills framework for Claude Code, OpenCode)
 - **Phase 4:** OTEL tracing and visualization
 - **Phase 5:** Browser SDK for frontend observability
+
+**Phase 3 Complete:** Full AI agent integration via MCP protocol with 8 debugging tools.
 
 ## Quick Example
 

@@ -79,6 +79,41 @@ curl http://localhost:9000/logs?contains=database
 curl http://localhost:9000/health
 ```
 
+### AI Agent Integration (MCP)
+
+Running Man includes a built-in Model Context Protocol (MCP) server for AI agent integration:
+
+```bash
+# MCP endpoint available at:
+http://localhost:9000/mcp
+```
+
+**Available MCP Tools:**
+1. `search_logs` - Search logs with filters
+2. `get_recent_errors` - Get recent errors with context
+3. `get_process_status` - Check status of managed processes
+4. `get_startup_logs` - View logs from process startup
+5. `get_health_status` - System health and buffer stats
+6. `get_process_detail` - Detailed process information
+7. `restart_process` - Restart a managed process
+8. `stop_all_processes` - Stop all managed processes
+
+**OpenCode Configuration:**
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "running-man": {
+      "enabled": true,
+      "type": "remote",
+      "url": "http://localhost:9000/mcp"
+    }
+  }
+}
+```
+
+See [docs/agent-integration.md](docs/agent-integration.md) for complete setup instructions.
+
 ## Features
 
 - **Process Management**: Run and monitor multiple processes with shell support (cd, &&, pipes)
@@ -105,11 +140,9 @@ the_running_man/
 
 ## What's Next
 
-**Phase 2.5 (Current):** Fixing TUI bugs, improving navigation, adding polish
+**Phase 4 (Next):** OTEL tracing and visualization
 
-**Phase 3 (Next):** Agent integration - making Running Man queryable by Claude Code and OpenCode for AI-assisted debugging
-
-**Future:** OTEL tracing, browser SDK, and more
+**Future:** Browser SDK and more
 
 See [docs/implementation-plan.md](docs/implementation-plan.md) for the full vision.
 
@@ -142,8 +175,8 @@ go test ./... -cover
 
 - ✅ **Phase 1:** Core Foundation (COMPLETE)
 - ✅ **Phase 2:** Multi-Source Capture (COMPLETE)
-- → **Phase 2.5:** Quality of Life & Bug Fixes (IN PROGRESS)
-- 📋 **Phase 3:** Agent Integration (Claude Code, OpenCode)
+- ✅ **Phase 2.5:** Quality of Life & Bug Fixes (COMPLETE)
+- ✅ **Phase 3:** Agent Integration (Claude Code, OpenCode) - COMPLETE
 - 📋 **Phase 4:** OTEL & Visualization
 - 📋 **Phase 5:** Browser Integration
 
