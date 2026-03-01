@@ -487,12 +487,16 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 }
 
 func highlightMatches(line, query string) string {
-	if query == "" {
+	if query == "" || len(line) == 0 {
 		return line
 	}
 
 	lowerQuery := strings.ToLower(query)
 	lowerLine := strings.ToLower(line)
+
+	if len(lowerQuery) > len(lowerLine) {
+		return line
+	}
 
 	// Find all match positions
 	idx := 0
@@ -507,11 +511,19 @@ func highlightMatches(line, query string) string {
 		}
 
 		// Add text before match
-		result += line[pos : pos+matchIdx]
+		beforeMatch := pos + matchIdx
+		if beforeMatch > len(line) {
+			result += line[pos:]
+			break
+		}
+		result += line[pos:beforeMatch]
 
 		// Add highlighted match
-		matchStart := pos + matchIdx
+		matchStart := beforeMatch
 		matchEnd := matchStart + len(query)
+		if matchEnd > len(line) {
+			matchEnd = len(line)
+		}
 		highlightStyle := lipgloss.NewStyle().
 			Background(lipgloss.Color("226")). // Yellow
 			Foreground(lipgloss.Color("black"))
@@ -519,6 +531,9 @@ func highlightMatches(line, query string) string {
 
 		pos = matchEnd
 		idx = matchIdx + len(query)
+		if pos >= len(line) {
+			break
+		}
 	}
 
 	return result
