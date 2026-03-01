@@ -119,58 +119,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateNormalMode(msg)
 		}
 
-		// Handle navigation keys only when not in search input mode
-		if m.mode != ModeSearch {
-			switch msg.String() {
-			case "tab", "right":
-				if len(m.sources) > 0 {
-					m.selectedSource = (m.selectedSource + 1) % len(m.sources)
-					return m, fetchLogs(m.apiURL, m.sources[m.selectedSource])
-				}
-
-			case "shift+tab", "left":
-				if len(m.sources) > 0 {
-					m.selectedSource--
-					if m.selectedSource < 0 {
-						m.selectedSource = len(m.sources) - 1
-					}
-					return m, fetchLogs(m.apiURL, m.sources[m.selectedSource])
-				}
-
-			case "up":
-				m.autoScroll = false
-				m.scrollOffset++
-
-			case "down":
-				m.scrollOffset--
-				if m.scrollOffset <= 0 {
-					m.scrollOffset = 0
-					m.autoScroll = true
-				}
-
-			case "pgup":
-				m.autoScroll = false
-				availableHeight := m.height - uiHeaderFooterHeight
-				m.scrollOffset += availableHeight
-
-			case "pgdown":
-				availableHeight := m.height - uiHeaderFooterHeight
-				m.scrollOffset -= availableHeight
-				if m.scrollOffset <= 0 {
-					m.scrollOffset = 0
-					m.autoScroll = true
-				}
-
-			case "home":
-				m.autoScroll = false
-				m.scrollOffset = math.MaxInt
-
-			case "end":
-				m.scrollOffset = 0
-				m.autoScroll = true
-			}
-		}
-
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -670,30 +618,6 @@ func (m model) updateSearchMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.searchQuery) > 0 {
 			m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
 			m.searchMatchIdx = 0
-		}
-
-	case "n":
-		// Type 'n' if query is empty, otherwise next match
-		if m.searchQuery == "" {
-			m.searchQuery += "n"
-		} else {
-			m.searchMatchIdx++
-			matchCount := countMatches(m.logs, m.searchQuery)
-			if matchCount > 0 {
-				m.searchMatchIdx = m.searchMatchIdx % matchCount
-			}
-		}
-
-	case "N":
-		// Type 'N' if query is empty, otherwise previous match
-		if m.searchQuery == "" {
-			m.searchQuery += "N"
-		} else {
-			m.searchMatchIdx--
-			matchCount := countMatches(m.logs, m.searchQuery)
-			if matchCount > 0 && m.searchMatchIdx < 0 {
-				m.searchMatchIdx = matchCount - 1
-			}
 		}
 
 	default:
