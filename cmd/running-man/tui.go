@@ -36,6 +36,9 @@ type model struct {
 	manager        *process.Manager // Process manager to stop on quit
 	scrollOffset   int              // Number of lines scrolled from bottom (0 = showing latest)
 	autoScroll     bool             // Whether to auto-scroll to bottom on new logs
+	searchActive   bool             // Whether search mode is active
+	searchQuery    string           // Current search query
+	searchMatchIdx int              // Current match index when navigating with n/N
 }
 
 type logEntry struct {
@@ -78,7 +81,10 @@ func initialModel(apiURL string, manager *process.Manager) model {
 		height:         24,
 		manager:        manager,
 		scrollOffset:   0,
-		autoScroll:     true, // Start with auto-scroll enabled
+		autoScroll:     true,
+		searchActive:   false,
+		searchQuery:    "",
+		searchMatchIdx: 0,
 	}
 }
 
@@ -97,58 +103,113 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Just quit - main.go will handle cleanup
 			return m, tea.Quit
 
-		case "tab", "right":
-			if len(m.sources) > 0 {
-				m.selectedSource = (m.selectedSource + 1) % len(m.sources)
-				return m, fetchLogs(m.apiURL, m.sources[m.selectedSource])
-			}
+		case "/", "ctrl+f":
+			// Enter search mode
+			m.searchActive = true
+			m.searchQuery = ""
+			m.searchMatchIdx = 0
 
-		case "shift+tab", "left":
-			if len(m.sources) > 0 {
-				m.selectedSource--
-				if m.selectedSource < 0 {
-					m.selectedSource = len(m.sources) - 1
+		case "escape":
+			// Exit search mode
+			m.searchActive = false
+			m.searchQuery = ""
+			m.searchMatchIdx = 0
+
+		case "n":
+			// Next match (when search is active)
+			if m.searchActive && m.searchQuery != "" {
+				m.searchMatchIdx++
+				// Clamp to valid range
+				matchCount := countMatches(m.logs, m.searchQuery)
+				if matchCount > 0 {
+					m.searchMatchIdx = m.searchMatchIdx % matchCount
 				}
-				return m, fetchLogs(m.apiURL, m.sources[m.selectedSource])
 			}
 
-		case "up":
-			// Scroll up one line
-			m.autoScroll = false
-			m.scrollOffset++
+		case "N":
+			// Previous match
+			if m.searchActive && m.searchQuery != "" {
+				m.searchMatchIdx--
+				matchCount := countMatches(m.logs, m.searchQuery)
+				if matchCount > 0 {
+					if m.searchMatchIdx < 0 {
+						m.searchMatchIdx = matchCount - 1
+					}
+				}
+			}
 
-		case "down":
-			// Scroll down one line
-			m.scrollOffset--
-			if m.scrollOffset <= 0 {
+		case "enter":
+			// Exit search mode on enter (keep query for highlighting)
+			if m.searchActive {
+				m.searchActive = false
+			}
+
+		case "backspace":
+			// Handle backspace in search mode
+			if m.searchActive && len(m.searchQuery) > 0 {
+				m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+				m.searchMatchIdx = 0
+			}
+
+		default:
+			// Handle regular character input in search mode
+			if m.searchActive {
+				m.searchQuery += msg.String()
+				m.searchMatchIdx = 0
+			}
+		}
+
+		// Handle navigation keys only when not in search input mode
+		// (or handle them separately - here we let scroll work during search)
+		if !m.searchActive || (m.searchActive && msg.String() != "enter" && !isPrintableKey(msg)) {
+			switch msg.String() {
+			case "tab", "right":
+				if len(m.sources) > 0 {
+					m.selectedSource = (m.selectedSource + 1) % len(m.sources)
+					return m, fetchLogs(m.apiURL, m.sources[m.selectedSource])
+				}
+
+			case "shift+tab", "left":
+				if len(m.sources) > 0 {
+					m.selectedSource--
+					if m.selectedSource < 0 {
+						m.selectedSource = len(m.sources) - 1
+					}
+					return m, fetchLogs(m.apiURL, m.sources[m.selectedSource])
+				}
+
+			case "up":
+				m.autoScroll = false
+				m.scrollOffset++
+
+			case "down":
+				m.scrollOffset--
+				if m.scrollOffset <= 0 {
+					m.scrollOffset = 0
+					m.autoScroll = true
+				}
+
+			case "pgup":
+				m.autoScroll = false
+				availableHeight := m.height - uiHeaderFooterHeight
+				m.scrollOffset += availableHeight
+
+			case "pgdown":
+				availableHeight := m.height - uiHeaderFooterHeight
+				m.scrollOffset -= availableHeight
+				if m.scrollOffset <= 0 {
+					m.scrollOffset = 0
+					m.autoScroll = true
+				}
+
+			case "home":
+				m.autoScroll = false
+				m.scrollOffset = math.MaxInt
+
+			case "end":
 				m.scrollOffset = 0
 				m.autoScroll = true
 			}
-
-		case "pgup":
-			// Scroll up one page
-			m.autoScroll = false
-			availableHeight := m.height - uiHeaderFooterHeight
-			m.scrollOffset += availableHeight
-
-		case "pgdown":
-			// Scroll down one page
-			availableHeight := m.height - uiHeaderFooterHeight
-			m.scrollOffset -= availableHeight
-			if m.scrollOffset <= 0 {
-				m.scrollOffset = 0
-				m.autoScroll = true
-			}
-
-		case "home":
-			// Jump to oldest logs
-			m.autoScroll = false
-			m.scrollOffset = math.MaxInt // Scroll to top, renderLogs will clamp to actual max
-
-		case "end":
-			// Jump to newest logs
-			m.scrollOffset = 0
-			m.autoScroll = true
 		}
 
 	case tea.WindowSizeMsg:
@@ -192,16 +253,23 @@ func (m model) View() string {
 	// Header with source tabs
 	header := renderHeader(m.sources, m.selectedSource)
 
-	// Help footer
-	help := helpStyle.Render("\n←/→ Tab: Switch source | ↑/↓ PgUp/PgDn Home/End: Scroll | q: Quit")
+	// Search bar
+	searchBar := renderSearchBar(m.searchActive, m.searchQuery, m.logs, m.searchMatchIdx)
+
+	// Calculate help text based on mode
+	helpText := "\n←/→ Tab: Switch source | ↑/↓ PgUp/PgDn Home/End: Scroll | /: Search | q: Quit"
+	if m.searchActive {
+		helpText = "\nn/N: Next/Prev match | Enter: Exit search | Esc: Clear & exit"
+	}
+	help := helpStyle.Render(helpText)
 
 	// Calculate available height for logs
-	availableHeight := m.height - lipgloss.Height(header) - lipgloss.Height(help) - 2
+	availableHeight := m.height - lipgloss.Height(header) - lipgloss.Height(searchBar) - lipgloss.Height(help) - 2
 
-	// Render logs
-	logsView := renderLogs(m.logs, availableHeight, m.width, m.scrollOffset)
+	// Render logs with search highlighting
+	logsView := renderLogs(m.logs, availableHeight, m.width, m.scrollOffset, m.searchQuery)
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, logsView, help)
+	return lipgloss.JoinVertical(lipgloss.Left, header, searchBar, logsView, help)
 }
 
 // sortSources organizes sources into logical groups:
@@ -303,7 +371,34 @@ func renderHeader(sources []string, selected int) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
 }
 
-func renderLogs(logs []logEntry, height, width, scrollOffset int) string {
+func renderSearchBar(active bool, query string, logs []logEntry, matchIdx int) string {
+	if !active {
+		return ""
+	}
+
+	matchCount := countMatches(logs, query)
+	var status string
+	if query == "" {
+		status = "Type to search..."
+	} else if matchCount == 0 {
+		status = "No matches"
+	} else {
+		status = fmt.Sprintf("%d of %d matches", matchIdx+1, matchCount)
+	}
+
+	searchBarStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("15")).
+		Background(lipgloss.Color("235")).
+		Padding(0, 1)
+
+	inputStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("86"))
+
+	return searchBarStyle.Render(fmt.Sprintf(" Search: %s%s ", query, inputStyle.Render("_"))) +
+		searchBarStyle.Width(40).Render(" "+status)
+}
+
+func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery string) string {
 	// Validate inputs
 	if height <= 0 || width <= 0 {
 		return logStyle.Render("Invalid terminal dimensions")
@@ -315,6 +410,8 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int) string {
 	if len(logs) == 0 {
 		return logStyle.Render("No logs yet...")
 	}
+
+	highlight := searchQuery != ""
 
 	// Collect all lines (splitting multiline messages)
 	allLines := []string{}
@@ -346,6 +443,11 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int) string {
 			// Truncate long lines
 			if len(line) > width-2 {
 				line = line[:width-5] + "..."
+			}
+
+			// Apply highlighting if search query exists
+			if highlight {
+				line = highlightMatches(line, searchQuery)
 			}
 
 			allLines = append(allLines, style.Render(line))
@@ -382,6 +484,44 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int) string {
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, allLines[startIdx:endIdx]...)
+}
+
+func highlightMatches(line, query string) string {
+	if query == "" {
+		return line
+	}
+
+	lowerQuery := strings.ToLower(query)
+	lowerLine := strings.ToLower(line)
+
+	// Find all match positions
+	idx := 0
+	result := ""
+	pos := 0
+
+	for {
+		matchIdx := strings.Index(lowerLine[idx:], lowerQuery)
+		if matchIdx == -1 {
+			result += line[pos:]
+			break
+		}
+
+		// Add text before match
+		result += line[pos : pos+matchIdx]
+
+		// Add highlighted match
+		matchStart := pos + matchIdx
+		matchEnd := matchStart + len(query)
+		highlightStyle := lipgloss.NewStyle().
+			Background(lipgloss.Color("226")). // Yellow
+			Foreground(lipgloss.Color("black"))
+		result += highlightStyle.Render(line[matchStart:matchEnd])
+
+		pos = matchEnd
+		idx = matchIdx + len(query)
+	}
+
+	return result
 }
 
 // Commands
@@ -439,6 +579,27 @@ func tickCmd() tea.Cmd {
 	return tea.Tick(defaultPollInterval, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
+}
+
+func countMatches(logs []logEntry, query string) int {
+	if query == "" {
+		return 0
+	}
+	lowerQuery := strings.ToLower(query)
+	count := 0
+	for _, log := range logs {
+		lowerMsg := strings.ToLower(log.Message)
+		count += strings.Count(lowerMsg, lowerQuery)
+	}
+	return count
+}
+
+func isPrintableKey(msg tea.Msg) bool {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return false
+	}
+	return len(keyMsg.String()) == 1 && keyMsg.String() != "escape"
 }
 
 // Styles
