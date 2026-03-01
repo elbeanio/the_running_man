@@ -110,10 +110,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searchMatchIdx = 0
 
 		case "escape":
-			// Exit search mode
+			// Exit search mode and clear query
 			m.searchActive = false
 			m.searchQuery = ""
 			m.searchMatchIdx = 0
+
+		case "left", "right", "up", "down":
+			// Exit search mode to allow navigation between views
+			if m.searchActive {
+				m.searchActive = false
+			}
 
 		case "n":
 			// Next match (when search is active)
@@ -153,7 +159,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		default:
 			// Handle regular character input in search mode
-			if m.searchActive {
+			// Only add single printable character keys (not special keys like "n", "left", etc.)
+			if m.searchActive && len(msg.String()) == 1 {
 				m.searchQuery += msg.String()
 				m.searchMatchIdx = 0
 			}
@@ -525,8 +532,8 @@ func highlightMatches(line, query string) string {
 			matchEnd = len(line)
 		}
 		highlightStyle := lipgloss.NewStyle().
-			Background(lipgloss.Color("226")). // Yellow
-			Foreground(lipgloss.Color("black"))
+			Background(lipgloss.Color("240")). // Dark gray background
+			Foreground(lipgloss.Color("15"))   // White text
 		result += highlightStyle.Render(line[matchStart:matchEnd])
 
 		pos = matchEnd
