@@ -70,7 +70,8 @@ type Config struct {
 // TracingConfig represents OpenTelemetry tracing configuration
 type TracingConfig struct {
 	// Enable OTLP trace ingestion (default: true)
-	Enabled bool `yaml:"enabled,omitempty"`
+	// nil means not specified, use default
+	Enabled *bool `yaml:"enabled,omitempty"`
 
 	// OTLP HTTP receiver port (default: 4318)
 	Port int `yaml:"port,omitempty"`
@@ -277,9 +278,12 @@ func (tc *TracingConfig) GetMaxSpanAgeDuration() time.Duration {
 
 // IsEnabled returns whether tracing is enabled.
 func (tc *TracingConfig) IsEnabled() bool {
-	// DefaultTracingEnabled is true, so if Enabled is not explicitly set to false,
-	// tracing is enabled
-	return !(tc.Enabled == false) // Only false if explicitly set to false
+	if tc.Enabled != nil {
+		// Enabled was explicitly set in YAML
+		return *tc.Enabled
+	}
+	// Not specified in YAML, use default
+	return DefaultTracingEnabled
 }
 
 // expandEnvVars expands environment variables in command fields.

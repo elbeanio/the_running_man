@@ -176,20 +176,30 @@ func runCommand(args []string) {
 	finalTracingPort := *tracingPort
 	finalMaxSpans := config.DefaultMaxSpans
 	finalMaxSpanAge := config.DefaultMaxSpanAge
+
+	// Simple logic: CLI flag overrides config
+	// If user specifies --tracing=false, disable regardless of config
+	// Otherwise, if config exists, use its value (defaults to true)
+	// If no config, use CLI flag value (defaults to true)
+
 	if cfg != nil {
-		// CLI flags override config
-		if !*tracingEnabled && *tracingEnabled != cfg.Tracing.IsEnabled() {
+		// We have a config file
+		if !*tracingEnabled {
+			// User explicitly disabled tracing via CLI flag
 			finalTracingEnabled = false
 		} else {
+			// Use config value (defaults to true)
 			finalTracingEnabled = cfg.Tracing.IsEnabled()
 		}
+
 		if finalTracingPort == 0 {
 			finalTracingPort = cfg.Tracing.GetTracingPort()
 		}
 		finalMaxSpans = cfg.Tracing.GetMaxSpans()
 		finalMaxSpanAge = cfg.Tracing.GetMaxSpanAgeDuration()
 	} else {
-		// Use defaults if no config
+		// No config file, use CLI flag value (defaults to true)
+		// finalTracingEnabled already set to *tracingEnabled
 		if finalTracingPort == 0 {
 			finalTracingPort = config.DefaultTracingPort
 		}
