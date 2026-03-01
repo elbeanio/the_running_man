@@ -257,81 +257,77 @@ Complete integration guide available at [docs/agent-integration.md](agent-integr
 
 ## Phase 4: OTEL & Visualization
 
-**Goal:** Add distributed tracing support for instrumented applications
+**Goal:** Add OpenTelemetry tracing support for full-stack observability during local development.
 
-### OTEL Integration
+### Architecture Decisions
 
-**OTLP Receiver:**
-- gRPC endpoint (default `:4317`)
-- HTTP endpoint (default `:4318`)
-- Span ingestion and parsing
-- Extract: trace_id, span_id, parent_span_id, duration, status, attributes
+1. **Direct OTLP receiver** - No separate collector process
+2. **Full context propagation** - `tracecontext,baggage` for automatic instrumentation
+3. **Integrated buffer** - Traces stored with logs (shared 50MB limit)
+4. **No sampling initially** - Local dev scale doesn't require sampling
+5. **HTTP OTLP only initially** - Simpler implementation, covers most use cases
 
-**Span Storage:**
-- Store spans in ring buffer with trace indexing
-- Support nested span relationships (parent/child)
-- Extract workflow_id from custom attributes
-- Link spans to log entries via trace_id
+### Implementation Plan
 
-**Trace Correlation:**
-- Match log entries to spans via trace_id
-- Return correlated logs with trace queries
-- Support custom attributes for workflow tracking
-- Cross-reference errors with slow spans
+**Phase 4.1: Foundation (Weeks 1-2)**
+- OTLP HTTP receiver on port 4318
+- Environment variable injection for auto-instrumentation
+- Basic span storage in integrated buffer
 
-### Trace Query API
+**Phase 4.2: Correlation & Querying (Week 3)**
+- Trace-log correlation via `trace_id`
+- API endpoints for trace querying
+- MCP tools for AI agent trace debugging
 
-**Endpoints:**
+**Phase 4.3: Visualization (Week 4)**
+- TUI trace viewer (list + detail views)
+- ASCII span hierarchy visualization
+- Correlated logs display
+
+**Phase 4.4: Polish (Week 5)**
+- Comprehensive configuration options
+- Documentation and examples
+- Performance optimization
+
+**Optional: Web UI (Week 6+)**
+- Flamegraph visualization
+- Timeline view with logs
+- Export to Jaeger format
+
+### Key Features
+
+**Auto-instrumentation:**
+```yaml
+# running-man.yml
+tracing:
+  enabled: true
+  port: 4318
+  retention: 30m  # Same as logs
 ```
-GET /traces
-  ?trace_id=abc123        # specific trace
-  ?workflow_id=xyz        # all spans for workflow
-  ?since=5m              # time window
-  ?status=error          # only errors
-  ?min_duration=100ms    # slow spans
 
-GET /traces/{trace_id}/logs
-  # All logs correlated with this trace
-```
+**Environment Variables Injected:**
+- `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`
+- `OTEL_SERVICE_NAME=process_name`
+- `OTEL_PROPAGATORS=tracecontext,baggage`
 
-### Visualization
+**MCP Tools:**
+- `get_traces` - List recent traces with filters
+- `get_trace` - Get specific trace with spans
+- `get_correlated_logs` - Logs for a trace_id
+- `find_slow_traces` - Traces exceeding duration threshold
+- `trace_errors` - Traces with error status
 
-**Basic Trace Viewer:**
-- Flamegraph or waterfall view
-- Span timeline with duration
-- Error highlighting
-- Click to see span details + correlated logs
+### Success Criteria
 
-**Log Timeline:**
-- Visual timeline of log events
-- Correlation with trace spans
-- Error clustering
+✅ **Python/Node apps can send traces automatically** with injected env vars  
+✅ **Traces correlated with logs** in TUI and API  
+✅ **MCP tools provide useful trace debugging** for AI agents  
+✅ **TUI shows basic trace visualization** (list + detail view)  
+✅ **Documentation enables easy setup** for common frameworks
 
-**Optional Exports:**
-- Export traces to Jaeger/Zipkin format
-- Download trace as JSON
+### Detailed Plan
 
-### Instrumentation Guide
-
-**Minimal Setup:**
-- Python SDK setup (OpenTelemetry)
-- Node.js SDK setup
-- Go SDK setup
-- Header-based trace propagation (X-Trace-ID)
-
-**Examples:**
-- FastAPI/Flask middleware
-- Express middleware
-- Go net/http middleware
-
-### User Feedback Integration
-
-**Testing:** Real microservices architectures with 3+ services
-
-**Success Criteria:**
-- Can trace requests across multiple services
-- Correlation with logs works reliably
-- Visualization is useful for debugging
+See [tracing-implementation-plan.md](tracing-implementation-plan.md) for complete task breakdown, dependencies, and technical details.
 
 ---
 
