@@ -24,6 +24,14 @@ const (
 	uiHeaderFooterHeight = 5 // Tab bar + help text + padding
 )
 
+// Mode represents the current operating mode of the TUI
+type Mode int
+
+const (
+	ModeNormal Mode = iota
+	ModeSearch
+)
+
 // Model holds the TUI state
 type model struct {
 	apiURL         string
@@ -36,7 +44,7 @@ type model struct {
 	manager        *process.Manager // Process manager to stop on quit
 	scrollOffset   int              // Number of lines scrolled from bottom (0 = showing latest)
 	autoScroll     bool             // Whether to auto-scroll to bottom on new logs
-	searchActive   bool             // Whether search mode is active
+	mode           Mode             // Current mode (normal or search)
 	searchQuery    string           // Current search query
 	searchMatchIdx int              // Current match index when navigating with n/N
 }
@@ -82,7 +90,7 @@ func initialModel(apiURL string, manager *process.Manager) model {
 		manager:        manager,
 		scrollOffset:   0,
 		autoScroll:     true,
-		searchActive:   false,
+		mode:           ModeNormal,
 		searchQuery:    "",
 		searchMatchIdx: 0,
 	}
@@ -105,57 +113,57 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "/", "ctrl+f":
 			// Enter search mode
-			m.searchActive = true
+			m.mode = ModeSearch
 			m.searchQuery = ""
 			m.searchMatchIdx = 0
 
 		case "escape":
 			// Exit search mode and clear query
-			m.searchActive = false
+			m.mode = ModeNormal
 			m.searchQuery = ""
 			m.searchMatchIdx = 0
 
 		case "left", "right", "up", "down":
 			// Exit search mode to allow navigation between views
-			if m.searchActive {
-				m.searchActive = false
+			if m.mode == ModeSearch {
+				m.mode = ModeNormal
 			}
 
 		case "n":
 			// Next match - only if there's already a search query
-			if m.searchActive && m.searchQuery != "" {
+			if m.mode == ModeSearch && m.searchQuery != "" {
 				m.searchMatchIdx++
 				matchCount := countMatches(m.logs, m.searchQuery)
 				if matchCount > 0 {
 					m.searchMatchIdx = m.searchMatchIdx % matchCount
 				}
-			} else if m.searchActive {
+			} else if m.mode == ModeSearch {
 				// No query yet - type 'n'
 				m.searchQuery += "n"
 			}
 
 		case "N":
 			// Previous match - only if there's already a search query
-			if m.searchActive && m.searchQuery != "" {
+			if m.mode == ModeSearch && m.searchQuery != "" {
 				m.searchMatchIdx--
 				matchCount := countMatches(m.logs, m.searchQuery)
 				if matchCount > 0 && m.searchMatchIdx < 0 {
 					m.searchMatchIdx = matchCount - 1
 				}
-			} else if m.searchActive {
+			} else if m.mode == ModeSearch {
 				// No query yet - type 'N'
 				m.searchQuery += "N"
 			}
 
 		case "enter":
 			// Exit search mode on enter (keep query for highlighting)
-			if m.searchActive {
-				m.searchActive = false
+			if m.mode == ModeSearch {
+				m.mode = ModeNormal
 			}
 
 		case "backspace":
 			// Handle backspace in search mode
-			if m.searchActive && len(m.searchQuery) > 0 {
+			if m.mode == ModeSearch && len(m.searchQuery) > 0 {
 				m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
 				m.searchMatchIdx = 0
 			}
@@ -163,15 +171,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			// Handle regular character input in search mode
 			// Only add single printable character keys (not special keys like "n", "left", etc.)
-			if m.searchActive && len(msg.String()) == 1 {
+			if m.mode == ModeSearch && len(msg.String()) == 1 {
 				m.searchQuery += msg.String()
 				m.searchMatchIdx = 0
 			}
 		}
 
 		// Handle navigation keys only when not in search input mode
-		// (or handle them separately - here we let scroll work during search)
-		if !m.searchActive || (m.searchActive && msg.String() != "enter" && !isPrintableKey(msg)) {
+		if m.mode != ModeSearch {
 			switch msg.String() {
 			case "tab", "right":
 				if len(m.sources) > 0 {
@@ -264,11 +271,11 @@ func (m model) View() string {
 	header := renderHeader(m.sources, m.selectedSource)
 
 	// Search bar
-	searchBar := renderSearchBar(m.searchActive, m.searchQuery, m.logs, m.searchMatchIdx)
+	searchBar := renderSearchBar(m.mode == ModeSearch, m.searchQuery, m.logs, m.searchMatchIdx)
 
 	// Calculate help text based on mode
 	helpText := "\n←/→ Tab: Switch source | ↑/↓ PgUp/PgDn Home/End: Scroll | /: Search | q: Quit"
-	if m.searchActive {
+	if m.mode == ModeSearch {
 		helpText = "\nn/N: Next/Prev match | Enter: Exit search | Esc: Clear & exit"
 	}
 	help := helpStyle.Render(helpText)
