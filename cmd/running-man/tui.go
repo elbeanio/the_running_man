@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/iangeorge/the_running_man/internal/process"
@@ -45,7 +46,8 @@ type model struct {
 	scrollOffset   int              // Number of lines scrolled from bottom (0 = showing latest)
 	autoScroll     bool             // Whether to auto-scroll to bottom on new logs
 	mode           Mode             // Current mode (normal or search)
-	searchQuery    string           // Current search query
+	searchInput    textinput.Model  // Text input for search mode
+	searchQuery    string           // Current search query (mirrored from searchInput)
 	searchMatchIdx int              // Current match index when navigating with n/N
 }
 
@@ -80,6 +82,10 @@ type tickMsg time.Time
 func (e errMsg) Error() string { return e.err.Error() }
 
 func initialModel(apiURL string, manager *process.Manager) model {
+	ti := textinput.New()
+	ti.Placeholder = "search..."
+	ti.Focus()
+
 	return model{
 		apiURL:         apiURL,
 		sources:        []string{},
@@ -91,6 +97,7 @@ func initialModel(apiURL string, manager *process.Manager) model {
 		scrollOffset:   0,
 		autoScroll:     true,
 		mode:           ModeNormal,
+		searchInput:    ti,
 		searchQuery:    "",
 		searchMatchIdx: 0,
 	}
@@ -160,13 +167,33 @@ func (m model) View() string {
 	// Header with source tabs
 	header := renderHeader(m.sources, m.selectedSource)
 
-	// Search bar
-	searchBar := renderSearchBar(m.mode == ModeSearch, m.searchQuery, m.logs, m.searchMatchIdx)
+	// Search bar - use textinput when in search mode
+	var searchBar string
+	if m.mode == ModeSearch {
+		searchBarStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("15")).
+			Background(lipgloss.Color("235")).
+			Padding(0, 1)
+
+		matchCount := countMatches(m.logs, m.searchQuery)
+		var status string
+		if m.searchQuery == "" {
+			status = "Type to search..."
+		} else if matchCount == 0 {
+			status = "No matches"
+		} else {
+			status = fmt.Sprintf("%d of %d matches", m.searchMatchIdx+1, matchCount)
+		}
+
+		searchInput := m.searchInput.View()
+		searchBar = searchBarStyle.Render(" "+searchInput+" ") +
+			searchBarStyle.Width(40).Render(" "+status)
+	}
 
 	// Calculate help text based on mode
 	helpText := "\n←/→ Tab: Switch source | ↑/↓ PgUp/PgDn Home/End: Scroll | /: Search | q: Quit"
 	if m.mode == ModeSearch {
-		helpText = "\nn/N: Next/Prev match | Enter: Exit search | Esc: Clear & exit"
+		helpText = "\nEsc: Exit search | Enter: Confirm"
 	}
 	help := helpStyle.Render(helpText)
 
@@ -596,39 +623,26 @@ var (
 
 // updateSearchMode handles key events in search mode
 func (m model) updateSearchMode(msg tea.Msg) (tea.Model, tea.Cmd) {
-	keyMsg, ok := msg.(tea.KeyMsg)
-	if !ok {
-		return m, nil
-	}
-	key := keyMsg.String()
+	// Delegate to textinput for all key handling
+	ti, cmd := m.searchInput.Update(msg)
+	m.searchInput = ti
+	m.searchQuery = m.searchInput.Value()
+	m.searchMatchIdx = 0
 
-	switch key {
-	case "escape":
-		// Exit search mode and clear query
-		m.mode = ModeNormal
-		m.searchQuery = ""
-		m.searchMatchIdx = 0
-
-	case "enter":
-		// Exit search mode but keep query for highlighting
-		m.mode = ModeNormal
-
-	case "backspace":
-		// Handle backspace in search mode
-		if len(m.searchQuery) > 0 {
-			m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+	// Check for escape or enter to exit search mode
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch keyMsg.String() {
+		case "escape":
+			m.mode = ModeNormal
+			m.searchInput.SetValue("")
+			m.searchQuery = ""
 			m.searchMatchIdx = 0
-		}
-
-	default:
-		// Add single printable characters to search query
-		if len(key) == 1 {
-			m.searchQuery += key
-			m.searchMatchIdx = 0
+		case "enter":
+			m.mode = ModeNormal
 		}
 	}
 
-	return m, nil
+	return m, cmd
 }
 
 // updateNormalMode handles key events in normal mode
@@ -645,6 +659,8 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = ModeSearch
 		m.searchQuery = ""
 		m.searchMatchIdx = 0
+		m.searchInput.Focus()
+		m.searchInput.SetValue("")
 
 	case "tab", "right":
 		if len(m.sources) > 0 {
