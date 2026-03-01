@@ -25,6 +25,12 @@ const (
 	DefaultMaxBytes   = 50 * 1024 * 1024 // 50MB
 	DefaultShell      = "/bin/sh"
 
+	// Tracing defaults
+	DefaultTracingEnabled = true
+	DefaultTracingPort    = 4318
+	DefaultMaxSpans       = 10000
+	DefaultMaxSpanAge     = 30 * time.Minute
+
 	// Port validation constants
 	MinPort = 1
 	MaxPort = 65535
@@ -56,6 +62,25 @@ type Config struct {
 	// Shell to use for process execution (default: /bin/sh)
 	// Examples: /bin/bash, /bin/zsh
 	Shell string `yaml:"shell,omitempty"`
+
+	// Tracing configuration
+	Tracing TracingConfig `yaml:"tracing,omitempty"`
+}
+
+// TracingConfig represents OpenTelemetry tracing configuration
+type TracingConfig struct {
+	// Enable OTLP trace ingestion (default: true)
+	Enabled bool `yaml:"enabled,omitempty"`
+
+	// OTLP HTTP receiver port (default: 4318)
+	Port int `yaml:"port,omitempty"`
+
+	// Maximum number of spans to keep in memory (default: 10000)
+	MaxSpans int `yaml:"max_spans,omitempty"`
+
+	// Maximum age of spans to keep (e.g., "30m", "1h", "24h")
+	// Default: 30m
+	MaxSpanAge string `yaml:"max_span_age,omitempty"`
 }
 
 // ProcessConfig represents a single process configuration in YAML.
@@ -127,6 +152,11 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("max_bytes cannot be negative, got %d", c.MaxBytes)
 	}
 
+	// Validate tracing configuration
+	if err := c.Tracing.Validate(); err != nil {
+		return fmt.Errorf("tracing configuration error: %w", err)
+	}
+
 	return nil
 }
 
@@ -192,6 +222,64 @@ func (c *Config) GetShell() string {
 		return DefaultShell
 	}
 	return c.Shell
+}
+
+// Validate validates tracing configuration
+func (tc *TracingConfig) Validate() error {
+	// Validate tracing port
+	if tc.Port != 0 && (tc.Port < MinPort || tc.Port > MaxPort) {
+		return fmt.Errorf("tracing port must be between %d and %d, got %d", MinPort, MaxPort, tc.Port)
+	}
+
+	// Validate max_spans
+	if tc.MaxSpans < 0 {
+		return fmt.Errorf("max_spans cannot be negative, got %d", tc.MaxSpans)
+	}
+
+	// Validate max_span_age duration if specified
+	if tc.MaxSpanAge != "" {
+		if _, err := time.ParseDuration(tc.MaxSpanAge); err != nil {
+			return fmt.Errorf("invalid max_span_age duration '%s': %w", tc.MaxSpanAge, err)
+		}
+	}
+
+	return nil
+}
+
+// GetTracingPort returns the tracing port or the default.
+func (tc *TracingConfig) GetTracingPort() int {
+	if tc.Port == 0 {
+		return DefaultTracingPort
+	}
+	return tc.Port
+}
+
+// GetMaxSpans returns the max spans or the default.
+func (tc *TracingConfig) GetMaxSpans() int {
+	if tc.MaxSpans == 0 {
+		return DefaultMaxSpans
+	}
+	return tc.MaxSpans
+}
+
+// GetMaxSpanAgeDuration returns the max span age duration or the default.
+func (tc *TracingConfig) GetMaxSpanAgeDuration() time.Duration {
+	if tc.MaxSpanAge == "" {
+		return DefaultMaxSpanAge
+	}
+	duration, err := time.ParseDuration(tc.MaxSpanAge)
+	if err != nil {
+		// Should never happen if Validate() was called
+		return DefaultMaxSpanAge
+	}
+	return duration
+}
+
+// IsEnabled returns whether tracing is enabled.
+func (tc *TracingConfig) IsEnabled() bool {
+	// DefaultTracingEnabled is true, so if Enabled is not explicitly set to false,
+	// tracing is enabled
+	return !(tc.Enabled == false) // Only false if explicitly set to false
 }
 
 // expandEnvVars expands environment variables in command fields.

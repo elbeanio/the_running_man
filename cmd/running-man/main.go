@@ -15,6 +15,7 @@ import (
 	"github.com/iangeorge/the_running_man/internal/parser"
 	"github.com/iangeorge/the_running_man/internal/process"
 	"github.com/iangeorge/the_running_man/internal/storage"
+	"github.com/iangeorge/the_running_man/internal/tracing"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -125,6 +126,8 @@ func runCommand(args []string) {
 	apiPort := fs.Int("api-port", 0, "API server port (overrides config file)")
 	dockerCompose := fs.String("docker-compose", "", "Path to docker-compose.yml file (overrides config file)")
 	noTUI := fs.Bool("no-tui", false, "Disable TUI and run in headless mode")
+	tracingEnabled := fs.Bool("tracing", true, "Enable OTLP trace ingestion (default: true)")
+	tracingPort := fs.Int("tracing-port", 0, "OTLP HTTP receiver port (overrides config file, default: 4318)")
 
 	var procs processFlags
 	fs.Var(&procs, "process", "Process to run (can be specified multiple times, overrides config file)")
@@ -166,6 +169,30 @@ func runCommand(args []string) {
 		finalMaxEntries = cfg.GetMaxEntries()
 		finalMaxBytes = cfg.GetMaxBytes()
 		finalShell = cfg.GetShell()
+	}
+
+	// Get tracing configuration
+	finalTracingEnabled := *tracingEnabled
+	finalTracingPort := *tracingPort
+	finalMaxSpans := config.DefaultMaxSpans
+	finalMaxSpanAge := config.DefaultMaxSpanAge
+	if cfg != nil {
+		// CLI flags override config
+		if !*tracingEnabled && *tracingEnabled != cfg.Tracing.IsEnabled() {
+			finalTracingEnabled = false
+		} else {
+			finalTracingEnabled = cfg.Tracing.IsEnabled()
+		}
+		if finalTracingPort == 0 {
+			finalTracingPort = cfg.Tracing.GetTracingPort()
+		}
+		finalMaxSpans = cfg.Tracing.GetMaxSpans()
+		finalMaxSpanAge = cfg.Tracing.GetMaxSpanAgeDuration()
+	} else {
+		// Use defaults if no config
+		if finalTracingPort == 0 {
+			finalTracingPort = config.DefaultTracingPort
+		}
 	}
 
 	// Parse process configurations
@@ -227,6 +254,14 @@ func runCommand(args []string) {
 
 	// Create ring buffer
 	buffer := storage.NewRingBuffer(finalMaxEntries, finalRetention, finalMaxBytes)
+
+	// Create tracing storage and receiver if enabled
+	var tracingReceiver *tracing.Receiver
+	if finalTracingEnabled {
+		fmt.Printf("Tracing: OTLP receiver on http://localhost:%d\n", finalTracingPort)
+		spanStorage := tracing.NewSpanStorage(finalMaxSpans, finalMaxSpanAge)
+		tracingReceiver = tracing.NewReceiver(spanStorage, finalTracingPort)
+	}
 
 	// Create parser
 	multiParser := parser.NewMultiParser()
@@ -317,6 +352,15 @@ func runCommand(args []string) {
 		}
 	}()
 
+	// Start tracing receiver in background if enabled
+	if tracingReceiver != nil {
+		go func() {
+			if err := tracingReceiver.Start(); err != nil {
+				fmt.Fprintf(os.Stderr, "[running-man] Tracing receiver error: %v\n", err)
+			}
+		}()
+	}
+
 	// Give API server time to start
 	time.Sleep(100 * time.Millisecond)
 
@@ -387,6 +431,15 @@ func runCommand(args []string) {
 		// Wait for container streamers to finish
 		for _, streamer := range containerStreamers {
 			streamer.Wait()
+		}
+
+		// Stop tracing receiver if enabled
+		if tracingReceiver != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := tracingReceiver.Stop(shutdownCtx); err != nil {
+				fmt.Fprintf(os.Stderr, "[running-man] Tracing receiver shutdown error: %v\n", err)
+			}
 		}
 
 		fmt.Printf("[running-man] Shutdown complete\n")
