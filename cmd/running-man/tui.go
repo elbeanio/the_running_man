@@ -122,26 +122,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "n":
-			// Next match (when search is active)
+			// Next match - only if there's already a search query
 			if m.searchActive && m.searchQuery != "" {
 				m.searchMatchIdx++
-				// Clamp to valid range
 				matchCount := countMatches(m.logs, m.searchQuery)
 				if matchCount > 0 {
 					m.searchMatchIdx = m.searchMatchIdx % matchCount
 				}
+			} else if m.searchActive {
+				// No query yet - type 'n'
+				m.searchQuery += "n"
 			}
 
 		case "N":
-			// Previous match
+			// Previous match - only if there's already a search query
 			if m.searchActive && m.searchQuery != "" {
 				m.searchMatchIdx--
 				matchCount := countMatches(m.logs, m.searchQuery)
-				if matchCount > 0 {
-					if m.searchMatchIdx < 0 {
-						m.searchMatchIdx = matchCount - 1
-					}
+				if matchCount > 0 && m.searchMatchIdx < 0 {
+					m.searchMatchIdx = matchCount - 1
 				}
+			} else if m.searchActive {
+				// No query yet - type 'N'
+				m.searchQuery += "N"
 			}
 
 		case "enter":
