@@ -14,8 +14,19 @@ import (
 )
 
 // createMCPHandler creates an HTTP handler for the Model Context Protocol (MCP) endpoint.
-// MCP provides a standardized interface for AI agents to query logs, check process status,
-// and retrieve operational data. This enables integration with Claude, GPT, and other AI systems.
+// MCP provides a standardized interface for AI agents to interact with running-man.
+//
+// IMPORTANT: running-man is a process manager that:
+// 1. Manages processes (starts, stops, restarts, monitors them)
+// 2. Automatically captures ALL output (stdout/stderr) from managed processes
+// 3. Aggregates logs in a centralized buffer with parsing and filtering
+// 4. Provides real-time status and health monitoring
+//
+// Key differences from traditional approaches:
+// - No need to grep log files - all logs are already captured
+// - No need to start separate monitoring services - running-man does it
+// - Logs are parsed and structured (timestamps, levels, stacktraces)
+// - Process management is centralized through running-man
 //
 // The handler uses StreamableHTTPHandler which provides:
 // - Session management with Mcp-Session-Id header
@@ -58,18 +69,33 @@ func (s *Server) createMCPHandler() http.Handler {
 
 // SearchLogsArgs defines the parameters for the search_logs MCP tool
 type SearchLogsArgs struct {
-	Source   string `json:"source,omitempty" jsonschema:"Filter by source (supports glob patterns)"`
-	Since    string `json:"since,omitempty" jsonschema:"Time window (e.g. 5m, 1h, 30s)"`
-	Level    string `json:"level,omitempty" jsonschema:"Filter by log level (error/warn/info/debug)"`
-	Contains string `json:"contains,omitempty" jsonschema:"Search for text in log messages"`
-	Limit    int    `json:"limit,omitempty" jsonschema:"Maximum number of log entries to return"`
+	Source   string `json:"source,omitempty" jsonschema:"Filter by running-man process name. Supports glob patterns. Example: 'web-server' or 'app-*' to match all app processes"`
+	Since    string `json:"since,omitempty" jsonschema:"Search logs from this time window. Duration format: '5m' (5 min), '1h' (1 hour), '30s' (30 sec). Example: '2h' for last 2 hours"`
+	Level    string `json:"level,omitempty" jsonschema:"Filter by log level captured by running-man. Options: 'error', 'warn', 'info', 'debug'. Example: 'error' for only errors"`
+	Contains string `json:"contains,omitempty" jsonschema:"Search for text in log messages captured by running-man. Case-sensitive. Example: 'connection failed'"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"Maximum log entries to return from running-man's buffer. Default: 50, Max: 1000. Example: 100"`
 }
 
 // registerSearchLogsTool registers the search_logs MCP tool
 func (s *Server) registerSearchLogsTool(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "search_logs",
-		Description: "Search and filter log entries from the running-man buffer. Supports filtering by source, time window, log level, and text content.",
+		Name: "search_logs",
+		Description: `Search and filter log entries from running-man's centralized log buffer.
+
+IMPORTANT: running-man is a process manager that automatically captures and aggregates logs from ALL managed processes. You do NOT need to grep log files or start separate services - all logs are already being collected.
+
+Use this tool to search across logs from ALL running-man managed processes. You can filter by:
+- Source (process name managed by running-man) using glob patterns like "app-*" or "database"
+- Time window using duration strings like "5m" (5 minutes), "1h" (1 hour), "30s" (30 seconds)
+- Log level: "error", "warn", "info", "debug"
+- Text content within log messages
+
+Examples:
+- Find all errors in the last hour: {"since": "1h", "level": "error"}
+- Search for "connection failed" in database logs: {"source": "database", "contains": "connection failed"}
+- Get recent info logs from web services: {"source": "web-*", "level": "info", "limit": 20}
+
+Default limit is 50 entries, maximum is 1000. Results show most recent entries first.`,
 	}, s.searchLogsHandler)
 
 	s.log("Registered MCP tool: search_logs", false)
@@ -169,17 +195,38 @@ func (s *Server) searchLogsHandler(ctx context.Context, req *mcp.CallToolRequest
 
 // GetRecentErrorsArgs defines the parameters for the get_recent_errors MCP tool
 type GetRecentErrorsArgs struct {
-	Source  string `json:"source,omitempty" jsonschema:"Filter by source (supports glob patterns)"`
-	Since   string `json:"since,omitempty" jsonschema:"Time window (e.g. 5m, 1h, 30s)"`
-	Context int    `json:"context,omitempty" jsonschema:"Number of log lines before/after each error to include (default: 10)"`
-	Limit   int    `json:"limit,omitempty" jsonschema:"Maximum number of errors to return (default: 20, max: 100)"`
+	Source  string `json:"source,omitempty" jsonschema:"Filter by running-man process name. Supports glob patterns. Example: 'database' or 'app-*' for all app processes"`
+	Since   string `json:"since,omitempty" jsonschema:"Time window to search for errors captured by running-man. Duration format: '30m', '2h', '5s'. Example: '1h' for last hour"`
+	Context int    `json:"context,omitempty" jsonschema:"Number of log lines before/after each error to include from running-man's buffer. Default: 10, Max: 50. Example: 15"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"Maximum errors to return from running-man. Default: 20, Max: 100. Example: 50"`
 }
 
 // registerGetRecentErrorsTool registers the get_recent_errors MCP tool
 func (s *Server) registerGetRecentErrorsTool(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "get_recent_errors",
-		Description: "Get recent error log entries with optional surrounding context. Shows error details, stacktraces, and log lines before/after each error for better debugging.",
+		Name: "get_recent_errors",
+		Description: `Get recent error log entries from running-man's centralized log buffer with optional surrounding context.
+
+IMPORTANT: running-man automatically captures errors from ALL managed processes. You do NOT need to check individual log files - all errors are already aggregated here.
+
+This tool is specifically designed for troubleshooting errors across all running-man managed processes. It shows:
+- Error messages with timestamps and source (which running-man process)
+- Stacktraces when available (automatically parsed from logs)
+- Configurable number of log lines before/after each error (default: 10)
+- Error count and filtering options
+
+Parameters:
+- source: Filter by running-man process name (supports glob patterns)
+- since: Time window (e.g., "5m", "1h", "30s")
+- context: Number of log lines before/after each error to include (default: 10, max: 50)
+- limit: Maximum number of errors to return (default: 20, max: 100)
+
+Examples:
+- Get all errors from the last 30 minutes: {"since": "30m"}
+- See errors from web services with context: {"source": "web-*", "context": 15}
+- Check database errors only: {"source": "database", "limit": 10}
+
+Each error is shown with its context to help understand what led to the failure.`,
 	}, s.getRecentErrorsHandler)
 
 	s.log("Registered MCP tool: get_recent_errors", false)
@@ -325,14 +372,33 @@ func (s *Server) getRecentErrorsHandler(ctx context.Context, req *mcp.CallToolRe
 
 // GetProcessStatusArgs defines the parameters for the get_process_status MCP tool
 type GetProcessStatusArgs struct {
-	Name string `json:"name,omitempty" jsonschema:"Filter by process name (exact match)"`
+	Name string `json:"name,omitempty" jsonschema:"Filter by running-man process name (exact match). Example: 'database' for specific process"`
 }
 
 // registerGetProcessStatusTool registers the get_process_status MCP tool
 func (s *Server) registerGetProcessStatusTool(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "get_process_status",
-		Description: "Get status of managed processes. Shows process name, command, PID, status, uptime, and exit code. Can filter by specific process name.",
+		Name: "get_process_status",
+		Description: `Get status of processes managed by running-man (the process manager).
+
+IMPORTANT: running-man is actively managing these processes - starting them, monitoring them, capturing their logs, and restarting them if configured. These are NOT just processes running on the system.
+
+This tool provides a comprehensive view of what processes running-man is managing:
+- Process name and command line (as configured in running-man)
+- PID (process ID) if currently running
+- Status: "running", "stopped", or "failed" (as tracked by running-man)
+- Uptime (how long running-man has kept this process running)
+- Exit code (for stopped processes, -1 for running)
+
+Parameters:
+- name: Optional process name to filter (exact match only)
+
+Examples:
+- Get status of all running-man managed processes: {} (empty parameters)
+- Check specific running-man process: {"name": "database"}
+- Monitor web service managed by running-man: {"name": "web-server"}
+
+Use this tool to monitor process health within running-man's management system. If a process name is specified but not found, the tool will list all available processes managed by running-man.`,
 	}, s.getProcessStatusHandler)
 
 	s.log("Registered MCP tool: get_process_status", false)
@@ -425,15 +491,30 @@ func (s *Server) getProcessStatusHandler(ctx context.Context, req *mcp.CallToolR
 
 // GetStartupLogsArgs defines the parameters for the get_startup_logs MCP tool
 type GetStartupLogsArgs struct {
-	Source string `json:"source" jsonschema:"Process name to get startup logs for (required)"`
-	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum number of log entries to return (default: 50, max: 200)"`
+	Source string `json:"source" jsonschema:"Running-man process name (required). Example: 'database' for database process managed by running-man"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum log entries to return from running-man's startup capture. Default: 50, Max: 200. Example: 100"`
 }
 
 // registerGetStartupLogsTool registers the get_startup_logs MCP tool
 func (s *Server) registerGetStartupLogsTool(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "get_startup_logs",
-		Description: "Get log entries since a process started. Useful for debugging 'why won't X start' issues. Shows logs from process startup in chronological order.",
+		Name: "get_startup_logs",
+		Description: `Get log entries from when a running-man managed process started.
+
+IMPORTANT: This shows logs that running-man captured when it started the process. You don't need to check startup scripts or init logs - running-man automatically captures all output from process startup.
+
+This tool helps answer "why won't this running-man process start?" by showing logs captured by running-man from the moment it launched the process. It displays logs in chronological order from startup, with timestamps relative to when running-man started the process.
+
+Parameters:
+- source: REQUIRED - Process name managed by running-man
+- limit: Maximum number of log entries to return (default: 50, max: 200)
+
+Examples:
+- Debug why database won't start under running-man: {"source": "database"}
+- See startup logs for web service managed by running-man: {"source": "web-server", "limit": 100}
+- Check initial configuration errors: {"source": "config-loader"}
+
+The tool shows logs with timestamps relative to process start (+0.5s, +1.2s, etc.) to help identify timing issues. If the process hasn't started or doesn't exist in running-man, you'll get a clear error message with available process names.`,
 	}, s.getStartupLogsHandler)
 
 	s.log("Registered MCP tool: get_startup_logs", false)
