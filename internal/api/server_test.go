@@ -453,6 +453,21 @@ func TestCheckPatternComplexity(t *testing.T) {
 	}
 }
 
+func TestMCP_ToolRegistration(t *testing.T) {
+	server, _ := setupTestServer()
+
+	// This test validates that all MCP tools can be registered without panicking.
+	// It catches issues with malformed jsonschema tags or incorrect handler signatures.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("MCP tool registration panicked: %v", r)
+		}
+	}()
+
+	// Create MCP handler - this registers all tools
+	_ = server.createMCPHandler()
+}
+
 func TestPatternWarnings_Integration(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
 
