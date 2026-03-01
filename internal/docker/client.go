@@ -13,6 +13,10 @@ import (
 	"github.com/docker/docker/client"
 )
 
+const (
+	colimaSocketPath = "/Users/%s/.colima/default/docker.sock"
+)
+
 // Client wraps the Docker client for container management
 type Client struct {
 	cli *client.Client
@@ -22,9 +26,18 @@ type Client struct {
 func NewClient() (*Client, error) {
 	var opts []client.Opt
 
-	// Check for DOCKER_HOST environment variable (used by Colima, Docker Desktop, etc.)
+	// Check for DOCKER_HOST environment variable (used by Docker Desktop, etc.)
 	if dockerHost := os.Getenv("DOCKER_HOST"); dockerHost != "" {
 		opts = append(opts, client.WithHost(dockerHost))
+	} else if _, err := os.Stat("/var/run/docker.sock"); err != nil {
+		// Standard socket not found, try Colima socket
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			colimaSocket := fmt.Sprintf(colimaSocketPath, homeDir)
+			if _, err := os.Stat(colimaSocket); err == nil {
+				opts = append(opts, client.WithHost("unix://"+colimaSocket))
+			}
+		}
 	}
 
 	opts = append(opts, client.FromEnv, client.WithAPIVersionNegotiation())
