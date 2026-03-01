@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -19,7 +20,16 @@ type Client struct {
 
 // NewClient creates a new Docker client
 func NewClient() (*Client, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	var opts []client.Opt
+
+	// Check for DOCKER_HOST environment variable (used by Colima, Docker Desktop, etc.)
+	if dockerHost := os.Getenv("DOCKER_HOST"); dockerHost != "" {
+		opts = append(opts, client.WithHost(dockerHost))
+	}
+
+	opts = append(opts, client.FromEnv, client.WithAPIVersionNegotiation())
+
+	cli, err := client.NewClientWithOpts(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Docker client: %w", err)
 	}
