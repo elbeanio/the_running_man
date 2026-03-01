@@ -67,6 +67,12 @@ type ProcessWrapper struct {
 //	New("frontend", "cd frontend && npm start", []string{}, "/bin/bash", handler)
 //	Executes: /bin/bash -c "cd frontend && npm start"
 func New(name string, command string, args []string, shell string, handler LineHandler) *ProcessWrapper {
+	return NewWithOTEL(name, command, args, shell, handler, "", 0, false)
+}
+
+// NewWithOTEL creates a new ProcessWrapper with OpenTelemetry environment variable injection.
+// If otelEndpoint is not empty and otelEnabled is true, OTEL environment variables will be injected.
+func NewWithOTEL(name string, command string, args []string, shell string, handler LineHandler, otelEndpoint string, otelPort int, otelEnabled bool) *ProcessWrapper {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Default to /bin/sh if no shell specified
@@ -84,7 +90,47 @@ func New(name string, command string, args []string, shell string, handler LineH
 
 	// Execute command in shell to support cd, &&, pipes, etc.
 	cmd := exec.CommandContext(ctx, shell, "-c", fullCommand)
-	cmd.Env = os.Environ() // Inherit environment
+
+	// Start with inherited environment
+	env := os.Environ()
+
+	// Inject OTEL environment variables if enabled
+	if otelEnabled && otelEndpoint != "" {
+		// Build full endpoint URL with port if specified
+		endpoint := otelEndpoint
+		if otelPort > 0 {
+			endpoint = fmt.Sprintf("%s:%d", otelEndpoint, otelPort)
+		}
+
+		// Create OTEL env vars and inject
+		otelVars := map[string]string{
+			"OTEL_EXPORTER_OTLP_ENDPOINT": endpoint,
+			"OTEL_SERVICE_NAME":           name,
+			"OTEL_PROPAGATORS":            "tracecontext,baggage",
+			"OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+			"OTEL_RESOURCE_ATTRIBUTES":    "deployment.environment=local",
+			"OTEL_TRACES_SAMPLER":         "always_on",
+			"OTEL_METRICS_SAMPLER":        "always_on",
+			"OTEL_LOGS_SAMPLER":           "always_on",
+		}
+
+		// Remove any existing OTEL vars first
+		var filteredEnv []string
+		for _, e := range env {
+			if !strings.HasPrefix(e, "OTEL_") {
+				filteredEnv = append(filteredEnv, e)
+			}
+		}
+
+		// Add OTEL vars (prepend so they take precedence)
+		for key, value := range otelVars {
+			filteredEnv = append([]string{fmt.Sprintf("%s=%s", key, value)}, filteredEnv...)
+		}
+
+		cmd.Env = filteredEnv
+	} else {
+		cmd.Env = env
+	}
 
 	return &ProcessWrapper{
 		name:    name,

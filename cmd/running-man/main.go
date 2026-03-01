@@ -352,7 +352,15 @@ func runCommand(args []string) {
 	}
 
 	// Create process manager for all processes
-	manager := process.NewManager(processes, lineHandler)
+	var manager *process.Manager
+	if finalTracingEnabled {
+		// Use OTEL-enabled manager
+		otelEndpoint := "http://localhost"
+		manager = process.NewManagerWithOTEL(processes, lineHandler, otelEndpoint, finalTracingPort, true)
+	} else {
+		// Use regular manager
+		manager = process.NewManager(processes, lineHandler)
+	}
 
 	// Start API server in background
 	apiServer := api.NewServer(buffer, finalAPIPort, lineHandler, manager)

@@ -38,19 +38,32 @@ type Manager struct {
 	sigChan   chan os.Signal
 	ctx       context.Context
 	cancel    context.CancelFunc
+
+	// OTEL configuration
+	otelEndpoint string
+	otelPort     int
+	otelEnabled  bool
 }
 
 // NewManager creates a new Manager for multiple processes
 func NewManager(configs []ProcessConfig, handler LineHandler) *Manager {
+	return NewManagerWithOTEL(configs, handler, "", 0, false)
+}
+
+// NewManagerWithOTEL creates a new Manager with OpenTelemetry support
+func NewManagerWithOTEL(configs []ProcessConfig, handler LineHandler, otelEndpoint string, otelPort int, otelEnabled bool) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	m := &Manager{
-		processes: make(map[string]*ProcessWrapper),
-		configs:   make(map[string]ProcessConfig),
-		handler:   handler,
-		sigChan:   make(chan os.Signal, 1),
-		ctx:       ctx,
-		cancel:    cancel,
+		processes:    make(map[string]*ProcessWrapper),
+		configs:      make(map[string]ProcessConfig),
+		handler:      handler,
+		sigChan:      make(chan os.Signal, 1),
+		ctx:          ctx,
+		cancel:       cancel,
+		otelEndpoint: otelEndpoint,
+		otelPort:     otelPort,
+		otelEnabled:  otelEnabled,
 	}
 
 	// Store configs for later restart
@@ -68,7 +81,7 @@ func (m *Manager) Start() error {
 
 	// Start each process
 	for name, cfg := range m.configs {
-		wrapper := New(name, cfg.Command, cfg.Args, cfg.Shell, m.handler)
+		wrapper := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled)
 		if err := wrapper.Start(); err != nil {
 			// If any process fails to start, stop all started processes
 			m.stopAllLocked()
@@ -148,7 +161,7 @@ func (m *Manager) Wait() error {
 				m.handler(processName, fmt.Sprintf("Process crashed with exit code %d, restarting...", exitCode), time.Now(), true)
 
 				// Create new wrapper and restart
-				newWrapper := New(processName, cfg.Command, cfg.Args, cfg.Shell, m.handler)
+				newWrapper := NewWithOTEL(processName, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled)
 				if err := newWrapper.Start(); err != nil {
 					m.handler(processName, fmt.Sprintf("Failed to restart: %v", err), time.Now(), true)
 					mu.Lock()
@@ -222,7 +235,7 @@ func (m *Manager) Restart(processName string) error {
 	}
 
 	// Start new instance
-	wrapper := New(cfg.Name, cfg.Command, cfg.Args, cfg.Shell, m.handler)
+	wrapper := NewWithOTEL(cfg.Name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled)
 	if err := wrapper.Start(); err != nil {
 		return fmt.Errorf("failed to restart process %s: %w", processName, err)
 	}
