@@ -13,9 +13,43 @@ import (
 	"github.com/docker/docker/client"
 )
 
-const (
-	colimaSocketPath = "/Users/%s/.colima/default/docker.sock"
-)
+// findDockerSocket searches for an available Docker socket
+func findDockerSocket() string {
+	// Check DOCKER_HOST environment variable first (most explicit)
+	if dockerHost := os.Getenv("DOCKER_HOST"); dockerHost != "" {
+		return dockerHost
+	}
+
+	// Get user info for path expansion
+	homeDir, _ := os.UserHomeDir()
+	uid := os.Getuid()
+
+	// Common socket paths to try
+	socketPaths := []string{
+		"/var/run/docker.sock", // Standard Linux/macOS
+	}
+
+	// Add user-specific paths if we have home directory
+	if homeDir != "" {
+		socketPaths = append(socketPaths, []string{
+			homeDir + "/.colima/default/docker.sock",                           // Colima
+			homeDir + "/.rd/docker.sock",                                       // Rancher Desktop
+			homeDir + "/Library/Containers/com.docker.docker/Data/docker.sock", // Docker Desktop macOS
+		}...)
+	}
+
+	// Add podman socket (user-specific by UID)
+	socketPaths = append(socketPaths, fmt.Sprintf("/run/user/%d/docker.sock", uid))
+
+	// Try each path
+	for _, path := range socketPaths {
+		if _, err := os.Stat(path); err == nil {
+			return "unix://" + path
+		}
+	}
+
+	return ""
+}
 
 // Client wraps the Docker client for container management
 type Client struct {
@@ -26,18 +60,9 @@ type Client struct {
 func NewClient() (*Client, error) {
 	var opts []client.Opt
 
-	// Check for DOCKER_HOST environment variable (used by Docker Desktop, etc.)
-	if dockerHost := os.Getenv("DOCKER_HOST"); dockerHost != "" {
-		opts = append(opts, client.WithHost(dockerHost))
-	} else if _, err := os.Stat("/var/run/docker.sock"); err != nil {
-		// Standard socket not found, try Colima socket
-		homeDir, err := os.UserHomeDir()
-		if err == nil {
-			colimaSocket := fmt.Sprintf(colimaSocketPath, homeDir)
-			if _, err := os.Stat(colimaSocket); err == nil {
-				opts = append(opts, client.WithHost("unix://"+colimaSocket))
-			}
-		}
+	// Try to find an available Docker socket
+	if socket := findDockerSocket(); socket != "" {
+		opts = append(opts, client.WithHost(socket))
 	}
 
 	opts = append(opts, client.FromEnv, client.WithAPIVersionNegotiation())
