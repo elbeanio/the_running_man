@@ -42,12 +42,15 @@ func (s *Server) createMCPHandler() http.Handler {
 		Version: "0.1.0",
 	}, nil)
 
-	// Register the 4 MCP tools
-	// TODO: Implement these in separate tasks
+	// Register MCP tools
 	s.registerSearchLogsTool(server)
 	s.registerGetRecentErrorsTool(server)
 	s.registerGetProcessStatusTool(server)
 	s.registerGetStartupLogsTool(server)
+	s.registerRestartProcessTool(server)
+	s.registerStopAllProcessesTool(server)
+	s.registerGetProcessDetailTool(server)
+	s.registerGetHealthStatusTool(server)
 
 	// Log that MCP endpoint is being initialized
 	s.log("Initializing MCP endpoint with streamable HTTP handler", false)
@@ -628,6 +631,582 @@ func (s *Server) getStartupLogsHandler(ctx context.Context, req *mcp.CallToolReq
 			&mcp.TextContent{Text: result.String()},
 		},
 	}, nil, nil
+}
+
+// RestartProcessArgs defines the parameters for the restart_process MCP tool
+type RestartProcessArgs struct {
+	Name string `json:"name" jsonschema:"Running-man process name to restart (required). Example: 'database'"`
+}
+
+// registerRestartProcessTool registers the restart_process MCP tool
+func (s *Server) registerRestartProcessTool(server *mcp.Server) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "restart_process",
+		Description: `Restart a specific process managed by running-man.
+
+IMPORTANT: This tells running-man to stop and restart the specified process. The process will be gracefully stopped and a new instance started with the same configuration.
+
+Parameters:
+- name: REQUIRED - Process name managed by running-man
+
+Examples:
+- Restart database process: {"name": "database"}
+- Restart web server: {"name": "web-server"}
+
+The tool returns confirmation with process details before and after restart. If the process doesn't exist or running-man's manager is unavailable, you'll get a clear error message.`,
+	}, s.restartProcessHandler)
+
+	s.log("Registered MCP tool: restart_process", false)
+}
+
+// restartProcessHandler implements the restart_process MCP tool
+func (s *Server) restartProcessHandler(ctx context.Context, req *mcp.CallToolRequest, args *RestartProcessArgs) (*mcp.CallToolResult, any, error) {
+	// Validate required name parameter
+	if args.Name == "" {
+		return nil, nil, fmt.Errorf("'name' parameter is required (process name)")
+	}
+
+	// Check if process manager is available
+	if s.manager == nil {
+		return nil, nil, fmt.Errorf("process manager not available")
+	}
+
+	// Get process info before restart
+	processes := s.manager.ListProcesses()
+	var targetProcess *process.ProcessInfo
+	for i, p := range processes {
+		if p.Name == args.Name {
+			targetProcess = &processes[i]
+			break
+		}
+	}
+
+	if targetProcess == nil {
+		// List available processes for helpful error message
+		var availableNames []string
+		for _, p := range processes {
+			availableNames = append(availableNames, p.Name)
+		}
+		if len(availableNames) == 0 {
+			return nil, nil, fmt.Errorf("process '%s' not found (no processes are managed by running-man)", args.Name)
+		}
+		return nil, nil, fmt.Errorf("process '%s' not found. Available processes: %s", args.Name, strings.Join(availableNames, ", "))
+	}
+
+	// Format process info before restart
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("Restarting process '%s'...\n\n", args.Name))
+	result.WriteString("Before restart:\n")
+	result.WriteString(fmt.Sprintf("  Name:      %s\n", targetProcess.Name))
+	result.WriteString(fmt.Sprintf("  Command:   %s\n", targetProcess.Command))
+	result.WriteString(fmt.Sprintf("  Status:    %s\n", targetProcess.Status))
+
+	if targetProcess.PID > 0 {
+		result.WriteString(fmt.Sprintf("  PID:       %d\n", targetProcess.PID))
+	}
+
+	if !targetProcess.StartTime.IsZero() {
+		uptime := time.Since(targetProcess.StartTime).Round(time.Second)
+		result.WriteString(fmt.Sprintf("  Uptime:    %s\n", uptime))
+	}
+
+	// Restart the process
+	err := s.manager.Restart(args.Name)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to restart process '%s': %v", args.Name, err)
+	}
+
+	// Get updated process info
+	updatedProcesses := s.manager.ListProcesses()
+	var updatedProcess *process.ProcessInfo
+	for i, p := range updatedProcesses {
+		if p.Name == args.Name {
+			updatedProcess = &updatedProcesses[i]
+			break
+		}
+	}
+
+	result.WriteString("\nRestart completed successfully!\n\n")
+	result.WriteString("After restart:\n")
+
+	if updatedProcess != nil {
+		result.WriteString(fmt.Sprintf("  Name:      %s\n", updatedProcess.Name))
+		result.WriteString(fmt.Sprintf("  Command:   %s\n", updatedProcess.Command))
+		result.WriteString(fmt.Sprintf("  Status:    %s\n", updatedProcess.Status))
+
+		if updatedProcess.PID > 0 {
+			result.WriteString(fmt.Sprintf("  PID:       %d\n", updatedProcess.PID))
+		}
+
+		if !updatedProcess.StartTime.IsZero() {
+			result.WriteString(fmt.Sprintf("  Start Time: %s\n", updatedProcess.StartTime.Format("15:04:05.000")))
+		}
+	} else {
+		result.WriteString("  (Process info not available after restart)\n")
+	}
+
+	result.WriteString("\nNote: Check process logs with 'get_startup_logs' or 'search_logs' to see restart output.")
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: result.String()},
+		},
+	}, nil, nil
+}
+
+// StopAllProcessesArgs defines the parameters for the stop_all_processes MCP tool
+type StopAllProcessesArgs struct {
+	Confirm bool `json:"confirm,omitempty" jsonschema:"Safety confirmation. Must be true to proceed. Example: true"`
+}
+
+// registerStopAllProcessesTool registers the stop_all_processes MCP tool
+func (s *Server) registerStopAllProcessesTool(server *mcp.Server) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "stop_all_processes",
+		Description: `Stop ALL processes managed by running-man.
+
+IMPORTANT: This is a destructive operation that stops every process running-man is managing. Use with caution!
+
+Parameters:
+- confirm: REQUIRED safety confirmation. Must be set to true to proceed.
+
+Examples:
+- Stop all processes: {"confirm": true}
+
+The tool returns a list of all processes that were stopped. If no processes are managed or the manager is unavailable, you'll get an appropriate message.`,
+	}, s.stopAllProcessesHandler)
+
+	s.log("Registered MCP tool: stop_all_processes", false)
+}
+
+// stopAllProcessesHandler implements the stop_all_processes MCP tool
+func (s *Server) stopAllProcessesHandler(ctx context.Context, req *mcp.CallToolRequest, args *StopAllProcessesArgs) (*mcp.CallToolResult, any, error) {
+	// Validate safety confirmation
+	if !args.Confirm {
+		return nil, nil, fmt.Errorf("safety confirmation required. Set 'confirm': true to stop all processes")
+	}
+
+	// Check if process manager is available
+	if s.manager == nil {
+		return nil, nil, fmt.Errorf("process manager not available")
+	}
+
+	// Get process info before stopping
+	processes := s.manager.ListProcesses()
+	totalProcesses := len(processes)
+
+	if totalProcesses == 0 {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: "No processes are currently managed by running-man. Nothing to stop."},
+			},
+		}, nil, nil
+	}
+
+	// Format process list before stopping
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("Stopping %d process(es) managed by running-man:\n\n", totalProcesses))
+
+	for i, p := range processes {
+		result.WriteString(fmt.Sprintf("%d. %s", i+1, p.Name))
+		if p.Status == "running" && p.PID > 0 {
+			result.WriteString(fmt.Sprintf(" (PID: %d)", p.PID))
+		}
+		result.WriteString(fmt.Sprintf(" - %s\n", p.Status))
+
+		if !p.StartTime.IsZero() {
+			uptime := time.Since(p.StartTime).Round(time.Second)
+			result.WriteString(fmt.Sprintf("   Uptime: %s\n", uptime))
+		}
+		result.WriteString("\n")
+	}
+
+	// Stop all processes
+	err := s.manager.Stop()
+	if err != nil {
+		// Even if some processes failed to stop, report what happened
+		result.WriteString(fmt.Sprintf("\nWarning: Some processes may not have stopped cleanly: %v\n", err))
+	} else {
+		result.WriteString("\nAll processes stopped successfully.\n")
+	}
+
+	result.WriteString("\nNote: Processes can be restarted using the 'restart_process' tool if needed.")
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: result.String()},
+		},
+	}, nil, nil
+}
+
+// GetProcessDetailArgs defines the parameters for the get_process_detail MCP tool
+type GetProcessDetailArgs struct {
+	Name string `json:"name" jsonschema:"Running-man process name to get detailed info for (required). Example: 'database'"`
+}
+
+// registerGetProcessDetailTool registers the get_process_detail MCP tool
+func (s *Server) registerGetProcessDetailTool(server *mcp.Server) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "get_process_detail",
+		Description: `Get detailed information about a specific process managed by running-man.
+
+This tool provides comprehensive details about a single process, including:
+- Basic info (name, command, PID, status, exit code)
+- Timing information (start time, uptime)
+- Recent log statistics from running-man's buffer
+- Configuration context
+
+Parameters:
+- name: REQUIRED - Process name managed by running-man
+
+Examples:
+- Get detailed info for database: {"name": "database"}
+- Debug web server issues: {"name": "web-server"}
+
+Use this when you need more detail than 'get_process_status' provides. If the process doesn't exist, you'll get a list of available processes.`,
+	}, s.getProcessDetailHandler)
+
+	s.log("Registered MCP tool: get_process_detail", false)
+}
+
+// getProcessDetailHandler implements the get_process_detail MCP tool
+func (s *Server) getProcessDetailHandler(ctx context.Context, req *mcp.CallToolRequest, args *GetProcessDetailArgs) (*mcp.CallToolResult, any, error) {
+	// Validate required name parameter
+	if args.Name == "" {
+		return nil, nil, fmt.Errorf("'name' parameter is required (process name)")
+	}
+
+	// Check if process manager is available
+	if s.manager == nil {
+		return nil, nil, fmt.Errorf("process manager not available")
+	}
+
+	// Get process information
+	processes := s.manager.ListProcesses()
+	var targetProcess *process.ProcessInfo
+	for i, p := range processes {
+		if p.Name == args.Name {
+			targetProcess = &processes[i]
+			break
+		}
+	}
+
+	if targetProcess == nil {
+		// List available processes for helpful error message
+		var availableNames []string
+		for _, p := range processes {
+			availableNames = append(availableNames, p.Name)
+		}
+		if len(availableNames) == 0 {
+			return nil, nil, fmt.Errorf("process '%s' not found (no processes are managed by running-man)", args.Name)
+		}
+		return nil, nil, fmt.Errorf("process '%s' not found. Available processes: %s", args.Name, strings.Join(availableNames, ", "))
+	}
+
+	// Get log statistics for this process
+	logFilters := storage.QueryFilters{
+		Sources: []string{args.Name},
+		Since:   time.Hour, // Last hour of logs
+	}
+	recentLogs := s.buffer.Query(logFilters)
+
+	// Count log levels
+	errorCount := 0
+	warnCount := 0
+	infoCount := 0
+	debugCount := 0
+	otherCount := 0
+
+	for _, log := range recentLogs {
+		switch log.Level {
+		case parser.LevelError:
+			errorCount++
+		case parser.LevelWarn:
+			warnCount++
+		case parser.LevelInfo:
+			infoCount++
+		case parser.LevelDebug:
+			debugCount++
+		default:
+			otherCount++
+		}
+	}
+
+	// Format detailed process information
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("Detailed information for process '%s':\n\n", targetProcess.Name))
+
+	result.WriteString("Basic Information:\n")
+	result.WriteString(fmt.Sprintf("  Name:       %s\n", targetProcess.Name))
+	result.WriteString(fmt.Sprintf("  Command:    %s\n", targetProcess.Command))
+	result.WriteString(fmt.Sprintf("  Status:     %s\n", targetProcess.Status))
+
+	if targetProcess.PID > 0 {
+		result.WriteString(fmt.Sprintf("  PID:        %d\n", targetProcess.PID))
+	} else {
+		result.WriteString("  PID:        Not running\n")
+	}
+
+	if targetProcess.ExitCode >= 0 {
+		result.WriteString(fmt.Sprintf("  Exit Code:  %d\n", targetProcess.ExitCode))
+	} else if targetProcess.ExitCode == -1 {
+		result.WriteString("  Exit Code:  Running (-1)\n")
+	} else {
+		result.WriteString("  Exit Code:  N/A\n")
+	}
+
+	result.WriteString("\nTiming Information:\n")
+	if !targetProcess.StartTime.IsZero() {
+		result.WriteString(fmt.Sprintf("  Start Time: %s\n", targetProcess.StartTime.Format("2006-01-02 15:04:05.000")))
+		uptime := time.Since(targetProcess.StartTime).Round(time.Second)
+		result.WriteString(fmt.Sprintf("  Uptime:     %s\n", uptime))
+
+		// Calculate human-readable uptime
+		hours := int(uptime.Hours())
+		minutes := int(uptime.Minutes()) % 60
+		seconds := int(uptime.Seconds()) % 60
+		if hours > 0 {
+			result.WriteString(fmt.Sprintf("             (%d hours, %d minutes, %d seconds)\n", hours, minutes, seconds))
+		} else if minutes > 0 {
+			result.WriteString(fmt.Sprintf("             (%d minutes, %d seconds)\n", minutes, seconds))
+		}
+	} else {
+		result.WriteString("  Start Time: Not started\n")
+		result.WriteString("  Uptime:     N/A\n")
+	}
+
+	result.WriteString("\nRecent Log Statistics (last hour):\n")
+	result.WriteString(fmt.Sprintf("  Total logs: %d\n", len(recentLogs)))
+	if len(recentLogs) > 0 {
+		result.WriteString(fmt.Sprintf("  Errors:     %d\n", errorCount))
+		result.WriteString(fmt.Sprintf("  Warnings:   %d\n", warnCount))
+		result.WriteString(fmt.Sprintf("  Info:       %d\n", infoCount))
+		result.WriteString(fmt.Sprintf("  Debug:      %d\n", debugCount))
+		if otherCount > 0 {
+			result.WriteString(fmt.Sprintf("  Other:      %d\n", otherCount))
+		}
+
+		// Show most recent log timestamp
+		latestLog := recentLogs[0] // buffer.Query returns newest first
+		timeSinceLatest := time.Since(latestLog.Timestamp).Round(time.Second)
+		result.WriteString(fmt.Sprintf("  Latest log: %s ago\n", timeSinceLatest))
+	}
+
+	result.WriteString("\nRelated Tools:\n")
+	result.WriteString("  - Use 'get_startup_logs' to see logs from when this process started\n")
+	result.WriteString("  - Use 'search_logs' to search this process's logs\n")
+	if targetProcess.Status == "running" {
+		result.WriteString("  - Use 'restart_process' to restart this process\n")
+	}
+	if errorCount > 0 {
+		result.WriteString("  - Use 'get_recent_errors' to see error details\n")
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: result.String()},
+		},
+	}, nil, nil
+}
+
+// GetHealthStatusArgs defines the parameters for the get_health_status MCP tool
+type GetHealthStatusArgs struct {
+	Detailed bool `json:"detailed,omitempty" jsonschema:"Include detailed system information. Example: true"`
+}
+
+// registerGetHealthStatusTool registers the get_health_status MCP tool
+func (s *Server) registerGetHealthStatusTool(server *mcp.Server) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "get_health_status",
+		Description: `Get health status of the running-man system.
+
+This tool provides a comprehensive health report including:
+- Running-man server uptime and status
+- Log buffer statistics (size, age, entries)
+- Process manager status and process counts
+- System resource usage (if available)
+
+Parameters:
+- detailed: Optional flag for more detailed system information
+
+Examples:
+- Basic health check: {} (empty parameters)
+- Detailed system info: {"detailed": true}
+
+Use this tool to monitor the overall health of running-man and its managed processes.`,
+	}, s.getHealthStatusHandler)
+
+	s.log("Registered MCP tool: get_health_status", false)
+}
+
+// getHealthStatusHandler implements the get_health_status MCP tool
+func (s *Server) getHealthStatusHandler(ctx context.Context, req *mcp.CallToolRequest, args *GetHealthStatusArgs) (*mcp.CallToolResult, any, error) {
+	// Get buffer statistics
+	bufferStats := s.buffer.Stats()
+	sourceInfos := s.buffer.GetSources()
+
+	// Extract source names
+	var sourceNames []string
+	for _, sourceInfo := range sourceInfos {
+		sourceNames = append(sourceNames, sourceInfo.Name)
+	}
+
+	// Get process information if manager is available
+	var processCount int
+	var runningCount int
+	var stoppedCount int
+	var processManagerStatus string
+
+	if s.manager != nil {
+		processes := s.manager.ListProcesses()
+		processCount = len(processes)
+		for _, p := range processes {
+			if p.Status == "running" {
+				runningCount++
+			} else {
+				stoppedCount++
+			}
+		}
+		processManagerStatus = "available"
+	} else {
+		processManagerStatus = "not available"
+	}
+
+	// Calculate server uptime
+	serverUptime := time.Since(s.startTime)
+
+	// Format health report
+	var result strings.Builder
+	result.WriteString("Running-man Health Status Report\n")
+	result.WriteString(strings.Repeat("=", 40) + "\n\n")
+
+	result.WriteString("Server Status:\n")
+	result.WriteString(fmt.Sprintf("  Status:      Healthy\n"))
+	result.WriteString(fmt.Sprintf("  Uptime:      %s\n", serverUptime.Round(time.Second)))
+
+	// Human-readable uptime
+	hours := int(serverUptime.Hours())
+	minutes := int(serverUptime.Minutes()) % 60
+	seconds := int(serverUptime.Seconds()) % 60
+	if hours > 0 {
+		result.WriteString(fmt.Sprintf("              (%d hours, %d minutes, %d seconds)\n", hours, minutes, seconds))
+	} else if minutes > 0 {
+		result.WriteString(fmt.Sprintf("              (%d minutes, %d seconds)\n", minutes, seconds))
+	}
+
+	result.WriteString("\nLog Buffer:\n")
+	result.WriteString(fmt.Sprintf("  Total Entries: %d / %d\n", bufferStats.TotalEntries, bufferStats.MaxEntries))
+
+	// Calculate buffer usage percentage
+	bufferUsagePct := 0.0
+	if bufferStats.MaxEntries > 0 {
+		bufferUsagePct = float64(bufferStats.TotalEntries) / float64(bufferStats.MaxEntries) * 100
+	}
+	result.WriteString(fmt.Sprintf("  Usage:         %.1f%%\n", bufferUsagePct))
+
+	result.WriteString(fmt.Sprintf("  Total Size:    %s / %s\n",
+		formatBytes(bufferStats.TotalBytes), formatBytes(bufferStats.MaxBytes)))
+
+	if !bufferStats.OldestEntry.IsZero() {
+		oldestAge := time.Since(bufferStats.OldestEntry).Round(time.Second)
+		result.WriteString(fmt.Sprintf("  Oldest Entry:  %s (%s ago)\n",
+			bufferStats.OldestEntry.Format("15:04:05"), oldestAge))
+	}
+
+	if !bufferStats.NewestEntry.IsZero() {
+		newestAge := time.Since(bufferStats.NewestEntry).Round(time.Second)
+		result.WriteString(fmt.Sprintf("  Newest Entry:  %s (%s ago)\n",
+			bufferStats.NewestEntry.Format("15:04:05"), newestAge))
+	}
+
+	result.WriteString(fmt.Sprintf("  Max Age:       %s\n", bufferStats.MaxAge.Round(time.Second)))
+	result.WriteString(fmt.Sprintf("  Sources:       %d unique\n", len(sourceNames)))
+
+	result.WriteString("\nProcess Management:\n")
+	result.WriteString(fmt.Sprintf("  Manager:       %s\n", processManagerStatus))
+	if s.manager != nil {
+		result.WriteString(fmt.Sprintf("  Total Processes: %d\n", processCount))
+		result.WriteString(fmt.Sprintf("    Running:      %d\n", runningCount))
+		result.WriteString(fmt.Sprintf("    Stopped:      %d\n", stoppedCount))
+
+		if len(sourceNames) > 0 {
+			result.WriteString("\n  Managed Sources:\n")
+			// Show first 5 sources
+			for i, source := range sourceNames {
+				if i < 5 {
+					result.WriteString(fmt.Sprintf("    - %s\n", source))
+				} else {
+					result.WriteString(fmt.Sprintf("    ... and %d more\n", len(sourceNames)-5))
+					break
+				}
+			}
+		}
+	}
+
+	// Add detailed system info if requested
+	if args.Detailed {
+		result.WriteString("\n" + strings.Repeat("-", 40) + "\n")
+		result.WriteString("Detailed System Information:\n")
+
+		// Buffer age distribution (simplified)
+		result.WriteString("\n  Buffer Age Distribution:\n")
+		result.WriteString(fmt.Sprintf("    Max Retention: %s\n", bufferStats.MaxAge.Round(time.Second)))
+
+		// Process status breakdown
+		if s.manager != nil && processCount > 0 {
+			result.WriteString("\n  Process Status Breakdown:\n")
+			processes := s.manager.ListProcesses()
+			for _, p := range processes {
+				statusIcon := "✓"
+				if p.Status != "running" {
+					statusIcon = "✗"
+				}
+				result.WriteString(fmt.Sprintf("    %s %s: %s", statusIcon, p.Name, p.Status))
+				if p.Status == "running" && p.PID > 0 {
+					result.WriteString(fmt.Sprintf(" (PID: %d)", p.PID))
+				}
+				result.WriteString("\n")
+			}
+		}
+	}
+
+	result.WriteString("\n" + strings.Repeat("=", 40) + "\n")
+	result.WriteString("Recommendations:\n")
+
+	if bufferUsagePct > 80 {
+		result.WriteString("  ⚠  Log buffer is nearly full (" + fmt.Sprintf("%.1f%%", bufferUsagePct) + ")\n")
+		result.WriteString("     Consider increasing buffer size or reviewing log volume\n")
+	}
+
+	if runningCount == 0 && processCount > 0 {
+		result.WriteString("  ⚠  No processes are currently running\n")
+		result.WriteString("     Check process status with 'get_process_status'\n")
+	}
+
+	if len(sourceNames) == 0 {
+		result.WriteString("  ℹ  No log sources detected\n")
+		result.WriteString("     Processes may not be configured or logs not yet captured\n")
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: result.String()},
+		},
+	}, nil, nil
+}
+
+// formatBytes converts bytes to human-readable format
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
 // max returns the larger of two integers
