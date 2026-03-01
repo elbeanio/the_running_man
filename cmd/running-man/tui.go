@@ -106,75 +106,17 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			// Just quit - main.go will handle cleanup
+		// Global quit works in any mode
+		if msg.String() == "q" || msg.String() == "ctrl+c" {
 			return m, tea.Quit
+		}
 
-		case "/", "ctrl+f":
-			// Enter search mode
-			m.mode = ModeSearch
-			m.searchQuery = ""
-			m.searchMatchIdx = 0
-
-		case "escape":
-			// Exit search mode and clear query
-			m.mode = ModeNormal
-			m.searchQuery = ""
-			m.searchMatchIdx = 0
-
-		case "left", "right", "up", "down":
-			// Exit search mode to allow navigation between views
-			if m.mode == ModeSearch {
-				m.mode = ModeNormal
-			}
-
-		case "n":
-			// Next match - only if there's already a search query
-			if m.mode == ModeSearch && m.searchQuery != "" {
-				m.searchMatchIdx++
-				matchCount := countMatches(m.logs, m.searchQuery)
-				if matchCount > 0 {
-					m.searchMatchIdx = m.searchMatchIdx % matchCount
-				}
-			} else if m.mode == ModeSearch {
-				// No query yet - type 'n'
-				m.searchQuery += "n"
-			}
-
-		case "N":
-			// Previous match - only if there's already a search query
-			if m.mode == ModeSearch && m.searchQuery != "" {
-				m.searchMatchIdx--
-				matchCount := countMatches(m.logs, m.searchQuery)
-				if matchCount > 0 && m.searchMatchIdx < 0 {
-					m.searchMatchIdx = matchCount - 1
-				}
-			} else if m.mode == ModeSearch {
-				// No query yet - type 'N'
-				m.searchQuery += "N"
-			}
-
-		case "enter":
-			// Exit search mode on enter (keep query for highlighting)
-			if m.mode == ModeSearch {
-				m.mode = ModeNormal
-			}
-
-		case "backspace":
-			// Handle backspace in search mode
-			if m.mode == ModeSearch && len(m.searchQuery) > 0 {
-				m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
-				m.searchMatchIdx = 0
-			}
-
-		default:
-			// Handle regular character input in search mode
-			// Only add single printable character keys (not special keys like "n", "left", etc.)
-			if m.mode == ModeSearch && len(msg.String()) == 1 {
-				m.searchQuery += msg.String()
-				m.searchMatchIdx = 0
-			}
+		// Route to mode-specific handler
+		switch m.mode {
+		case ModeSearch:
+			return m.updateSearchMode(msg)
+		case ModeNormal:
+			return m.updateNormalMode(msg)
 		}
 
 		// Handle navigation keys only when not in search input mode
@@ -703,6 +645,133 @@ var (
 			Foreground(lipgloss.Color("203")).
 			Bold(true)
 )
+
+// updateSearchMode handles key events in search mode
+func (m model) updateSearchMode(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	key := keyMsg.String()
+
+	switch key {
+	case "escape":
+		// Exit search mode and clear query
+		m.mode = ModeNormal
+		m.searchQuery = ""
+		m.searchMatchIdx = 0
+
+	case "enter":
+		// Exit search mode but keep query for highlighting
+		m.mode = ModeNormal
+
+	case "backspace":
+		// Handle backspace in search mode
+		if len(m.searchQuery) > 0 {
+			m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+			m.searchMatchIdx = 0
+		}
+
+	case "n":
+		// Type 'n' if query is empty, otherwise next match
+		if m.searchQuery == "" {
+			m.searchQuery += "n"
+		} else {
+			m.searchMatchIdx++
+			matchCount := countMatches(m.logs, m.searchQuery)
+			if matchCount > 0 {
+				m.searchMatchIdx = m.searchMatchIdx % matchCount
+			}
+		}
+
+	case "N":
+		// Type 'N' if query is empty, otherwise previous match
+		if m.searchQuery == "" {
+			m.searchQuery += "N"
+		} else {
+			m.searchMatchIdx--
+			matchCount := countMatches(m.logs, m.searchQuery)
+			if matchCount > 0 && m.searchMatchIdx < 0 {
+				m.searchMatchIdx = matchCount - 1
+			}
+		}
+
+	default:
+		// Add single printable characters to search query
+		if len(key) == 1 {
+			m.searchQuery += key
+			m.searchMatchIdx = 0
+		}
+	}
+
+	return m, nil
+}
+
+// updateNormalMode handles key events in normal mode
+func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	key := keyMsg.String()
+
+	switch key {
+	case "/", "ctrl+f":
+		// Enter search mode
+		m.mode = ModeSearch
+		m.searchQuery = ""
+		m.searchMatchIdx = 0
+
+	case "tab", "right":
+		if len(m.sources) > 0 {
+			m.selectedSource = (m.selectedSource + 1) % len(m.sources)
+			return m, fetchLogs(m.apiURL, m.sources[m.selectedSource])
+		}
+
+	case "shift+tab", "left":
+		if len(m.sources) > 0 {
+			m.selectedSource--
+			if m.selectedSource < 0 {
+				m.selectedSource = len(m.sources) - 1
+			}
+			return m, fetchLogs(m.apiURL, m.sources[m.selectedSource])
+		}
+
+	case "up":
+		m.autoScroll = false
+		m.scrollOffset++
+
+	case "down":
+		m.scrollOffset--
+		if m.scrollOffset <= 0 {
+			m.scrollOffset = 0
+			m.autoScroll = true
+		}
+
+	case "pgup":
+		m.autoScroll = false
+		availableHeight := m.height - uiHeaderFooterHeight
+		m.scrollOffset += availableHeight
+
+	case "pgdown":
+		availableHeight := m.height - uiHeaderFooterHeight
+		m.scrollOffset -= availableHeight
+		if m.scrollOffset <= 0 {
+			m.scrollOffset = 0
+			m.autoScroll = true
+		}
+
+	case "home":
+		m.autoScroll = false
+		m.scrollOffset = math.MaxInt
+
+	case "end":
+		m.scrollOffset = 0
+		m.autoScroll = true
+	}
+
+	return m, nil
+}
 
 func tuiCommand(args []string) {
 	tuiCommandWithManager(args, nil)
