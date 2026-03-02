@@ -15,7 +15,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/iangeorge/the_running_man/internal/process"
+	"github.com/elbeanio/the_running_man/internal/process"
 )
 
 const (

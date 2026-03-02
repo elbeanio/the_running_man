@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/iangeorge/the_running_man/internal/parser"
+	"github.com/elbeanio/the_running_man/internal/parser"
 )
 
 // RingBuffer stores log entries with size and time limits

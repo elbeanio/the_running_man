@@ -14,7 +14,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/iangeorge/the_running_man/internal/process"
+	"github.com/elbeanio/the_running_man/internal/process"
 )
 
 const (

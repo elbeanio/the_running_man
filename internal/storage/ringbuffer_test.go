@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iangeorge/the_running_man/internal/parser"
+	"github.com/elbeanio/the_running_man/internal/parser"
 )
 
 func TestRingBuffer_BasicAppendAndQuery(t *testing.T) {

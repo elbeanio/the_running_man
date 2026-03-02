@@ -14,7 +14,7 @@ info:
     name: MIT
   contact:
     name: Running Man
-    url: https://github.com/iangeorge/the_running_man
+    url: https://github.com/elbeanio/the_running_man
 
 servers:
   - url: http://localhost:9000

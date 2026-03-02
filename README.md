@@ -7,7 +7,7 @@ A dev observability tool that captures logs, traces, and errors from local devel
 ### Installation
 
 ```bash
-go install github.com/iangeorge/the_running_man/cmd/running-man@latest
+go install github.com/elbeanio/the_running_man/cmd/running-man@latest
 ```
 
 ### Usage

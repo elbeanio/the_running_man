@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iangeorge/the_running_man/internal/parser"
-	"github.com/iangeorge/the_running_man/internal/process"
-	"github.com/iangeorge/the_running_man/internal/storage"
+	"github.com/elbeanio/the_running_man/internal/parser"
+	"github.com/elbeanio/the_running_man/internal/process"
+	"github.com/elbeanio/the_running_man/internal/storage"
 )
 
 func setupTestServer() (*Server, *storage.RingBuffer) {

@@ -325,7 +325,7 @@ Which phase should this be in? (2.5, 3, 4, 5, or backlog)
 
 Want to help test? Here's how:
 
-1. **Install:** `go install github.com/iangeorge/the_running_man/cmd/running-man@latest`
+1. **Install:** `go install github.com/elbeanio/the_running_man/cmd/running-man@latest`
 2. **Use:** Try it in your daily workflow for a week
 3. **Report:** File issues on GitHub with good reproduction steps
 4. **Discuss:** Join design discussions for upcoming phases
