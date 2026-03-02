@@ -83,7 +83,7 @@ func TestRenderLogs_MultilineMessages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := renderLogs(tt.logs, tt.height, tt.width, 0, "", -1)
+			result := renderLogs(tt.logs, tt.height, tt.width, 0, "", -1, true)
 
 			// Count lines in the rendered output
 			// lipgloss uses \n to join lines
@@ -107,7 +107,7 @@ func TestRenderLogs_ContinuationIndentation(t *testing.T) {
 		},
 	}
 
-	result := renderLogs(logs, 10, 80, 0, "", -1)
+	result := renderLogs(logs, 10, 80, 0, "", -1, true)
 	lines := strings.Split(strings.TrimSpace(result), "\n")
 
 	if len(lines) != 3 {
@@ -148,7 +148,7 @@ func TestRenderLogs_HeightLimit(t *testing.T) {
 	}
 
 	// Total lines: 6, but height limit is 4
-	result := renderLogs(logs, 4, 80, 0, "", -1)
+	result := renderLogs(logs, 4, 80, 0, "", -1, true)
 	lines := strings.Split(strings.TrimSpace(result), "\n")
 
 	// Should show only the last 4 lines
@@ -158,7 +158,7 @@ func TestRenderLogs_HeightLimit(t *testing.T) {
 }
 
 func TestRenderLogs_EmptyLogs(t *testing.T) {
-	result := renderLogs([]logEntry{}, 10, 80, 0, "", -1)
+	result := renderLogs([]logEntry{}, 10, 80, 0, "", -1, true)
 
 	if !strings.Contains(result, "No logs yet") {
 		t.Errorf("Expected 'No logs yet' message, got: %s", result)
@@ -180,7 +180,7 @@ func TestRenderLogs_ScrollOffset(t *testing.T) {
 	height := 5 // Show only 5 lines at a time
 
 	// Test showing most recent (scrollOffset = 0)
-	result := renderLogs(logs, height, 80, 0, "", -1)
+	result := renderLogs(logs, height, 80, 0, "", -1, true)
 	lines := strings.Split(strings.TrimSpace(result), "\n")
 	if len(lines) != 5 {
 		t.Errorf("Expected 5 lines with scrollOffset=0, got %d", len(lines))
@@ -192,7 +192,7 @@ func TestRenderLogs_ScrollOffset(t *testing.T) {
 	}
 
 	// Test scrolling up 2 lines (scrollOffset = 2)
-	result = renderLogs(logs, height, 80, 2, "", -1)
+	result = renderLogs(logs, height, 80, 2, "", -1, true)
 	lines = strings.Split(strings.TrimSpace(result), "\n")
 	if len(lines) != 5 {
 		t.Errorf("Expected 5 lines with scrollOffset=2, got %d", len(lines))
@@ -207,7 +207,7 @@ func TestRenderLogs_ScrollOffset(t *testing.T) {
 	}
 
 	// Test scrolling to oldest logs (large scrollOffset)
-	result = renderLogs(logs, height, 80, 1000, "", -1)
+	result = renderLogs(logs, height, 80, 1000, "", -1, true)
 	lines = strings.Split(strings.TrimSpace(result), "\n")
 	if len(lines) != 5 {
 		t.Errorf("Expected 5 lines with large scrollOffset, got %d", len(lines))
@@ -655,7 +655,7 @@ func TestRenderLogs_WithCurrentMatchIdx(t *testing.T) {
 	}
 
 	// Should not panic, and should contain text
-	result := renderLogs(logs, 20, 120, 0, "banana", 0)
+	result := renderLogs(logs, 20, 120, 0, "banana", 0, true)
 	stripped := stripANSI(result)
 	if !strings.Contains(stripped, "banana") {
 		t.Errorf("expected 'banana' in output, got: %s", stripped)
@@ -722,10 +722,138 @@ func TestScrollToMatch_PositionsViewCorrectly(t *testing.T) {
 
 	// Render and check the target line is visible
 	availableHeight := nm.height - uiHeaderFooterHeight
-	result := renderLogs(nm.logs, availableHeight, nm.width, nm.scrollOffset, nm.searchQuery, nm.searchMatchIdx)
+	result := renderLogs(nm.logs, availableHeight, nm.width, nm.scrollOffset, nm.searchQuery, nm.searchMatchIdx, nm.showTraceIDs)
 	stripped := stripANSI(result)
 	if !strings.Contains(stripped, "banana target line") {
 		t.Errorf("after navigating to match, 'banana target line' should be visible in viewport\nscrollOffset=%d\noutput:\n%s",
 			nm.scrollOffset, stripped)
+	}
+}
+
+func TestRenderLogs_TraceIndicators(t *testing.T) {
+	tests := []struct {
+		name            string
+		logs            []logEntry
+		showTraceIDs    bool
+		wantContains    string
+		wantNotContains string
+	}{
+		{
+			name: "trace indicator shown when enabled and trace_id exists",
+			logs: []logEntry{
+				{
+					Timestamp: "2026-02-08T12:34:56Z",
+					Level:     "INFO",
+					Message:   "Test message",
+					TraceID:   "abc123def456",
+				},
+			},
+			showTraceIDs: true,
+			wantContains: "[trace:abc123def456]",
+		},
+		{
+			name: "trace indicator hidden when showTraceIDs is false",
+			logs: []logEntry{
+				{
+					Timestamp: "2026-02-08T12:34:56Z",
+					Level:     "INFO",
+					Message:   "Test message",
+					TraceID:   "abc123def456",
+				},
+			},
+			showTraceIDs:    false,
+			wantNotContains: "[trace:abc123def456]",
+		},
+		{
+			name: "no trace indicator when trace_id is empty",
+			logs: []logEntry{
+				{
+					Timestamp: "2026-02-08T12:34:56Z",
+					Level:     "INFO",
+					Message:   "Test message",
+					TraceID:   "",
+				},
+			},
+			showTraceIDs:    true,
+			wantNotContains: "[trace:",
+		},
+		{
+			name: "trace indicator truncated when too long",
+			logs: []logEntry{
+				{
+					Timestamp: "2026-02-08T12:34:56Z",
+					Level:     "INFO",
+					Message:   "Test message",
+					TraceID:   "verylongtraceidthatislongerthantwentycharacters",
+				},
+			},
+			showTraceIDs: true,
+			wantContains: "[trace:verylongt...]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := renderLogs(tt.logs, 10, 80, 0, "", -1, tt.showTraceIDs)
+			stripped := stripANSI(result)
+
+			if tt.wantContains != "" && !strings.Contains(stripped, tt.wantContains) {
+				t.Errorf("renderLogs() output should contain %q, got:\n%s", tt.wantContains, stripped)
+			}
+
+			if tt.wantNotContains != "" && strings.Contains(stripped, tt.wantNotContains) {
+				t.Errorf("renderLogs() output should not contain %q, got:\n%s", tt.wantNotContains, stripped)
+			}
+		})
+	}
+}
+
+func TestRenderLogs_TraceIndicatorWidthHandling(t *testing.T) {
+	// Test that trace indicators work correctly with width constraints
+	logs := []logEntry{
+		{
+			Timestamp: "2026-02-08T12:34:56Z",
+			Level:     "INFO",
+			Message:   "A very long message that will need to be truncated when we have a trace indicator in a narrow terminal",
+			TraceID:   "abc123",
+		},
+	}
+
+	// Test with narrow width - message should be truncated to make room for trace indicator
+	result := renderLogs(logs, 10, 60, 0, "", -1, true)
+	stripped := stripANSI(result)
+
+	// Should contain trace indicator
+	if !strings.Contains(stripped, "[trace:abc123]") {
+		t.Errorf("renderLogs() should show trace indicator even in narrow terminal, got:\n%s", stripped)
+	}
+
+	// Message should be truncated (have "...")
+	if !strings.Contains(stripped, "...") {
+		t.Errorf("renderLogs() should truncate long message to make room for trace indicator, got:\n%s", stripped)
+	}
+}
+
+func TestModel_ToggleTraceIndicators(t *testing.T) {
+	// Test that 't' key toggles trace indicator visibility
+	m := initialModel("http://localhost:8080", nil)
+	m.showTraceIDs = true
+
+	// Press 't' to toggle off
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}}
+	newModel, _ := m.updateNormalMode(msg)
+	nm := newModel.(model)
+
+	if nm.showTraceIDs {
+		t.Errorf("Pressing 't' should toggle showTraceIDs from true to false, got %v", nm.showTraceIDs)
+	}
+
+	// Press 't' again to toggle back on
+	msg2 := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}}
+	newModel2, _ := nm.updateNormalMode(msg2)
+	nm2 := newModel2.(model)
+
+	if !nm2.showTraceIDs {
+		t.Errorf("Pressing 't' again should toggle showTraceIDs from false to true, got %v", nm2.showTraceIDs)
 	}
 }

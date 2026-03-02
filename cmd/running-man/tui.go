@@ -23,6 +23,11 @@ const (
 
 	// Approximate UI element heights for scroll calculations
 	uiHeaderFooterHeight = 5 // Tab bar + help text + padding
+
+	// Maximum length for trace ID part in UI display (truncated if longer)
+	// Does not include "[trace:" prefix and "]" suffix
+	// Total indicator max length is this + 8 (for "[trace:" and "]")
+	maxTraceIDDisplayLength = 12
 )
 
 // Mode represents the current operating mode of the TUI
@@ -49,6 +54,7 @@ type model struct {
 	searchInput    textinput.Model  // Text input for search mode
 	searchQuery    string           // Current search query (mirrored from searchInput)
 	searchMatchIdx int              // Current match index when navigating with n/N
+	showTraceIDs   bool             // Whether to show trace indicators (toggled with 't')
 }
 
 type logEntry struct {
@@ -57,6 +63,7 @@ type logEntry struct {
 	Source    string `json:"Source"`
 	Message   string `json:"Message"`
 	IsError   bool   `json:"IsError"`
+	TraceID   string `json:"TraceID,omitempty"` // Optional trace ID for correlation
 }
 
 type logsResponse struct {
@@ -100,6 +107,7 @@ func initialModel(apiURL string, manager *process.Manager) model {
 		searchInput:    ti,
 		searchQuery:    "",
 		searchMatchIdx: 0,
+		showTraceIDs:   true, // Show trace indicators by default
 	}
 }
 
@@ -191,11 +199,15 @@ func (m model) View() string {
 	}
 
 	// Calculate help text based on mode
-	var helpText string
+	var help string
 	switch m.mode {
 	case ModeSearch:
-		helpText = "\nEsc: Exit search | Enter: Jump to first match"
+		help = helpStyle.Render("\nEsc: Exit search | Enter: Jump to first match")
 	case ModeNormal:
+		// Build help text with styled components
+		baseHelp := "←/→ Tab: Switch source | ↑/↓ PgUp/PgDn Home/End: Scroll"
+
+		// Add search navigation if there's a search query
 		if m.searchQuery != "" {
 			matchCount := countMatches(m.logs, m.searchQuery)
 			var matchStatus string
@@ -204,18 +216,32 @@ func (m model) View() string {
 			} else {
 				matchStatus = fmt.Sprintf("%d of %d", m.searchMatchIdx+1, matchCount)
 			}
-			helpText = fmt.Sprintf("\n←/→ Tab: Switch source | ↑/↓ PgUp/PgDn Home/End: Scroll | n/p: Match nav (%s) | /: Search | q: Quit", matchStatus)
-		} else {
-			helpText = "\n←/→ Tab: Switch source | ↑/↓ PgUp/PgDn Home/End: Scroll | /: Search | q: Quit"
+			baseHelp += fmt.Sprintf(" | n/p: Match nav (%s)", matchStatus)
 		}
+
+		// Add search command
+		baseHelp += " | /: Search"
+
+		// Add trace toggle with highlighted status
+		var traceStatusStyled string
+		if m.showTraceIDs {
+			traceStatusStyled = traceStatusHighlightStyle.Render(" trace:on ")
+		} else {
+			traceStatusStyled = traceStatusOffStyle.Render(" trace:off ")
+		}
+		baseHelp += fmt.Sprintf(" | t: Toggle trace (%s)", traceStatusStyled)
+
+		// Add quit command
+		baseHelp += " | q: Quit"
+
+		help = helpStyle.Render("\n" + baseHelp)
 	}
-	help := helpStyle.Render(helpText)
 
 	// Calculate available height for logs
 	availableHeight := m.height - lipgloss.Height(header) - lipgloss.Height(searchBar) - lipgloss.Height(help) - 2
 
 	// Render logs with search highlighting and current match index
-	logsView := renderLogs(m.logs, availableHeight, m.width, m.scrollOffset, m.searchQuery, m.searchMatchIdx)
+	logsView := renderLogs(m.logs, availableHeight, m.width, m.scrollOffset, m.searchQuery, m.searchMatchIdx, m.showTraceIDs)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, searchBar, logsView, help)
 }
@@ -346,7 +372,7 @@ func renderSearchBar(active bool, query string, logs []logEntry, matchIdx int) s
 		searchBarStyle.Width(40).Render(" "+status)
 }
 
-func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery string, currentMatchIdx int) string {
+func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery string, currentMatchIdx int, showTraceIDs bool) string {
 	// Validate inputs
 	if height <= 0 || width <= 0 {
 		return logStyle.Render("Invalid terminal dimensions")
@@ -386,15 +412,52 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 			var line string
 			if i == 0 {
 				// First line gets full prefix
-				line = fmt.Sprintf("[%s] [%s] %s", timestamp[11:19], log.Level, msgLine)
+				baseLine := fmt.Sprintf("[%s] [%s] %s", timestamp[11:19], log.Level, msgLine)
+
+				// Add trace indicator if enabled and trace_id exists
+				if showTraceIDs && log.TraceID != "" {
+					// Truncate trace ID if too long
+					displayTraceID := log.TraceID
+					if len(displayTraceID) > maxTraceIDDisplayLength {
+						displayTraceID = displayTraceID[:maxTraceIDDisplayLength-3] + "..."
+					}
+					traceIndicator := fmt.Sprintf("[trace:%s]", displayTraceID)
+
+					// Calculate available space for message after trace indicator
+					// We need to account for the styled width, not just string length
+					traceIndicatorStyled := traceIndicatorStyle.Render(traceIndicator)
+					indicatorWidth := lipgloss.Width(traceIndicatorStyled) + 1 // +1 for space
+
+					// Available width for the base line (message + timestamp + level)
+					// width is terminal width, we need to leave room for indicator
+					maxBaseLineWidth := width - indicatorWidth
+
+					if len(baseLine) > maxBaseLineWidth {
+						// Truncate message to make room for trace indicator
+						baseLine = baseLine[:maxBaseLineWidth-3] + "..."
+					}
+
+					line = fmt.Sprintf("%s %s", baseLine, traceIndicatorStyled)
+				} else {
+					line = baseLine
+				}
 			} else {
 				// Continuation lines get indented
 				line = fmt.Sprintf("                    %s", msgLine)
 			}
 
-			// Truncate long lines
-			if len(line) > width-2 {
-				line = line[:width-5] + "..."
+			// Truncate long lines (only if trace indicator wasn't added above)
+			// When trace indicator is added, we've already handled truncation
+			if !(i == 0 && showTraceIDs && log.TraceID != "") && lipgloss.Width(line) > width-2 {
+				// Need to truncate the unstyled string, not the styled one
+				// Find how many characters to keep
+				charsToKeep := width - 5 // Leave room for "..."
+				if charsToKeep < 0 {
+					charsToKeep = 0
+				}
+				if len(line) > charsToKeep {
+					line = line[:charsToKeep] + "..."
+				}
 			}
 
 			// Apply highlighting if search query exists
@@ -715,6 +778,20 @@ var (
 	errorLogStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("203"))
 
+	traceIndicatorStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("245")).
+				Italic(true)
+
+	traceStatusHighlightStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("15")). // White text
+					Background(lipgloss.Color("34")). // Green background for "on"
+					Bold(true)
+
+	traceStatusOffStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("15")).  // White text
+				Background(lipgloss.Color("124")). // Red background for "off"
+				Bold(true)
+
 	helpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241")).
 			Italic(true)
@@ -835,6 +912,10 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m = scrollToMatch(m)
 			}
 		}
+
+	case "t":
+		// Toggle trace indicator visibility
+		m.showTraceIDs = !m.showTraceIDs
 	}
 
 	return m, nil
