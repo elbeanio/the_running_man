@@ -1,6 +1,7 @@
 package tracing
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -12,34 +13,46 @@ import (
 
 // SpanEntry represents a stored trace span
 type SpanEntry struct {
-	TraceID      string
-	SpanID       string
-	ParentSpanID string
-	Name         string
-	Kind         string
-	StartTime    time.Time
-	EndTime      time.Time
-	Duration     time.Duration
-	Status       string
-	StatusCode   string
-	ServiceName  string
-	Attributes   map[string]string
-	Events       []SpanEvent
-	Links        []SpanLink
+	TraceID      string            `json:"TraceID"`
+	SpanID       string            `json:"SpanID"`
+	ParentSpanID string            `json:"ParentSpanID"`
+	Name         string            `json:"Name"`
+	Kind         string            `json:"Kind"`
+	StartTime    time.Time         `json:"StartTime"`
+	EndTime      time.Time         `json:"EndTime"`
+	Duration     time.Duration     `json:"Duration"`
+	Status       string            `json:"Status"`
+	StatusCode   string            `json:"StatusCode"`
+	ServiceName  string            `json:"ServiceName"`
+	Attributes   map[string]string `json:"Attributes"`
+	Events       []SpanEvent       `json:"Events"`
+	Links        []SpanLink        `json:"Links"`
+}
+
+// MarshalJSON implements custom JSON marshaling for SpanEntry
+func (s SpanEntry) MarshalJSON() ([]byte, error) {
+	type Alias SpanEntry
+	return json.Marshal(&struct {
+		Duration string `json:"Duration"`
+		Alias
+	}{
+		Duration: s.Duration.String(),
+		Alias:    (Alias)(s),
+	})
 }
 
 // SpanEvent represents an event within a span
 type SpanEvent struct {
-	Name       string
-	Timestamp  time.Time
-	Attributes map[string]string
+	Name       string            `json:"Name"`
+	Timestamp  time.Time         `json:"Timestamp"`
+	Attributes map[string]string `json:"Attributes"`
 }
 
 // SpanLink represents a link to another span
 type SpanLink struct {
-	TraceID    string
-	SpanID     string
-	Attributes map[string]string
+	TraceID    string            `json:"TraceID"`
+	SpanID     string            `json:"SpanID"`
+	Attributes map[string]string `json:"Attributes"`
 }
 
 // convertOTLPSpan converts an OTLP span to our internal format
