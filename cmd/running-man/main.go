@@ -523,6 +523,6 @@ Examples:
   curl http://localhost:9000/errors
   curl http://localhost:9000/health
 
-For more information, visit: github.com/iangeorge/the_running_man
+For more information, visit: github.com/elbeanio/the_running_man
 `)
 }
