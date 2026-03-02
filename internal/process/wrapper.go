@@ -49,6 +49,7 @@ type ProcessWrapper struct {
 	timerMu   sync.Mutex
 	startTime time.Time
 	stateMu   sync.RWMutex // Protects ProcessState reads
+	silent    bool         // When true, don't print to stdout/stderr (for TUI mode)
 }
 
 // New creates a new ProcessWrapper for the given command.
@@ -67,12 +68,13 @@ type ProcessWrapper struct {
 //	New("frontend", "cd frontend && npm start", []string{}, "/bin/bash", handler)
 //	Executes: /bin/bash -c "cd frontend && npm start"
 func New(name string, command string, args []string, shell string, handler LineHandler) *ProcessWrapper {
-	return NewWithOTEL(name, command, args, shell, handler, "", 0, false)
+	return NewWithOTEL(name, command, args, shell, handler, "", 0, false, false)
 }
 
 // NewWithOTEL creates a new ProcessWrapper with OpenTelemetry environment variable injection.
 // If otelEndpoint is not empty and otelEnabled is true, OTEL environment variables will be injected.
-func NewWithOTEL(name string, command string, args []string, shell string, handler LineHandler, otelEndpoint string, otelPort int, otelEnabled bool) *ProcessWrapper {
+// If silent is true, the wrapper will not print to stdout/stderr (for TUI mode).
+func NewWithOTEL(name string, command string, args []string, shell string, handler LineHandler, otelEndpoint string, otelPort int, otelEnabled bool, silent bool) *ProcessWrapper {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Default to /bin/sh if no shell specified
@@ -146,6 +148,7 @@ func NewWithOTEL(name string, command string, args []string, shell string, handl
 		handler: handler,
 		ctx:     ctx,
 		cancel:  cancel,
+		silent:  silent,
 	}
 }
 
@@ -192,11 +195,13 @@ func (w *ProcessWrapper) captureStream(stream io.ReadCloser, isStderr bool) {
 		line := scanner.Text()
 		timestamp := time.Now()
 
-		// Pass-through to terminal with process name prefix
-		if isStderr {
-			fmt.Fprintf(os.Stderr, "[%s] %s\n", w.name, line)
-		} else {
-			fmt.Printf("[%s] %s\n", w.name, line)
+		// Pass-through to terminal with process name prefix (only when not silent)
+		if !w.silent {
+			if isStderr {
+				fmt.Fprintf(os.Stderr, "[%s] %s\n", w.name, line)
+			} else {
+				fmt.Printf("[%s] %s\n", w.name, line)
+			}
 		}
 
 		// Call handler if provided
@@ -206,7 +211,9 @@ func (w *ProcessWrapper) captureStream(stream io.ReadCloser, isStderr bool) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "[running-man] Error reading %s stream: %v\n", w.name, err)
+		if !w.silent {
+			fmt.Fprintf(os.Stderr, "[running-man] Error reading %s stream: %v\n", w.name, err)
+		}
 	}
 }
 

@@ -68,6 +68,9 @@ type model struct {
 	traceSpans              []spanDetail // Spans for selected trace
 	traceLogs               []logEntry   // Logs correlated with selected trace
 	traceDetailScrollOffset int          // Scroll offset for trace detail view
+
+	// Internal state
+	tickCount int // Count of tick messages received
 }
 
 type logEntry struct {
@@ -365,6 +368,7 @@ func initialModel(apiURL string, manager *process.Manager) model {
 		traceSpans:              []spanDetail{},
 		traceLogs:               []logEntry{},
 		traceDetailScrollOffset: 0,
+		tickCount:               0,
 	}
 }
 
@@ -422,21 +426,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.traceLogs = msg
 
 	case tickMsg:
+		m.tickCount++
+
+		// Fetch sources on every tick to detect new processes quickly
+		// This ensures tabs appear as soon as processes start logging
+		cmds := []tea.Cmd{tickCmd(), fetchSources(m.apiURL)}
+
 		if len(m.sources) > 0 {
 			source := m.sources[m.selectedSource]
 			if source == "Traces" {
-				return m, tea.Batch(
-					fetchTraces(m.apiURL),
-					tickCmd(),
-				)
+				cmds = append(cmds, fetchTraces(m.apiURL))
 			} else {
-				return m, tea.Batch(
-					fetchLogs(m.apiURL, source),
-					tickCmd(),
-				)
+				cmds = append(cmds, fetchLogs(m.apiURL, source))
 			}
 		}
-		return m, tickCmd()
+
+		return m, tea.Batch(cmds...)
 
 	case errMsg:
 		m.err = msg.err

@@ -357,10 +357,12 @@ func runCommand(args []string) {
 	if finalTracingEnabled {
 		// Use OTEL-enabled manager
 		otelEndpoint := "http://localhost"
-		manager = process.NewManagerWithOTEL(processes, lineHandler, otelEndpoint, finalTracingPort, true)
+		// Silent mode when TUI is running (not headless mode)
+		manager = process.NewManagerWithOTEL(processes, lineHandler, otelEndpoint, finalTracingPort, true, !*noTUI)
 	} else {
 		// Use regular manager
-		manager = process.NewManager(processes, lineHandler)
+		// Silent mode when TUI is running (not headless mode)
+		manager = process.NewManagerWithOTEL(processes, lineHandler, "", 0, false, !*noTUI)
 	}
 
 	// Start API server in background

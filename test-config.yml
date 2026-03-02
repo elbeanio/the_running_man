@@ -1,0 +1,25 @@
+processes:
+  - name: frontend
+    command: 'cd frontend && npm run dev'
+  - name: backend
+    command: 'cd backend && uv run main.py'
+  - name: poop
+    command: 'echo "poopy bum hole"'
+
+# docker_compose: ./docker-compose.yml
+
+api_port: 9000 # Default: 9000
+
+retention: 30m # How long to keep logs (e.g., "30m", "1h", "24h")
+
+max_entries: 10000 # Maximum number of log entries to keep
+
+max_bytes: 52428800 # Maximum total bytes of logs (50MB)
+
+shell: /bin/zsh # Default: /bin/sh
+
+tracing:
+  enabled: true
+  port: 4318
+  max_spans: 10000
+  max_span_age: 30m
