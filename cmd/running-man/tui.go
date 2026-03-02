@@ -37,6 +37,7 @@ const (
 	ModeNormal Mode = iota
 	ModeSearch
 	ModeTraceList
+	ModeTraceDetail
 )
 
 // Model holds the TUI state
@@ -61,6 +62,12 @@ type model struct {
 	traces            []traceSummary // List of trace summaries
 	traceScrollOffset int            // Scroll offset for trace list
 	selectedTraceIdx  int            // Selected trace index in list
+
+	// Trace detail view state
+	selectedTraceID         string       // ID of selected trace for detail view
+	traceSpans              []spanDetail // Spans for selected trace
+	traceLogs               []logEntry   // Logs correlated with selected trace
+	traceDetailScrollOffset int          // Scroll offset for trace detail view
 }
 
 type logEntry struct {
@@ -81,6 +88,20 @@ type traceSummary struct {
 	SpanCount int
 }
 
+type spanDetail struct {
+	SpanID       string
+	ParentSpanID string
+	Name         string
+	Kind         string
+	StartTime    time.Time
+	EndTime      time.Time
+	Duration     time.Duration
+	Status       string
+	StatusCode   string
+	ServiceName  string
+	Attributes   map[string]string
+}
+
 type logsResponse struct {
 	Logs  []logEntry `json:"logs"`
 	Count int        `json:"count"`
@@ -99,6 +120,8 @@ type sourceInfo struct {
 type sourcesMsg []string
 type logsMsg []logEntry
 type tracesMsg []traceSummary
+type traceSpansMsg []spanDetail
+type traceLogsMsg []logEntry
 type errMsg struct{ err error }
 type tickMsg time.Time
 
@@ -224,6 +247,93 @@ func fetchTraces(apiURL string) tea.Cmd {
 	}
 }
 
+func fetchTraceSpans(apiURL, traceID string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := http.Get(fmt.Sprintf("%s/traces?trace_id=%s", apiURL, traceID))
+		if err != nil {
+			return errMsg{err}
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return errMsg{err}
+		}
+
+		// Parse the response
+		var response struct {
+			Traces []struct {
+				TraceID      string            `json:"TraceID"`
+				SpanID       string            `json:"SpanID"`
+				ParentSpanID string            `json:"ParentSpanID"`
+				Name         string            `json:"Name"`
+				Kind         string            `json:"Kind"`
+				StartTime    time.Time         `json:"StartTime"`
+				EndTime      time.Time         `json:"EndTime"`
+				Duration     string            `json:"Duration"`
+				Status       string            `json:"Status"`
+				StatusCode   string            `json:"StatusCode"`
+				ServiceName  string            `json:"ServiceName"`
+				Attributes   map[string]string `json:"Attributes"`
+			} `json:"traces"`
+			Count int `json:"count"`
+		}
+
+		if err := json.Unmarshal(body, &response); err != nil {
+			return errMsg{err}
+		}
+
+		// Convert to spanDetail
+		spans := make([]spanDetail, len(response.Traces))
+		for i, span := range response.Traces {
+			duration, _ := time.ParseDuration(span.Duration)
+			spans[i] = spanDetail{
+				SpanID:       span.SpanID,
+				ParentSpanID: span.ParentSpanID,
+				Name:         span.Name,
+				Kind:         span.Kind,
+				StartTime:    span.StartTime,
+				EndTime:      span.EndTime,
+				Duration:     duration,
+				Status:       span.Status,
+				StatusCode:   span.StatusCode,
+				ServiceName:  span.ServiceName,
+				Attributes:   span.Attributes,
+			}
+		}
+
+		return traceSpansMsg(spans)
+	}
+}
+
+func fetchTraceLogs(apiURL, traceID string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := http.Get(fmt.Sprintf("%s/traces/%s/logs", apiURL, traceID))
+		if err != nil {
+			return errMsg{err}
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return errMsg{err}
+		}
+
+		// Parse the response
+		var response struct {
+			TraceID string     `json:"trace_id"`
+			Logs    []logEntry `json:"logs"`
+			Count   int        `json:"count"`
+		}
+
+		if err := json.Unmarshal(body, &response); err != nil {
+			return errMsg{err}
+		}
+
+		return traceLogsMsg(response.Logs)
+	}
+}
+
 func initialModel(apiURL string, manager *process.Manager) model {
 	ti := textinput.New()
 	ti.Placeholder = "search..."
@@ -249,6 +359,12 @@ func initialModel(apiURL string, manager *process.Manager) model {
 		traces:            []traceSummary{},
 		traceScrollOffset: 0,
 		selectedTraceIdx:  0,
+
+		// Trace detail view state
+		selectedTraceID:         "",
+		traceSpans:              []spanDetail{},
+		traceLogs:               []logEntry{},
+		traceDetailScrollOffset: 0,
 	}
 }
 
@@ -271,7 +387,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.mode {
 		case ModeSearch:
 			return m.updateSearchMode(msg)
-		case ModeNormal:
+		case ModeNormal, ModeTraceDetail:
 			return m.updateNormalMode(msg)
 		}
 
@@ -298,6 +414,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.traces = msg
 		// Reset trace scroll offset
 		m.traceScrollOffset = 0
+
+	case traceSpansMsg:
+		m.traceSpans = msg
+
+	case traceLogsMsg:
+		m.traceLogs = msg
 
 	case tickMsg:
 		if len(m.sources) > 0 {
@@ -359,6 +481,11 @@ func (m model) View() string {
 	switch m.mode {
 	case ModeSearch:
 		help = helpStyle.Render("\nEsc: Exit search | Enter: Jump to first match")
+	case ModeTraceDetail:
+		// Trace detail view help
+		baseHelp := "ESC/b: Back to trace list | ↑/↓ PgUp/PgDn Home/End: Scroll"
+		baseHelp += " | q: Quit"
+		help = helpStyle.Render("\n" + baseHelp)
 	case ModeNormal:
 		// Check if we're in trace view
 		isTraceView := len(m.sources) > 0 && m.sources[m.selectedSource] == "Traces"
@@ -410,13 +537,23 @@ func (m model) View() string {
 	// Calculate available height for content
 	availableHeight := m.height - lipgloss.Height(header) - lipgloss.Height(searchBar) - lipgloss.Height(help) - 2
 
-	// Check if we're in Traces tab
+	// Render content based on mode
 	var content string
-	if len(m.sources) > 0 && m.sources[m.selectedSource] == "Traces" {
-		// Render trace list
-		content = renderTraceList(m.traces, availableHeight, m.width, m.traceScrollOffset, m.selectedTraceIdx)
-	} else {
-		// Render logs with search highlighting and current match index
+	switch m.mode {
+	case ModeTraceDetail:
+		// Render trace detail view
+		content = renderTraceDetail(m.selectedTraceID, m.traceSpans, m.traceLogs, availableHeight, m.width, m.traceDetailScrollOffset)
+	case ModeNormal:
+		// Check if we're in Traces tab
+		if len(m.sources) > 0 && m.sources[m.selectedSource] == "Traces" {
+			// Render trace list
+			content = renderTraceList(m.traces, availableHeight, m.width, m.traceScrollOffset, m.selectedTraceIdx)
+		} else {
+			// Render logs with search highlighting and current match index
+			content = renderLogs(m.logs, availableHeight, m.width, m.scrollOffset, m.searchQuery, m.searchMatchIdx, m.showTraceIDs)
+		}
+	default:
+		// For search mode or others, render logs
 		content = renderLogs(m.logs, availableHeight, m.width, m.scrollOffset, m.searchQuery, m.searchMatchIdx, m.showTraceIDs)
 	}
 
@@ -534,6 +671,202 @@ func renderTraceList(traces []traceSummary, height, width, scrollOffset, selecte
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, allLines[startIdx:endIdx]...)
+}
+
+func renderTraceDetail(traceID string, spans []spanDetail, logs []logEntry, height, width, scrollOffset int) string {
+	if height <= 0 || width <= 0 {
+		return logStyle.Render("Invalid terminal dimensions")
+	}
+
+	if traceID == "" {
+		return logStyle.Render("No trace selected")
+	}
+
+	// Build trace summary from spans
+	var traceDuration time.Duration
+	var traceStatus string
+	services := make(map[string]bool)
+	var startTime time.Time
+
+	for _, span := range spans {
+		if span.Duration > traceDuration {
+			traceDuration = span.Duration
+		}
+		if span.Status == "ERROR" {
+			traceStatus = "ERROR"
+		}
+		if span.ServiceName != "" {
+			services[span.ServiceName] = true
+		}
+		if startTime.IsZero() || span.StartTime.Before(startTime) {
+			startTime = span.StartTime
+		}
+	}
+
+	if traceStatus == "" {
+		traceStatus = "OK"
+	}
+
+	// Build services list
+	serviceList := make([]string, 0, len(services))
+	for service := range services {
+		serviceList = append(serviceList, service)
+	}
+	sort.Strings(serviceList)
+
+	// Create header
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("15")).
+		Background(lipgloss.Color("57"))
+
+	header := headerStyle.Render(fmt.Sprintf(" Trace: %s ", traceID))
+
+	// Create trace info
+	infoStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("250"))
+
+	infoLines := []string{
+		fmt.Sprintf("Duration: %s | Status: %s | Spans: %d | Services: %s",
+			traceDuration, traceStatus, len(spans), strings.Join(serviceList, ", ")),
+		"",
+	}
+
+	// Build span tree
+	if len(spans) > 0 {
+		infoLines = append(infoLines, "Spans:")
+		infoLines = append(infoLines, renderSpanTree(spans, width))
+		infoLines = append(infoLines, "")
+	}
+
+	// Add correlated logs
+	if len(logs) > 0 {
+		infoLines = append(infoLines, fmt.Sprintf("Correlated Logs (%d):", len(logs)))
+		for _, log := range logs {
+			timestamp := log.Timestamp
+			if len(timestamp) > 19 {
+				timestamp = timestamp[11:19] // HH:MM:SS
+			}
+			line := fmt.Sprintf("[%s] [%s] %s", timestamp, log.Level, log.Message)
+			if len(line) > width-2 {
+				line = line[:width-5] + "..."
+			}
+			infoLines = append(infoLines, line)
+		}
+	} else {
+		infoLines = append(infoLines, "No correlated logs")
+	}
+
+	// Apply styles to all lines
+	allLines := []string{header}
+	for _, line := range infoLines {
+		allLines = append(allLines, infoStyle.Render(line))
+	}
+
+	// Handle scrolling
+	totalLines := len(allLines)
+	if totalLines <= height {
+		return lipgloss.JoinVertical(lipgloss.Left, allLines...)
+	}
+
+	// Calculate start index based on scrollOffset
+	startIdx := scrollOffset
+	endIdx := startIdx + height
+
+	// Clamp to valid ranges
+	if startIdx < 0 {
+		startIdx = 0
+		endIdx = height
+	}
+	if endIdx > totalLines {
+		endIdx = totalLines
+		startIdx = endIdx - height
+		if startIdx < 0 {
+			startIdx = 0
+		}
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, allLines[startIdx:endIdx]...)
+}
+
+// renderSpanTree builds and renders an ASCII tree of spans
+func renderSpanTree(spans []spanDetail, width int) string {
+	// Build parent-child relationships
+	children := make(map[string][]spanDetail)
+	rootSpans := []spanDetail{}
+
+	for _, span := range spans {
+		if span.ParentSpanID == "" {
+			rootSpans = append(rootSpans, span)
+		} else {
+			children[span.ParentSpanID] = append(children[span.ParentSpanID], span)
+		}
+	}
+
+	// Sort root spans by start time
+	sort.Slice(rootSpans, func(i, j int) bool {
+		return rootSpans[i].StartTime.Before(rootSpans[j].StartTime)
+	})
+
+	// Render tree recursively
+	var lines []string
+	for i, span := range rootSpans {
+		isLast := i == len(rootSpans)-1
+		renderSpanNode(span, children, "", isLast, &lines, width)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// renderSpanNode renders a span and its children recursively
+func renderSpanNode(span spanDetail, children map[string][]spanDetail, prefix string, isLast bool, lines *[]string, width int) {
+	// Current node prefix
+	var nodePrefix string
+	if prefix == "" {
+		nodePrefix = ""
+	} else if isLast {
+		nodePrefix = prefix + "└── "
+	} else {
+		nodePrefix = prefix + "├── "
+	}
+
+	// Format span info
+	statusSymbol := "✓"
+	if span.Status == "ERROR" {
+		statusSymbol = "✗"
+	}
+
+	spanInfo := fmt.Sprintf("%s %s (%s) %s", statusSymbol, span.Name, span.Duration, span.ServiceName)
+
+	// Truncate if needed
+	maxLineWidth := width - len(nodePrefix) - 2
+	if len(spanInfo) > maxLineWidth {
+		spanInfo = spanInfo[:maxLineWidth-3] + "..."
+	}
+
+	*lines = append(*lines, nodePrefix+spanInfo)
+
+	// Render children
+	childSpans := children[span.SpanID]
+	if len(childSpans) > 0 {
+		// Sort children by start time
+		sort.Slice(childSpans, func(i, j int) bool {
+			return childSpans[i].StartTime.Before(childSpans[j].StartTime)
+		})
+
+		// New prefix for children
+		newPrefix := prefix
+		if isLast {
+			newPrefix += "    "
+		} else {
+			newPrefix += "│   "
+		}
+
+		for i, child := range childSpans {
+			isChildLast := i == len(childSpans)-1
+			renderSpanNode(child, children, newPrefix, isChildLast, lines, width)
+		}
+	}
 }
 
 // sortSources organizes sources into logical groups:
@@ -1145,6 +1478,13 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key := keyMsg.String()
 
 	switch key {
+	case "escape", "b":
+		// Back to trace list from trace detail view
+		if m.mode == ModeTraceDetail {
+			m.mode = ModeNormal
+			return m, nil
+		}
+
 	case "/", "ctrl+f":
 		// Enter search mode
 		m.mode = ModeSearch
@@ -1169,7 +1509,13 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case "up":
-		if m.isTraceView() {
+		if m.mode == ModeTraceDetail {
+			// Scroll up in trace detail view
+			m.traceDetailScrollOffset--
+			if m.traceDetailScrollOffset < 0 {
+				m.traceDetailScrollOffset = 0
+			}
+		} else if m.isTraceView() {
 			// Navigate up in trace list
 			if m.selectedTraceIdx > 0 {
 				m.selectedTraceIdx--
@@ -1184,7 +1530,10 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case "down":
-		if m.isTraceView() {
+		if m.mode == ModeTraceDetail {
+			// Scroll down in trace detail view
+			m.traceDetailScrollOffset++
+		} else if m.isTraceView() {
 			// Navigate down in trace list
 			if m.selectedTraceIdx < len(m.traces)-1 {
 				m.selectedTraceIdx++
@@ -1203,7 +1552,14 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case "pgup":
-		if m.isTraceView() {
+		if m.mode == ModeTraceDetail {
+			// Page up in trace detail view
+			availableHeight := m.height - uiHeaderFooterHeight
+			m.traceDetailScrollOffset -= availableHeight
+			if m.traceDetailScrollOffset < 0 {
+				m.traceDetailScrollOffset = 0
+			}
+		} else if m.isTraceView() {
 			// Page up in trace list
 			availableHeight := m.height - uiHeaderFooterHeight
 			m.selectedTraceIdx -= availableHeight
@@ -1218,7 +1574,11 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case "pgdown":
-		if m.isTraceView() {
+		if m.mode == ModeTraceDetail {
+			// Page down in trace detail view
+			availableHeight := m.height - uiHeaderFooterHeight
+			m.traceDetailScrollOffset += availableHeight
+		} else if m.isTraceView() {
 			// Page down in trace list
 			availableHeight := m.height - uiHeaderFooterHeight
 			m.selectedTraceIdx += availableHeight
@@ -1239,7 +1599,10 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case "home":
-		if m.isTraceView() {
+		if m.mode == ModeTraceDetail {
+			// Go to top of trace detail view
+			m.traceDetailScrollOffset = 0
+		} else if m.isTraceView() {
 			// Go to first trace
 			m.selectedTraceIdx = 0
 			m.traceScrollOffset = 0
@@ -1249,7 +1612,10 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case "end":
-		if m.isTraceView() {
+		if m.mode == ModeTraceDetail {
+			// Go to bottom of trace detail view (we don't know total height, so just set a large number)
+			m.traceDetailScrollOffset = math.MaxInt
+		} else if m.isTraceView() {
 			// Go to last trace
 			m.selectedTraceIdx = len(m.traces) - 1
 			availableHeight := m.height - uiHeaderFooterHeight
@@ -1282,9 +1648,18 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "enter":
 		// Select trace in trace view (for Phase 3)
 		if m.isTraceView() && len(m.traces) > 0 {
-			// TODO: Switch to trace detail view (Phase 3)
-			// For now, just log which trace was selected
-			fmt.Printf("Selected trace: %s\n", m.traces[m.selectedTraceIdx].TraceID)
+			// Switch to trace detail view
+			m.mode = ModeTraceDetail
+			m.selectedTraceID = m.traces[m.selectedTraceIdx].TraceID
+			m.traceDetailScrollOffset = 0
+			// Clear previous trace data
+			m.traceSpans = []spanDetail{}
+			m.traceLogs = []logEntry{}
+			// Fetch trace details
+			return m, tea.Batch(
+				fetchTraceSpans(m.apiURL, m.selectedTraceID),
+				fetchTraceLogs(m.apiURL, m.selectedTraceID),
+			)
 		}
 
 	case "t":
