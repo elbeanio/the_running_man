@@ -375,13 +375,20 @@ func runCommand(args []string) {
 		}
 	}()
 
-	// Start tracing receiver in background if enabled
+	// Start tracing receiver and wait for it to be ready if enabled
 	if tracingReceiver != nil {
-		go func() {
-			if err := tracingReceiver.Start(); err != nil {
-				fmt.Fprintf(os.Stderr, "[running-man] Tracing receiver error: %v\n", err)
-			}
-		}()
+		if err := tracingReceiver.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "[running-man] Tracing receiver error: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Wait for receiver to be ready before starting processes
+		fmt.Printf("[running-man] Waiting for OTEL receiver to be ready...\n")
+		if err := tracingReceiver.WaitForReady(10 * time.Second); err != nil {
+			fmt.Fprintf(os.Stderr, "[running-man] OTEL receiver failed to start: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("[running-man] OTEL receiver ready on http://localhost:%d\n", finalTracingPort)
 	}
 
 	// Give API server time to start

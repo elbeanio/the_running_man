@@ -91,6 +91,11 @@ func NewWithOTEL(name string, command string, args []string, shell string, handl
 	// Execute command in shell to support cd, &&, pipes, etc.
 	cmd := exec.CommandContext(ctx, shell, "-c", fullCommand)
 
+	// Set up process group for proper termination of shell and all child processes
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true, // Create new process group
+	}
+
 	// Start with inherited environment
 	env := os.Environ()
 
@@ -236,21 +241,29 @@ func (w *ProcessWrapper) Wait() error {
 	return err
 }
 
-// Stop gracefully stops the process
+// Stop gracefully stops the process and all its children
 func (w *ProcessWrapper) Stop() error {
 	if w.cmd.Process != nil {
-		// Send SIGINT first (graceful)
-		if err := w.cmd.Process.Signal(os.Interrupt); err != nil {
-			// If SIGINT fails, send SIGTERM
-			return w.cmd.Process.Signal(syscall.SIGTERM)
+		// Get the process group ID (negative PID sends signal to process group)
+		pgid, err := syscall.Getpgid(w.cmd.Process.Pid)
+		if err != nil {
+			// Fall back to killing just the process if we can't get PGID
+			pgid = w.cmd.Process.Pid
+		}
+
+		// Send SIGINT to entire process group first (graceful)
+		if err := syscall.Kill(-pgid, syscall.SIGINT); err != nil {
+			// If SIGINT fails, send SIGTERM to process group
+			syscall.Kill(-pgid, syscall.SIGTERM)
 		}
 
 		// Give it 5 seconds to shut down gracefully
 		w.timerMu.Lock()
 		w.killTimer = time.AfterFunc(5*time.Second, func() {
 			if w.cmd.Process != nil {
-				fmt.Fprintf(os.Stderr, "[running-man] Process didn't stop gracefully, killing...\n")
-				w.cmd.Process.Kill()
+				fmt.Fprintf(os.Stderr, "[running-man] Process didn't stop gracefully, killing entire process group...\n")
+				// Kill entire process group forcefully
+				syscall.Kill(-pgid, syscall.SIGKILL)
 			}
 		})
 		w.timerMu.Unlock()

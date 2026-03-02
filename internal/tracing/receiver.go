@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"time"
 
 	tracev1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -174,6 +175,26 @@ func (r *Receiver) handleHealth(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, `{"status": "ok", "service": "otlp-receiver"}`)
+}
+
+// WaitForReady waits for the receiver to be ready by polling the health endpoint
+func (r *Receiver) WaitForReady(timeout time.Duration) error {
+	start := time.Now()
+	url := fmt.Sprintf("http://localhost:%d/health", r.port)
+
+	for time.Since(start) < timeout {
+		resp, err := http.Get(url)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			resp.Body.Close()
+			return nil
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return fmt.Errorf("receiver not ready after %v", timeout)
 }
 
 // readRequestBody reads and returns the request body

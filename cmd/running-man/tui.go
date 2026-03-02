@@ -483,7 +483,7 @@ func (m model) View() string {
 		help = helpStyle.Render("\nEsc: Exit search | Enter: Jump to first match")
 	case ModeTraceDetail:
 		// Trace detail view help
-		baseHelp := "ESC/b: Back to trace list | ↑/↓ PgUp/PgDn Home/End: Scroll"
+		baseHelp := "ESC: Back to trace list | ↑/↓ PgUp/PgDn Home/End: Scroll"
 		baseHelp += " | q: Quit"
 		help = helpStyle.Render("\n" + baseHelp)
 	case ModeNormal:
@@ -646,10 +646,25 @@ func renderTraceList(traces []traceSummary, height, width, scrollOffset, selecte
 		allLines = append(allLines, lineStyle.Render(line))
 	}
 
-	// Handle scrolling
+	// Handle scrolling with padding
 	totalLines := len(allLines)
+
+	// Helper function to pad lines to exact height
+	padLines := func(lines []string, height int) string {
+		if len(lines) >= height {
+			return lipgloss.JoinVertical(lipgloss.Left, lines[:height]...)
+		}
+		// Pad with empty lines
+		paddedLines := make([]string, height)
+		copy(paddedLines, lines)
+		for i := len(lines); i < height; i++ {
+			paddedLines[i] = logStyle.Render("")
+		}
+		return lipgloss.JoinVertical(lipgloss.Left, paddedLines...)
+	}
+
 	if totalLines <= height {
-		return lipgloss.JoinVertical(lipgloss.Left, allLines...)
+		return padLines(allLines, height)
 	}
 
 	// Calculate start index based on scrollOffset
@@ -670,7 +685,7 @@ func renderTraceList(traces []traceSummary, height, width, scrollOffset, selecte
 		}
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, allLines[startIdx:endIdx]...)
+	return padLines(allLines[startIdx:endIdx], height)
 }
 
 func renderTraceDetail(traceID string, spans []spanDetail, logs []logEntry, height, width, scrollOffset int) string {
@@ -763,10 +778,25 @@ func renderTraceDetail(traceID string, spans []spanDetail, logs []logEntry, heig
 		allLines = append(allLines, infoStyle.Render(line))
 	}
 
-	// Handle scrolling
+	// Handle scrolling with padding
 	totalLines := len(allLines)
+
+	// Helper function to pad lines to exact height
+	padLines := func(lines []string, height int) string {
+		if len(lines) >= height {
+			return lipgloss.JoinVertical(lipgloss.Left, lines[:height]...)
+		}
+		// Pad with empty lines
+		paddedLines := make([]string, height)
+		copy(paddedLines, lines)
+		for i := len(lines); i < height; i++ {
+			paddedLines[i] = infoStyle.Render("")
+		}
+		return lipgloss.JoinVertical(lipgloss.Left, paddedLines...)
+	}
+
 	if totalLines <= height {
-		return lipgloss.JoinVertical(lipgloss.Left, allLines...)
+		return padLines(allLines, height)
 	}
 
 	// Calculate start index based on scrollOffset
@@ -786,7 +816,7 @@ func renderTraceDetail(traceID string, spans []spanDetail, logs []logEntry, heig
 		}
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, allLines[startIdx:endIdx]...)
+	return padLines(allLines[startIdx:endIdx], height)
 }
 
 // renderSpanTree builds and renders an ASCII tree of spans
@@ -1103,8 +1133,15 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 	// scrollOffset > 0 means scroll up from bottom
 	totalLines := len(allLines)
 	if totalLines <= height {
-		// All lines fit, no scrolling needed
-		return lipgloss.JoinVertical(lipgloss.Left, allLines...)
+		// All lines fit, but we need to pad with empty lines to fill height
+		// This ensures old content is cleared when we have fewer lines
+		paddedLines := make([]string, height)
+		copy(paddedLines[height-totalLines:], allLines)
+		// Fill beginning with empty styled lines
+		for i := 0; i < height-totalLines; i++ {
+			paddedLines[i] = logStyle.Render("")
+		}
+		return lipgloss.JoinVertical(lipgloss.Left, paddedLines...)
 	}
 
 	// Start from the bottom and move up by scrollOffset
@@ -1120,6 +1157,9 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 		// Should never happen with valid scrollOffset, but clamp anyway
 		endIdx = totalLines
 		startIdx = totalLines - height
+		if startIdx < 0 {
+			startIdx = 0
+		}
 	} else {
 		// Normal scrolling case
 		if startIdx < 0 {
@@ -1127,7 +1167,19 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 		}
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, allLines[startIdx:endIdx]...)
+	// Ensure we return exactly height lines
+	lines := allLines[startIdx:endIdx]
+	if len(lines) < height {
+		// Pad with empty lines
+		paddedLines := make([]string, height)
+		copy(paddedLines[height-len(lines):], lines)
+		for i := 0; i < height-len(lines); i++ {
+			paddedLines[i] = logStyle.Render("")
+		}
+		return lipgloss.JoinVertical(lipgloss.Left, paddedLines...)
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
 // buildMatchLineIndex returns a slice where each element is the rendered-line index
@@ -1340,7 +1392,8 @@ func isPrintableKey(msg tea.Msg) bool {
 	if !ok {
 		return false
 	}
-	return len(keyMsg.String()) == 1 && keyMsg.String() != "escape"
+	keyStr := keyMsg.String()
+	return len(keyStr) == 1 && keyStr != "esc" && keyStr != "escape"
 }
 
 // Styles
@@ -1417,8 +1470,8 @@ var (
 			Foreground(lipgloss.Color("203"))
 
 	traceIndicatorStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("245")).
-				Italic(true)
+				Foreground(lipgloss.Color("33")). // Bright blue
+				Bold(true)
 
 	traceStatusHighlightStyle = lipgloss.NewStyle().
 					Foreground(lipgloss.Color("15")). // White text
@@ -1450,7 +1503,7 @@ func (m model) updateSearchMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Check for escape or enter to exit search mode
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch keyMsg.String() {
-		case "escape":
+		case "esc", "escape": // Bubble Tea returns "esc" for escape key
 			m.mode = ModeNormal
 			m.searchInput.SetValue("")
 			m.searchQuery = ""
@@ -1478,7 +1531,7 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key := keyMsg.String()
 
 	switch key {
-	case "escape", "b":
+	case "esc", "escape": // Bubble Tea returns "esc" for escape key
 		// Back to trace list from trace detail view
 		if m.mode == ModeTraceDetail {
 			m.mode = ModeNormal
