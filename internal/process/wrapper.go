@@ -213,7 +213,8 @@ func (w *ProcessWrapper) captureStream(stream io.ReadCloser, isStderr bool) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		if !w.silent {
+		// Ignore "file already closed" errors as they're expected when process exits
+		if !strings.Contains(err.Error(), "file already closed") && !w.silent {
 			fmt.Fprintf(os.Stderr, "[running-man] Error reading %s stream: %v\n", w.name, err)
 		}
 	}
