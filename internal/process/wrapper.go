@@ -1,3 +1,6 @@
+//go:build !windows
+// +build !windows
+
 // Package process provides process wrapping and lifecycle management.
 //
 // SECURITY MODEL: All processes are executed via shell -c to enable full shell features
@@ -22,7 +25,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"strings"
 	"sync"
 	"syscall"
@@ -217,18 +219,6 @@ func (w *ProcessWrapper) captureStream(stream io.ReadCloser, isStderr bool) {
 	}
 }
 
-// setupSignalHandlers configures graceful shutdown on SIGINT/SIGTERM
-func (w *ProcessWrapper) setupSignalHandlers() {
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		sig := <-sigChan
-		fmt.Fprintf(os.Stderr, "\n[running-man] Received %v, stopping process...\n", sig)
-		w.Stop()
-	}()
-}
-
 // Wait waits for the process to complete and all output to be captured
 func (w *ProcessWrapper) Wait() error {
 	// Wait for process to exit
@@ -261,7 +251,9 @@ func (w *ProcessWrapper) Stop() error {
 		// Send SIGINT to entire process group first (graceful)
 		if err := syscall.Kill(-pgid, syscall.SIGINT); err != nil {
 			// If SIGINT fails, send SIGTERM to process group
-			syscall.Kill(-pgid, syscall.SIGTERM)
+			if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
+				fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGTERM to process group %d: %v\n", -pgid, err)
+			}
 		}
 
 		// Give it 5 seconds to shut down gracefully
@@ -270,7 +262,9 @@ func (w *ProcessWrapper) Stop() error {
 			if w.cmd.Process != nil {
 				fmt.Fprintf(os.Stderr, "[running-man] Process didn't stop gracefully, killing entire process group...\n")
 				// Kill entire process group forcefully
-				syscall.Kill(-pgid, syscall.SIGKILL)
+				if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
+					fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGKILL to process group %d: %v\n", -pgid, err)
+				}
 			}
 		})
 		w.timerMu.Unlock()

@@ -1006,33 +1006,6 @@ func renderHeader(sources []string, selected int) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
 }
 
-func renderSearchBar(active bool, query string, logs []logEntry, matchIdx int) string {
-	if !active {
-		return ""
-	}
-
-	matchCount := countMatches(logs, query)
-	var status string
-	if query == "" {
-		status = "Type to search..."
-	} else if matchCount == 0 {
-		status = "No matches"
-	} else {
-		status = fmt.Sprintf("%d of %d matches", matchIdx+1, matchCount)
-	}
-
-	searchBarStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("15")).
-		Background(lipgloss.Color("235")).
-		Padding(0, 1)
-
-	inputStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("86"))
-
-	return searchBarStyle.Render(fmt.Sprintf(" Search: %s%s ", query, inputStyle.Render("_"))) +
-		searchBarStyle.Width(40).Render(" "+status)
-}
-
 func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery string, currentMatchIdx int, showTraceIDs bool) string {
 	// Validate inputs
 	if height <= 0 || width <= 0 {
@@ -1322,12 +1295,6 @@ func highlightMatchesWithCurrent(line, query string, lineMatchOffset, currentMat
 	return result
 }
 
-// highlightMatches is the original uniform-highlight version, kept for compatibility.
-// It delegates to highlightMatchesWithCurrent with no current match.
-func highlightMatches(line, query string) string {
-	return highlightMatchesWithCurrent(line, query, 0, -1)
-}
-
 // Commands
 func fetchSources(apiURL string) tea.Cmd {
 	return func() tea.Msg {
@@ -1392,15 +1359,6 @@ func countMatches(logs []logEntry, query string) int {
 	return len(buildMatchLineIndex(logs, 1<<20, query))
 }
 
-func isPrintableKey(msg tea.Msg) bool {
-	keyMsg, ok := msg.(tea.KeyMsg)
-	if !ok {
-		return false
-	}
-	keyStr := keyMsg.String()
-	return len(keyStr) == 1 && keyStr != "esc" && keyStr != "escape"
-}
-
 // Styles
 var (
 	headerStyle = lipgloss.NewStyle().
@@ -1454,18 +1412,6 @@ var (
 				Bold(true).
 				Foreground(lipgloss.Color("15")).
 				Background(lipgloss.Color("93")). // Bright purple
-				Padding(0, 1)
-
-	// Legacy generic tab styles (kept for compatibility)
-	tabStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("250")).
-			Background(lipgloss.Color("235")).
-			Padding(0, 1)
-
-	selectedTabStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("15")).
-				Background(lipgloss.Color("57")).
 				Padding(0, 1)
 
 	logStyle = lipgloss.NewStyle().
@@ -1760,7 +1706,10 @@ func tuiCommandWithManager(args []string, manager *process.Manager) {
 	// Parse flags
 	fs := flag.NewFlagSet("tui", flag.ExitOnError)
 	apiPort := fs.Int("api-port", defaultAPIPort, "API server port")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
+		os.Exit(1)
+	}
 
 	apiURL := fmt.Sprintf("http://localhost:%d", *apiPort)
 

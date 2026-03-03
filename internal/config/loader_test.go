@@ -115,7 +115,7 @@ processes:
 	}
 	defer os.Chdir(oldDir)
 
-	if err := os.Chdir(tmpDir); err != nil {
+	if err = os.Chdir(tmpDir); err != nil {
 		t.Fatalf("failed to change directory: %v", err)
 	}
 
@@ -146,7 +146,7 @@ func TestFindConfig_InCurrentDir(t *testing.T) {
 	}
 	defer os.Chdir(oldDir)
 
-	if err := os.Chdir(tmpDir); err != nil {
+	if err = os.Chdir(tmpDir); err != nil {
 		t.Fatalf("failed to change directory: %v", err)
 	}
 
@@ -214,7 +214,7 @@ func TestFindConfig_NotFound(t *testing.T) {
 	}
 	defer os.Chdir(oldDir)
 
-	if err := os.Chdir(tmpDir); err != nil {
+	if err = os.Chdir(tmpDir); err != nil {
 		t.Fatalf("failed to change directory: %v", err)
 	}
 
@@ -279,7 +279,7 @@ processes:
 	}
 	defer os.Chdir(oldDir)
 
-	if err := os.Chdir(tmpDir); err != nil {
+	if err = os.Chdir(tmpDir); err != nil {
 		t.Fatalf("failed to change directory: %v", err)
 	}
 
@@ -303,7 +303,7 @@ func TestLoadConfigOrDefault_Search_NotFound(t *testing.T) {
 	}
 	defer os.Chdir(oldDir)
 
-	if err := os.Chdir(tmpDir); err != nil {
+	if err = os.Chdir(tmpDir); err != nil {
 		t.Fatalf("failed to change directory: %v", err)
 	}
 

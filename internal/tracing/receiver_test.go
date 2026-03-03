@@ -88,12 +88,11 @@ func TestReceiver_HandleTraces_Protobuf(t *testing.T) {
 	}
 
 	// Marshal to protobuf
-	data, err := proto.Marshal(traceRequest)
+	_, err = proto.Marshal(traceRequest)
 	require.NoError(t, err)
 
 	// Send request (we need the actual port, so skip for now)
 	t.Skip("Need receiver port to send HTTP request")
-	_ = data
 }
 
 func TestReceiver_HandleTraces_JSON(t *testing.T) {
@@ -145,12 +144,11 @@ func TestReceiver_HandleTraces_JSON(t *testing.T) {
 	marshaler := protojson.MarshalOptions{
 		UseProtoNames: true,
 	}
-	data, err := marshaler.Marshal(traceRequest)
+	_, err = marshaler.Marshal(traceRequest)
 	require.NoError(t, err)
 
 	// Send request (we need the actual port, so skip for now)
 	t.Skip("Need receiver port to send HTTP request")
-	_ = data
 }
 
 func TestReceiver_ProcessTraceRequest(t *testing.T) {

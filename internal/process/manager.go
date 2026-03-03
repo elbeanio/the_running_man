@@ -1,3 +1,6 @@
+//go:build !windows
+// +build !windows
+
 package process
 
 import (
@@ -87,7 +90,9 @@ func (m *Manager) Start() error {
 		wrapper := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled, m.silent)
 		if err := wrapper.Start(); err != nil {
 			// If any process fails to start, stop all started processes
-			m.stopAllLocked()
+			if err := m.stopAllLocked(); err != nil {
+				fmt.Printf("[running-man] Failed to stop processes during cleanup: %v\n", err)
+			}
 			// Clear the processes map since all have been stopped
 			m.processes = make(map[string]*ProcessWrapper)
 			return fmt.Errorf("failed to start process %s: %w", name, err)
@@ -234,7 +239,9 @@ func (m *Manager) Restart(processName string) error {
 		if err := existing.Stop(); err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] Warning: error stopping process %s: %v\n", processName, err)
 		}
-		existing.Wait()
+		if err := existing.Wait(); err != nil {
+			fmt.Fprintf(os.Stderr, "[running-man] Warning: error waiting for process %s: %v\n", processName, err)
+		}
 	}
 
 	// Start new instance
@@ -325,7 +332,9 @@ func (m *Manager) setupSignalHandlers() {
 		select {
 		case sig := <-m.sigChan:
 			fmt.Fprintf(os.Stderr, "\n[running-man] Received %v, stopping all processes...\n", sig)
-			m.Stop()
+			if err := m.Stop(); err != nil {
+				fmt.Fprintf(os.Stderr, "[running-man] Error stopping processes on signal: %v\n", err)
+			}
 		case <-m.ctx.Done():
 			// Cleanup on manager shutdown
 			signal.Stop(m.sigChan)

@@ -140,7 +140,9 @@ func (r *Receiver) handleTraces(w http.ResponseWriter, req *http.Request) {
 
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(http.StatusOK)
-	w.Write(responseData)
+	if _, err := w.Write(responseData); err != nil {
+		fmt.Printf("[tracing] Failed to write response: %v\n", err)
+	}
 
 	fmt.Printf("[tracing] Processed %d spans from OTLP request\n", spansProcessed)
 }

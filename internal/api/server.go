@@ -41,14 +41,14 @@ type LineHandler func(source string, line string, timestamp time.Time, isStderr 
 func validateProcessName(name string) (string, error) {
 	processName := strings.TrimSpace(name)
 	if processName == "" {
-		return "", fmt.Errorf("Process name required")
+		return "", fmt.Errorf("process name required")
 	}
 	if len(processName) > maxProcessNameLength {
-		return "", fmt.Errorf("Process name too long")
+		return "", fmt.Errorf("process name too long")
 	}
 	// Whitelist: only allow alphanumeric, dash, and underscore
 	if !processNamePattern.MatchString(processName) {
-		return "", fmt.Errorf("Invalid process name: only letters, numbers, dashes, and underscores allowed")
+		return "", fmt.Errorf("invalid process name: only letters, numbers, dashes, and underscores allowed")
 	}
 	return processName, nil
 }
@@ -276,9 +276,11 @@ func (s *Server) writeJSON(w http.ResponseWriter, data interface{}) {
 func (s *Server) writeError(w http.ResponseWriter, code int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"error": message,
-	})
+	}); err != nil {
+		fmt.Printf("[api] Failed to write error response: %v\n", err)
+	}
 }
 
 // parseDuration parses duration strings like "30s", "5m", "1h"
@@ -300,7 +302,7 @@ func parseDuration(s string) (time.Duration, error) {
 
 func (s *Server) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	if s.manager == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "Process manager not available")
+		s.writeError(w, http.StatusServiceUnavailable, "process manager not available")
 		return
 	}
 
@@ -316,14 +318,14 @@ func (s *Server) handleProcessOrRestart(w http.ResponseWriter, r *http.Request) 
 	// Extract path after /processes/
 	path := strings.TrimPrefix(r.URL.Path, "/processes/")
 	if path == "" || path == r.URL.Path {
-		s.writeError(w, http.StatusBadRequest, "Process name required")
+		s.writeError(w, http.StatusBadRequest, "process name required")
 		return
 	}
 
 	// Check if this is a restart request: /processes/{name}/restart
 	if strings.HasSuffix(path, "/restart") {
 		if r.Method != http.MethodPost {
-			s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed, use POST")
+			s.writeError(w, http.StatusMethodNotAllowed, "method not allowed, use POST")
 			return
 		}
 		s.handleProcessRestart(w, r, path)
@@ -348,7 +350,7 @@ func (s *Server) handleProcessDetail(w http.ResponseWriter, r *http.Request, pat
 
 	// Check manager availability after input validation
 	if s.manager == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "Process manager not available")
+		s.writeError(w, http.StatusServiceUnavailable, "process manager not available")
 		return
 	}
 
@@ -377,12 +379,12 @@ func (s *Server) handleProcessRestart(w http.ResponseWriter, r *http.Request, pa
 
 	// Check manager availability after input validation
 	if s.manager == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "Process manager not available")
+		s.writeError(w, http.StatusServiceUnavailable, "process manager not available")
 		return
 	}
 
 	// Restart the process
-	if err := s.manager.Restart(processName); err != nil {
+	if err = s.manager.Restart(processName); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			names := s.manager.ProcessNames()
 			s.writeError(w, http.StatusNotFound,
@@ -414,13 +416,13 @@ func (s *Server) handleProcessRestart(w http.ResponseWriter, r *http.Request, pa
 func (s *Server) handleStopAll(w http.ResponseWriter, r *http.Request) {
 	// Only allow POST
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed, use POST")
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed, use POST")
 		return
 	}
 
 	// Check manager availability
 	if s.manager == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "Process manager not available")
+		s.writeError(w, http.StatusServiceUnavailable, "process manager not available")
 		return
 	}
 
@@ -444,7 +446,7 @@ func (s *Server) handleStopAll(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	// Only handle exact root path
 	if r.URL.Path != "/" {
-		s.writeError(w, http.StatusNotFound, "Not found")
+		s.writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 
@@ -526,7 +528,9 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 	// Serve the embedded OpenAPI spec file
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
-	w.Write(openapiSpec)
+	if _, err := w.Write(openapiSpec); err != nil {
+		fmt.Printf("[api] Failed to write OpenAPI spec: %v\n", err)
+	}
 }
 
 func (s *Server) handleTraces(w http.ResponseWriter, r *http.Request) {
@@ -705,5 +709,7 @@ func (s *Server) handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
 </html>`
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(html))
+	if _, err := w.Write([]byte(html)); err != nil {
+		fmt.Printf("[api] Failed to write HTML: %v\n", err)
+	}
 }
