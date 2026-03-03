@@ -468,12 +468,16 @@ func runCommand(args []string) {
 
 		// Stop all container streamers
 		for _, streamer := range containerStreamers {
-			streamer.Stop()
+			if err := streamer.Stop(); err != nil {
+				fmt.Fprintf(os.Stderr, "[running-man] Failed to stop container streamer: %v\n", err)
+			}
 		}
 
 		// Wait for container streamers to finish
 		for _, streamer := range containerStreamers {
-			streamer.Wait()
+			if err := streamer.Wait(); err != nil {
+				fmt.Fprintf(os.Stderr, "[running-man] Error waiting for container streamer: %v\n", err)
+			}
 		}
 
 		// Stop tracing receiver if enabled
