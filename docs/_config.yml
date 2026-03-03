@@ -1,3 +1,3 @@
-remote_theme: pages-themes/cayman@v0.2.0
+theme: jekyll-theme-cayman
 title: The Running Man Documentation
 description: Process manager with log aggregation, OpenTelemetry tracing, and AI agent integration
