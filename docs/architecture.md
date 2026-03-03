@@ -9,25 +9,33 @@ graph TB
         P2[Process 2]
         D1[Docker Container 1]
         D2[Docker Container 2]
+        OTEL[OTEL Instrumented Apps]
     end
     
     subgraph "The Running Man"
         PW[Process Wrapper]
         DS[Docker Streamer]
+        OTEL_REC[OTEL Receiver<br/>Port 4318]
         PARSER[Log Parser]
         BUFFER[(Ring Buffer<br/>30min / 50MB)]
+        TRACE_STORE[(Trace Storage<br/>30min / 10k spans)]
         API[API Server]
+        MCP[MCP Server<br/>/mcp endpoint]
         TUI[TUI Viewer]
         
         P1 -->|stdout/stderr| PW
         P2 -->|stdout/stderr| PW
         D1 -->|log stream| DS
         D2 -->|log stream| DS
+        OTEL -->|OTLP HTTP| OTEL_REC
         
         PW --> PARSER
         DS --> PARSER
         PARSER --> BUFFER
+        OTEL_REC --> TRACE_STORE
         BUFFER --> API
+        TRACE_STORE --> API
+        API --> MCP
         BUFFER --> TUI
     end
     
@@ -35,8 +43,8 @@ graph TB
         AGENT[AI Agent<br/>Claude Code/OpenCode]
         USER[Developer]
         
-        API -->|REST API| AGENT
-        API -->|curl| USER
+        MCP -->|MCP Protocol| AGENT
+        API -->|REST API| USER
         TUI --> USER
     end
 ```
@@ -107,6 +115,35 @@ Interactive terminal UI built with Bubble Tea.
 - Newline rendering broken (progress bars garbled)
 - Only shows last 5 minutes (should show full retention)
 
+### OTEL Tracing (`internal/tracing`)
+
+OpenTelemetry tracing support for distributed tracing.
+
+**Components:**
+
+1. **OTEL Receiver (`receiver.go`)**
+   - OTLP HTTP receiver on port 4318 (configurable)
+   - Supports both JSON and Protobuf formats
+   - Handles trace ingestion from instrumented applications
+   - Health endpoint for readiness checks
+
+2. **Trace Storage (`storage.go`)**
+   - In-memory storage for spans with configurable retention
+   - Default: 10,000 spans or 30 minutes
+   - Query capabilities by trace ID, service name, span name, status
+   - Automatic correlation with logs via `trace_id` field
+
+3. **Span Management (`span.go`)**
+   - Span data structure with full OpenTelemetry attributes
+   - Parent-child relationship tracking
+   - Duration calculation and status mapping
+   - Service name extraction from resource attributes
+
+**Integration:**
+- Processes can be automatically instrumented with OTEL when tracing is enabled
+- Logs and traces are correlated via `trace_id` field
+- MCP tools provide trace exploration capabilities
+
 ### Config System (`internal/config`)
 
 YAML configuration with validation and defaults.
@@ -118,6 +155,7 @@ YAML configuration with validation and defaults.
 
 ## Data Flow
 
+### Log Processing Flow
 ```
 1. Process outputs line
    ↓
@@ -127,31 +165,69 @@ YAML configuration with validation and defaults.
    ↓
 4. Parsed entry → Ring Buffer stores
    ↓
-5. API serves queries ← Agent polls
+5. API serves queries ← Agent polls via MCP
    ↓
 6. TUI polls API ← Developer views
 ```
 
+### Trace Processing Flow
+```
+1. Instrumented app sends trace via OTLP
+   ↓
+2. OTEL Receiver processes and validates
+   ↓
+3. Spans → Trace Storage stores
+   ↓
+4. API serves trace queries ← Agent polls via MCP
+   ↓
+5. Logs and traces correlated via trace_id
+```
+
+### MCP Integration Flow
+```
+1. AI Agent connects to /mcp endpoint
+   ↓
+2. MCP Server authenticates (localhost only)
+   ↓
+3. Agent calls tools (search_logs, get_traces, etc.)
+   ↓
+4. MCP Server queries buffer/trace storage
+   ↓
+5. Results formatted and returned to agent
+```
+
 ## Extension Points (Phase 3 - Complete)
 
-### MCP Server Implementation
+### MCP Server Implementation (`internal/api/mcp.go`)
 
 **Endpoint:** `GET /mcp` - Model Context Protocol server for AI agent integration
 
 **Available Tools:**
+
+**Log Tools:**
 - `search_logs` - Search logs with filters (source, time, level, content)
 - `get_recent_errors` - Get errors with surrounding context
-- `get_process_status` - Check status of managed processes
 - `get_startup_logs` - View logs from process startup
-- `get_health_status` - System health and buffer statistics
+
+**Process Management Tools:**
+- `get_process_status` - Check status of managed processes
 - `get_process_detail` - Detailed process information
 - `restart_process` - Restart a managed process (with safety checks)
 - `stop_all_processes` - Stop all processes (requires confirmation)
+
+**System Tools:**
+- `get_health_status` - System health and buffer statistics
+
+**Trace Tools (when OTEL enabled):**
+- `get_traces` - List recent traces with filtering capabilities
+- `get_trace` - Get detailed trace information including all spans
+- `get_slow_traces` - Find traces exceeding duration thresholds
 
 **Integration:**
 - OpenCode: Direct remote MCP connection to `http://localhost:9000/mcp`
 - Claude Desktop: Requires HTTP proxy server (`@modelcontextprotocol/server-http`)
 - Permissions: `running-man_*` wildcard or individual tool permissions
+- Authentication: Local-only access (localhost:9000)
 
 ### Agent Integration Patterns
 
@@ -176,12 +252,13 @@ the_running_man/
 │   └── tui.go               # Bubble Tea viewer
 │
 ├── internal/
-│   ├── api/                 # HTTP server, endpoints
+│   ├── api/                 # HTTP server, endpoints, MCP server
 │   ├── config/              # YAML schema, loading, validation
 │   ├── docker/              # Compose parsing, log streaming
 │   ├── parser/              # Format detection, extraction
 │   ├── process/             # Wrapper, manager, shell execution
-│   └── storage/             # Ring buffer implementation
+│   ├── storage/             # Ring buffer implementation
+│   └── tracing/             # OTEL receiver, trace storage, span management
 │
 ├── docs/                    # Documentation
 └── running-man.yml.example  # Example configuration
@@ -195,6 +272,9 @@ the_running_man/
 - **TUI:** Bubble Tea framework
 - **Config:** gopkg.in/yaml.v3
 - **Storage:** In-memory (maps + sync.RWMutex)
+- **Tracing:** OpenTelemetry Go SDK (go.opentelemetry.io/proto/otlp)
+- **MCP:** Model Context Protocol Go SDK (github.com/modelcontextprotocol/go-sdk/mcp)
+- **Protocol Buffers:** google.golang.org/protobuf
 
 ---
 
