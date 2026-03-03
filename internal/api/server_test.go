@@ -548,8 +548,8 @@ func TestHandleProcessDetail_InvalidName_Slash(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if errMsg, ok := response["error"].(string); !ok || !strings.Contains(errMsg, "Invalid process name") {
-		t.Errorf("Expected 'Invalid process name' error, got: %v", response["error"])
+	if errMsg, ok := response["error"].(string); !ok || !strings.Contains(errMsg, "invalid process name") {
+		t.Errorf("Expected 'invalid process name' error, got: %v", response["error"])
 	}
 }
 
@@ -571,8 +571,8 @@ func TestHandleProcessDetail_InvalidName_DotDot(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if errMsg, ok := response["error"].(string); !ok || !strings.Contains(errMsg, "Invalid process name") {
-		t.Errorf("Expected 'Invalid process name' error, got: %v", response["error"])
+	if errMsg, ok := response["error"].(string); !ok || !strings.Contains(errMsg, "invalid process name") {
+		t.Errorf("Expected 'invalid process name' error, got: %v", response["error"])
 	}
 }
 
@@ -595,8 +595,8 @@ func TestHandleProcessDetail_TooLong(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if errMsg, ok := response["error"].(string); !ok || errMsg != "Process name too long" {
-		t.Errorf("Expected 'Process name too long' error, got: %v", response["error"])
+	if errMsg, ok := response["error"].(string); !ok || errMsg != "process name too long" {
+		t.Errorf("Expected 'process name too long' error, got: %v", response["error"])
 	}
 }
 
@@ -618,8 +618,8 @@ func TestHandleProcessDetail_EmptyName(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if errMsg, ok := response["error"].(string); !ok || errMsg != "Process name required" {
-		t.Errorf("Expected 'Process name required' error, got: %v", response["error"])
+	if errMsg, ok := response["error"].(string); !ok || errMsg != "process name required" {
+		t.Errorf("Expected 'process name required' error, got: %v", response["error"])
 	}
 }
 
@@ -641,8 +641,8 @@ func TestHandleProcessDetail_NoManager(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if errMsg, ok := response["error"].(string); !ok || errMsg != "Process manager not available" {
-		t.Errorf("Expected 'Process manager not available' error, got: %v", response["error"])
+	if errMsg, ok := response["error"].(string); !ok || errMsg != "process manager not available" {
+		t.Errorf("Expected 'process manager not available' error, got: %v", response["error"])
 	}
 }
 
@@ -810,8 +810,8 @@ func TestHandleProcessDetail_WhitespaceOnly(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if errMsg, ok := response["error"].(string); !ok || errMsg != "Process name required" {
-		t.Errorf("Expected 'Process name required' error, got: %v", response["error"])
+	if errMsg, ok := response["error"].(string); !ok || errMsg != "process name required" {
+		t.Errorf("Expected 'process name required' error, got: %v", response["error"])
 	}
 }
 
@@ -1161,8 +1161,8 @@ func TestHandleStopAll_WrongMethod(t *testing.T) {
 	}
 
 	errMsg, ok := response["error"].(string)
-	if !ok || !strings.Contains(errMsg, "Method not allowed") {
-		t.Errorf("Expected 'Method not allowed' error, got: %v", response["error"])
+	if !ok || !strings.Contains(errMsg, "method not allowed") {
+		t.Errorf("Expected 'method not allowed' error, got: %v", response["error"])
 	}
 }
 
@@ -1258,7 +1258,7 @@ func TestHandleRoot_NotFound(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if errMsg, ok := response["error"].(string); !ok || !strings.Contains(errMsg, "Not found") {
-		t.Errorf("Expected 'Not found' error, got: %v", response["error"])
+	if errMsg, ok := response["error"].(string); !ok || !strings.Contains(errMsg, "not found") {
+		t.Errorf("Expected 'not found' error, got: %v", response["error"])
 	}
 }

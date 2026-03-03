@@ -300,7 +300,7 @@ func parseDuration(s string) (time.Duration, error) {
 
 func (s *Server) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	if s.manager == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "Process manager not available")
+		s.writeError(w, http.StatusServiceUnavailable, "process manager not available")
 		return
 	}
 
@@ -316,14 +316,14 @@ func (s *Server) handleProcessOrRestart(w http.ResponseWriter, r *http.Request) 
 	// Extract path after /processes/
 	path := strings.TrimPrefix(r.URL.Path, "/processes/")
 	if path == "" || path == r.URL.Path {
-		s.writeError(w, http.StatusBadRequest, "Process name required")
+		s.writeError(w, http.StatusBadRequest, "process name required")
 		return
 	}
 
 	// Check if this is a restart request: /processes/{name}/restart
 	if strings.HasSuffix(path, "/restart") {
 		if r.Method != http.MethodPost {
-			s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed, use POST")
+			s.writeError(w, http.StatusMethodNotAllowed, "method not allowed, use POST")
 			return
 		}
 		s.handleProcessRestart(w, r, path)
@@ -348,7 +348,7 @@ func (s *Server) handleProcessDetail(w http.ResponseWriter, r *http.Request, pat
 
 	// Check manager availability after input validation
 	if s.manager == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "Process manager not available")
+		s.writeError(w, http.StatusServiceUnavailable, "process manager not available")
 		return
 	}
 
@@ -377,7 +377,7 @@ func (s *Server) handleProcessRestart(w http.ResponseWriter, r *http.Request, pa
 
 	// Check manager availability after input validation
 	if s.manager == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "Process manager not available")
+		s.writeError(w, http.StatusServiceUnavailable, "process manager not available")
 		return
 	}
 
@@ -414,13 +414,13 @@ func (s *Server) handleProcessRestart(w http.ResponseWriter, r *http.Request, pa
 func (s *Server) handleStopAll(w http.ResponseWriter, r *http.Request) {
 	// Only allow POST
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed, use POST")
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed, use POST")
 		return
 	}
 
 	// Check manager availability
 	if s.manager == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "Process manager not available")
+		s.writeError(w, http.StatusServiceUnavailable, "process manager not available")
 		return
 	}
 
@@ -444,7 +444,7 @@ func (s *Server) handleStopAll(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	// Only handle exact root path
 	if r.URL.Path != "/" {
-		s.writeError(w, http.StatusNotFound, "Not found")
+		s.writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 
