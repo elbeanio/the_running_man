@@ -91,6 +91,7 @@ bd sync               # Sync with git
 7. **Hand off** - Provide context for next session
 
 **CRITICAL RULES:**
+- ALWAYS check current branch with `git status` or `git branch --show-current` before making changes
 - NEVER push directly to main branch
 - ALWAYS create a feature branch for changes
 - ALWAYS create a PR before ending session
