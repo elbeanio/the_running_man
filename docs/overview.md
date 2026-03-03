@@ -66,7 +66,7 @@ This makes it invaluable for the hardest debugging scenarios: the ones where you
 
 ---
 
-See [README.md](../README.md) for installation and detailed usage.
+See [README.md](https://github.com/elbeanio/the_running_man/blob/main/README.md) for installation and detailed usage.
 
 See [getting-started.md](getting-started.md) for a comprehensive getting started guide.
 

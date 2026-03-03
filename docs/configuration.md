@@ -537,4 +537,4 @@ retention: 30   # Incorrect
 
 ---
 
-*Need help?* Check the example [running-man.yml](../running-man.yml) file or file an issue on [GitHub](https://github.com/elbeanio/the_running_man/issues).
+*Need help?* Check the example [running-man.yml](https://github.com/elbeanio/the_running_man/blob/main/running-man.yml) file or file an issue on [GitHub](https://github.com/elbeanio/the_running_man/issues).

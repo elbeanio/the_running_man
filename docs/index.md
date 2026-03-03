@@ -5,7 +5,7 @@ Welcome to The Running Man documentation! This guide will help you navigate the 
 ## 📚 Documentation Structure
 
 ### Getting Started
-- **[README.md](../README.md)** - Project overview and quick start
+- **[README.md](https://github.com/elbeanio/the_running_man/blob/main/README.md)** - Project overview and quick start
 - **[getting-started.md](getting-started.md)** - Comprehensive guide for new users
 - **[overview.md](overview.md)** - What is The Running Man and why it exists
 
@@ -29,7 +29,7 @@ Welcome to The Running Man documentation! This guide will help you navigate the 
 
 If you're new to The Running Man, follow this path:
 
-1. **Start with the [README.md](../README.md)** for a quick overview
+1. **Start with the [README.md](https://github.com/elbeanio/the_running_man/blob/main/README.md)** for a quick overview
 2. **Follow the [getting-started.md](getting-started.md)** for installation and basic usage
 3. **Configure your project** using [configuration.md](configuration.md)
 4. **Explore advanced features:**
@@ -67,7 +67,7 @@ If you're new to The Running Man, follow this path:
 ## 🔧 Configuration Files
 
 ### Primary Configuration
-- **[running-man.yml](../running-man.yml)** - Example configuration file
+- **[running-man.yml](https://github.com/elbeanio/the_running_man/blob/main/running-man.yml)** - Example configuration file
 - **Environment variables** - Supported in all configuration fields
 - **CLI flags** - Override configuration file values
 
@@ -197,7 +197,7 @@ See [troubleshooting.md](troubleshooting.md) for complete troubleshooting guide.
 ### Project Links
 - **GitHub Repository**: https://github.com/elbeanio/the_running_man
 - **Issue Tracker**: https://github.com/elbeanio/the_running_man/issues
-- **Example Configuration**: [running-man.yml](../running-man.yml)
+- **Example Configuration**: [running-man.yml](https://github.com/elbeanio/the_running_man/blob/main/running-man.yml)
 
 ### External Resources
 - [OpenTelemetry Documentation](https://opentelemetry.io/docs/)
@@ -213,7 +213,7 @@ Interested in contributing? See:
 
 ## 📄 License
 
-MIT License - see [LICENSE](../LICENSE) for details.
+MIT License - see [LICENSE](https://github.com/elbeanio/the_running_man/blob/main/LICENSE) for details.
 
 ---
 
