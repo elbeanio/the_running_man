@@ -217,4 +217,4 @@ MIT License - see [LICENSE](../LICENSE) for details.
 
 ---
 
-*Documentation last updated: March 2026*
+*Documentation last updated: March 2026*# Test update to trigger GitHub Pages rebuild
