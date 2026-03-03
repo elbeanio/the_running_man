@@ -293,18 +293,6 @@ func waitForPID(w *ProcessWrapper, timeout time.Duration) error {
 	return fmt.Errorf("timeout waiting for process to start (PID still -1)")
 }
 
-// waitForExit polls until the process exits or times out
-func waitForExit(w *ProcessWrapper, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if !w.IsRunning() {
-			return nil
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	return fmt.Errorf("timeout waiting for process to exit")
-}
-
 // Tests for shell feature support
 
 func TestShellFeature_ChangeDirectory(t *testing.T) {

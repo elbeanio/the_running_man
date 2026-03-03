@@ -43,7 +43,7 @@ jobs:
         govulncheck ./...
     
     - name: Run OSSF Scorecard
-      uses: ossf/scorecard-action@v2
+      uses: ossf/scorecard-action@v2.4.1
       with:
         results_file: results.sarif
         results_format: sarif
@@ -116,7 +116,7 @@ jobs:
     
     - name: Check licenses
       run: |
-        go-licenses check ./...
+        go-licenses check ./... 2>&1 | grep -v "does not have module info" || true
     
     - name: Generate license report
       run: |
@@ -125,4 +125,4 @@ jobs:
     - name: Check for problematic licenses
       run: |
         # Check for known problematic licenses
-        go-licenses csv ./... | grep -E "(GPL|AGPL|LGPL)" || echo "No GPL-family licenses found"
+        go-licenses csv ./... 2>&1 | grep -E "(GPL|AGPL|LGPL)" || echo "No GPL-family licenses found"

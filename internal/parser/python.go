@@ -114,7 +114,7 @@ func (p *PythonParser) buildEntry(source string) *LogEntry {
 	// Try to extract trace_id from the traceback
 	traceIDRegex := regexp.MustCompile(`(?i)(?:trace[_-]?id|trace)[=:]\s*([a-zA-Z0-9\-_\.]+)`)
 	for _, line := range p.lines {
-		if matches := traceIDRegex.FindStringSubmatch(line); matches != nil && len(matches) > 1 {
+		if matches := traceIDRegex.FindStringSubmatch(line); len(matches) > 1 {
 			entry.TraceID = matches[1]
 			break
 		}

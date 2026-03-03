@@ -41,14 +41,14 @@ type LineHandler func(source string, line string, timestamp time.Time, isStderr 
 func validateProcessName(name string) (string, error) {
 	processName := strings.TrimSpace(name)
 	if processName == "" {
-		return "", fmt.Errorf("Process name required")
+		return "", fmt.Errorf("process name required")
 	}
 	if len(processName) > maxProcessNameLength {
-		return "", fmt.Errorf("Process name too long")
+		return "", fmt.Errorf("process name too long")
 	}
 	// Whitelist: only allow alphanumeric, dash, and underscore
 	if !processNamePattern.MatchString(processName) {
-		return "", fmt.Errorf("Invalid process name: only letters, numbers, dashes, and underscores allowed")
+		return "", fmt.Errorf("invalid process name: only letters, numbers, dashes, and underscores allowed")
 	}
 	return processName, nil
 }

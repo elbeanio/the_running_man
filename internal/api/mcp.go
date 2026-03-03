@@ -1083,7 +1083,7 @@ func (s *Server) getHealthStatusHandler(ctx context.Context, req *mcp.CallToolRe
 	result.WriteString(strings.Repeat("=", 40) + "\n\n")
 
 	result.WriteString("Server Status:\n")
-	result.WriteString(fmt.Sprintf("  Status:      Healthy\n"))
+	result.WriteString("  Status:      Healthy\n")
 	result.WriteString(fmt.Sprintf("  Uptime:      %s\n", serverUptime.Round(time.Second)))
 
 	// Human-readable uptime

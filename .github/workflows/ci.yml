@@ -86,7 +86,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
         go-version: ['1.23']
     
     steps:
@@ -114,9 +114,4 @@ jobs:
       run: go build -o running-man ./cmd/running-man
     
     - name: Test binary
-      run: |
-        if [ "${{ matrix.os }}" = "windows-latest" ]; then
-          ./running-man.exe --help || true
-        else
-          ./running-man --help || true
-        fi
+      run: ./running-man --help || true

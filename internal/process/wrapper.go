@@ -1,3 +1,6 @@
+//go:build !windows
+// +build !windows
+
 // Package process provides process wrapping and lifecycle management.
 //
 // SECURITY MODEL: All processes are executed via shell -c to enable full shell features
@@ -22,7 +25,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"strings"
 	"sync"
 	"syscall"
@@ -215,18 +217,6 @@ func (w *ProcessWrapper) captureStream(stream io.ReadCloser, isStderr bool) {
 			fmt.Fprintf(os.Stderr, "[running-man] Error reading %s stream: %v\n", w.name, err)
 		}
 	}
-}
-
-// setupSignalHandlers configures graceful shutdown on SIGINT/SIGTERM
-func (w *ProcessWrapper) setupSignalHandlers() {
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		sig := <-sigChan
-		fmt.Fprintf(os.Stderr, "\n[running-man] Received %v, stopping process...\n", sig)
-		w.Stop()
-	}()
 }
 
 // Wait waits for the process to complete and all output to be captured
