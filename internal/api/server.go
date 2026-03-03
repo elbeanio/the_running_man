@@ -382,7 +382,7 @@ func (s *Server) handleProcessRestart(w http.ResponseWriter, r *http.Request, pa
 	}
 
 	// Restart the process
-	if err := s.manager.Restart(processName); err != nil {
+	if err = s.manager.Restart(processName); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			names := s.manager.ProcessNames()
 			s.writeError(w, http.StatusNotFound,

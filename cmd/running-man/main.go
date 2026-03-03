@@ -316,7 +316,7 @@ func runCommand(args []string) {
 		defer dockerClient.Close()
 
 		// Check Docker availability
-		if err := dockerClient.Ping(ctx); err != nil {
+		if err = dockerClient.Ping(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] Docker daemon not available: %v\n", err)
 			os.Exit(1)
 		}

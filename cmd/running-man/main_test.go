@@ -202,7 +202,7 @@ func TestProcessFlags(t *testing.T) {
 
 	// Test initial state
 	if flags.String() != "" {
-		t.Errorf("Empty processFlags.String() = %q, want empty string", flags.String())
+		t.Errorf("Empty pf.String() = %q, want empty string", flags.String())
 	}
 
 	// Test adding values
@@ -216,7 +216,7 @@ func TestProcessFlags(t *testing.T) {
 	str := flags.String()
 	expected := "echo hello, npm run dev"
 	if str != expected {
-		t.Errorf("processFlags.String() = %q, want %q", str, expected)
+		t.Errorf("pf.String() = %q, want %q", str, expected)
 	}
 }
 
@@ -226,8 +226,8 @@ func parseFlagsAndValidate(args []string) (procs []string, dockerCompose string,
 	apiPortFlag := fs.Int("api-port", defaultAPIPort, "API server port")
 	dockerComposeFlag := fs.String("docker-compose", "", "Path to docker-compose.yml file")
 
-	var processFlags processFlags
-	fs.Var(&processFlags, "process", "Process to run (can be specified multiple times)")
+	var pf processFlags
+	fs.Var(&pf, "process", "Process to run (can be specified multiple times)")
 
 	// Parse flags
 	if err := fs.Parse(args); err != nil {
@@ -235,11 +235,11 @@ func parseFlagsAndValidate(args []string) (procs []string, dockerCompose string,
 	}
 
 	// Validate
-	if len(processFlags) == 0 && *dockerComposeFlag == "" {
+	if len(pf) == 0 && *dockerComposeFlag == "" {
 		return nil, "", 0, fmt.Errorf("at least one --process flag or --docker-compose is required")
 	}
 
-	return processFlags, *dockerComposeFlag, *apiPortFlag, nil
+	return pf, *dockerComposeFlag, *apiPortFlag, nil
 }
 
 func TestParseFlagsAndValidate(t *testing.T) {
