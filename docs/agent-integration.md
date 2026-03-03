@@ -13,7 +13,9 @@ The MCP server is automatically available when Running Man is running:
 
 ## Available MCP Tools
 
-### 1. `search_logs`
+### Log Tools
+
+#### 1. `search_logs`
 Search log entries with flexible filters.
 
 **Parameters:**
@@ -110,6 +112,48 @@ Stop all managed processes.
 - "Stop all processes" (requires confirm=true)
 - "Test stop_all_processes error handling" (safe without confirm flag)
 
+### Trace Tools (When OTEL Enabled)
+
+#### 9. `get_traces`
+List recent traces captured by Running Man's OpenTelemetry tracing system.
+
+**Parameters:**
+- `since` (optional): Search traces from this time window (e.g., '5m', '1h', '30s')
+- `service_name` (optional): Filter by service name from traces
+- `trace_id` (optional): Get specific trace by ID
+- `span_name` (optional): Filter by span name (supports partial match)
+- `status` (optional): Filter by span status (`ok`, `error`, `unset`)
+- `limit` (optional): Maximum traces to return (default: 50, max: 1000)
+
+**Example prompts:**
+- "List recent traces: {}"
+- "Find traces with errors: {\"status\": \"error\", \"since\": \"10m\"}"
+- "Search for database traces: {\"service_name\": \"database\", \"limit\": 20}"
+- "Find traces containing API calls: {\"span_name\": \"api\", \"since\": \"5m\"}"
+
+#### 10. `get_trace`
+Get detailed information about a specific trace including all spans.
+
+**Parameters:**
+- `trace_id` (required): The trace ID to retrieve (e.g., "abc123def456")
+
+**Example prompts:**
+- "Get trace details: {\"trace_id\": \"abc123def456\"}"
+- "Show me all spans for trace XYZ"
+
+#### 11. `get_slow_traces`
+Find traces exceeding duration thresholds.
+
+**Parameters:**
+- `since` (optional): Search traces from this time window
+- `threshold` (optional): Duration threshold for slow traces (e.g., '1s', '100ms')
+- `limit` (optional): Maximum traces to return (default: 20, max: 100)
+
+**Example prompts:**
+- "Find slow traces: {\"threshold\": \"1s\", \"since\": \"5m\"}"
+- "Show me traces longer than 500ms: {\"threshold\": \"500ms\"}"
+- "Find the slowest API calls from the last hour"
+
 ## Setup Instructions
 
 ### OpenCode Configuration
@@ -145,12 +189,15 @@ Or allow individual tools:
 "permission": {
   "running-man_search_logs": "allow",
   "running-man_get_recent_errors": "allow",
-  "running-man_get_process_status": "allow",
   "running-man_get_startup_logs": "allow",
-  "running-man_get_health_status": "allow",
+  "running-man_get_process_status": "allow",
   "running-man_get_process_detail": "allow",
   "running-man_restart_process": "allow",
-  "running-man_stop_all_processes": "allow"
+  "running-man_stop_all_processes": "allow",
+  "running-man_get_health_status": "allow",
+  "running-man_get_traces": "allow",
+  "running-man_get_trace": "allow",
+  "running-man_get_slow_traces": "allow"
 }
 ```
 
@@ -213,6 +260,27 @@ Agent: "Check status of all processes"
 → Returns process list with status, PID, uptime
 ```
 
+**Scenario 4: Performance debugging**
+```
+Agent: "Find slow API requests in the last 5 minutes"
+→ Uses get_slow_traces tool with threshold="1s", since="5m"
+→ Returns traces exceeding 1 second duration
+```
+
+**Scenario 5: Distributed tracing**
+```
+Agent: "Show me traces with errors from the payment service"
+→ Uses get_traces tool with service_name="payment", status="error"
+→ Returns error traces with span details
+```
+
+**Scenario 6: End-to-end request tracing**
+```
+Agent: "Get details for trace abc123def456"
+→ Uses get_trace tool with trace_id="abc123def456"
+→ Returns complete span tree for the request
+```
+
 ## Safety Features
 
 1. **Read-only by default:** Most tools are read-only queries
@@ -222,16 +290,26 @@ Agent: "Check status of all processes"
 
 ## Testing
 
-All 8 MCP tools have been tested and verified:
+All 11 MCP tools have been tested and verified:
 
+**Log Tools:**
 - ✅ `search_logs` - Works with all filter combinations
 - ✅ `get_recent_errors` - Returns errors with context
-- ✅ `get_process_status` - Shows process information
 - ✅ `get_startup_logs` - Returns startup logs
-- ✅ `get_health_status` - Shows system health
+
+**Process Tools:**
+- ✅ `get_process_status` - Shows process information
 - ✅ `get_process_detail` - Returns detailed process info
 - ✅ `restart_process` - Error handling tested (safe)
 - ✅ `stop_all_processes` - Error handling tested (safe)
+
+**System Tools:**
+- ✅ `get_health_status` - Shows system health
+
+**Trace Tools (when OTEL enabled):**
+- ✅ `get_traces` - Lists traces with filtering
+- ✅ `get_trace` - Returns detailed trace information
+- ✅ `get_slow_traces` - Finds traces exceeding thresholds
 
 ## Troubleshooting
 
@@ -279,4 +357,4 @@ Want to add new MCP tools or improve existing ones?
 
 ---
 
-**Phase 3 Complete:** Running Man now provides full AI agent integration via MCP protocol, enabling seamless debugging workflows with Claude Code and OpenCode.
+**Current Status:** Running Man provides complete AI agent integration via MCP protocol with 11 debugging tools, including OpenTelemetry trace exploration capabilities.

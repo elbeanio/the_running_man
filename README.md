@@ -1,27 +1,41 @@
-# The Running Man
+# The Running Man 🏃
 
-A dev observability tool that captures logs, traces, and errors from local development environments.
+**A dev observability tool that captures logs, traces, and errors from local development environments.**
 
-## Quick Start
+> **Stay running when your apps crash** - Capture everything automatically and expose it via queryable APIs for AI agents and developers.
+
+## ✨ Features
+
+- **📊 Multi-process Management** - Run and monitor multiple processes with shell support (cd, &&, pipes)
+- **🐳 Docker Compose Integration** - Automatically capture logs from all containers
+- **📱 Interactive TUI** - Real-time log viewer with tab switching between sources
+- **🔍 Smart Log Parsing** - Detects Python tracebacks, JSON logs, and plain text
+- **📡 OpenTelemetry Tracing** - Built-in OTLP receiver with automatic environment injection
+- **🤖 AI Agent Integration** - MCP server with 10+ debugging tools for Claude Code/OpenCode
+- **⚡ Ring Buffer Storage** - 30-minute retention survives app crashes
+- **🔧 YAML Configuration** - Auto-discovery with CLI override support
+
+## 🚀 Quick Start
 
 ### Installation
 
 ```bash
+# Install via Go
 go install github.com/elbeanio/the_running_man/cmd/running-man@latest
+
+# Or download the latest binary from Releases
 ```
 
-### Usage
-
-Run your development processes (TUI launches automatically):
+### Basic Usage
 
 ```bash
-# Python application - TUI shows logs in real-time
+# Run a single process (TUI launches automatically)
 running-man run --process "python server.py"
 
 # Multiple processes - switch between them with Tab
 running-man run --process "python server.py" --process "npm run dev"
 
-# Docker Compose services - all containers visible in TUI
+# Docker Compose services
 running-man run --docker-compose ./docker-compose.yml
 
 # Headless mode for CI/automation
@@ -30,7 +44,7 @@ running-man run --process "pytest" --no-tui
 
 ### Configuration File
 
-Create a `running-man.yml` in your project root:
+Create `running-man.yml` in your project root:
 
 ```yaml
 processes:
@@ -42,7 +56,11 @@ processes:
 docker_compose: ./docker-compose.yml
 api_port: 9000
 retention: 30m
-shell: /bin/bash  # optional, defaults to /bin/sh
+shell: /bin/bash
+
+tracing:
+  enabled: true
+  port: 4318
 ```
 
 Then just run:
@@ -50,55 +68,49 @@ Then just run:
 running-man run  # auto-discovers config
 ```
 
-See [running-man.yml.example](running-man.yml.example) for all options.
+See [running-man.yml](running-man.yml) for all configuration options.
 
-### TUI Navigation
+## 📖 Documentation
 
-- **Tab / →**: Switch to next source
-- **Shift+Tab / ←**: Switch to previous source
-- **q**: Quit TUI (stops all processes and exits)
+- **[Getting Started](docs/GETTING_STARTED.md)** - Comprehensive guide for new users
+- **[Configuration Guide](docs/CONFIGURATION.md)** - All YAML options and CLI flags
+- **[OpenTelemetry Tracing](docs/TRACING.md)** - Complete OTEL setup and usage
+- **[AI Agent Integration](docs/agent-integration.md)** - MCP setup for Claude Code/OpenCode
+- **[API Reference](docs/api-reference.md)** - REST API and MCP tools documentation
+- **[Architecture](docs/architecture.md)** - System design and components
+- **[Development Guide](docs/DEVELOPMENT.md)** - Building and contributing
 
-### Query API
+## 🏗️ Architecture
 
-The API is available while TUI is running (use a separate terminal):
-
-```bash
-# Recent logs
-curl http://localhost:9000/logs?since=30s
-
-# Errors only
-curl http://localhost:9000/errors?since=5m
-
-# Filter by level
-curl http://localhost:9000/logs?level=error,warn
-
-# Search content
-curl http://localhost:9000/logs?contains=database
-
-# Health check
-curl http://localhost:9000/health
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    The Running Man                          │
+├─────────────────────────────────────────────────────────────┤
+│  Processes  │  Docker  │  OTEL Tracing  │  Configuration    │
+│             │          │                │                   │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │                 Ring Buffer Storage                 │   │
+│  │          (30min retention, 50MB limit)             │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                            │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌────────────┐ │
+│  │   REST API      │  │   MCP Server    │  │   TUI      │ │
+│  │   (Port 9000)   │  │   (/mcp)        │  │   Viewer   │ │
+│  └─────────────────┘  └─────────────────┘  └────────────┘ │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### AI Agent Integration (MCP)
+## 🛠️ AI Agent Integration (MCP)
 
-Running Man includes a built-in Model Context Protocol (MCP) server for AI agent integration:
-
-```bash
-# MCP endpoint available at:
-http://localhost:9000/mcp
-```
+Running Man includes a built-in Model Context Protocol (MCP) server for seamless AI agent integration:
 
 **Available MCP Tools:**
-1. `search_logs` - Search logs with filters
-2. `get_recent_errors` - Get recent errors with context
-3. `get_process_status` - Check status of managed processes
-4. `get_startup_logs` - View logs from process startup
-5. `get_health_status` - System health and buffer stats
-6. `get_process_detail` - Detailed process information
-7. `restart_process` - Restart a managed process
-8. `stop_all_processes` - Stop all managed processes
+- **Log Tools:** `search_logs`, `get_recent_errors`, `get_startup_logs`
+- **Process Tools:** `get_process_status`, `get_process_detail`, `restart_process`, `stop_all_processes`
+- **System Tools:** `get_health_status`
+- **Trace Tools:** `get_traces`, `get_trace`, `get_slow_traces`
 
-**OpenCode Configuration:**
+**Quick OpenCode Setup:**
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
@@ -108,11 +120,102 @@ http://localhost:9000/mcp
       "type": "remote",
       "url": "http://localhost:9000/mcp"
     }
+  },
+  "permission": {
+    "running-man_*": "allow"
   }
 }
 ```
 
-See [docs/agent-integration.md](docs/agent-integration.md) for complete setup instructions.
+See [Agent Integration Guide](docs/agent-integration.md) for complete setup.
+
+## 📈 OpenTelemetry Tracing
+
+Running Man includes built-in OpenTelemetry support:
+
+- **OTLP HTTP receiver** on port 4318
+- **Automatic environment variable injection** for managed processes
+- **Trace-log correlation** via `trace_id`
+- **In-memory span storage** with configurable retention
+- **MCP tools for trace exploration**
+
+**Example Python setup:**
+```python
+# With Running Man, OTEL environment variables are automatically injected
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+# Uses OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 from environment
+otlp_exporter = OTLPSpanExporter()
+```
+
+See [Tracing Guide](docs/TRACING.md) for complete setup instructions.
+
+## 🗺️ Roadmap
+
+- ✅ **Phase 1:** Core Foundation (COMPLETE)
+- ✅ **Phase 2:** Multi-Source Capture (COMPLETE)
+- ✅ **Phase 2.5:** Quality of Life & Bug Fixes (COMPLETE)
+- ✅ **Phase 3:** Agent Integration (Claude Code, OpenCode) - COMPLETE
+- ✅ **Phase 4:** OpenTelemetry Tracing - COMPLETE
+- 📋 **Phase 5:** Browser Integration & Web UI
+- 📋 **Phase 6:** Advanced Visualization & Analytics
+
+See [Implementation History](docs/IMPLEMENTATION_HISTORY.md) for detailed progress.
+
+## 🚦 Quick Examples
+
+### Debugging with AI Agent
+```bash
+# Start your stack
+running-man run --process "python server.py" --process "npm run dev"
+
+# Agent can now:
+# - "Show me recent errors from the backend"
+# - "Check if the frontend process is running"
+# - "Search logs for 'database connection' issues"
+# - "Get traces for slow API requests"
+```
+
+### OpenTelemetry Setup
+```bash
+# Tracing enabled by default
+running-man run --process "python app.py"
+
+# View traces via API
+curl http://localhost:9000/traces?since=5m
+
+# Or use MCP tools via AI agent
+# "Show me traces with errors from the last 10 minutes"
+```
+
+### Docker Development
+```bash
+# Monitor your entire Docker Compose stack
+running-man run --docker-compose docker-compose.yml
+
+# All container logs in one TUI
+# Filter by service, search content, view errors
+```
+
+## 🏗️ Development
+
+```bash
+# Build from source
+go build -o running-man ./cmd/running-man
+
+# Run tests
+go test ./...
+
+# Run locally
+./running-man run --process "python -m http.server 8080"
+```
+
+See [Development Guide](docs/DEVELOPMENT.md) for contributor information.
+
+## 📄 License
+
+MIT License - see [LICENSE](LICENSE) for details.
 
 ## Features
 

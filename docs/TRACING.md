@@ -1,20 +1,23 @@
 # OpenTelemetry Tracing with Running Man
 
-Running Man now includes built-in OpenTelemetry tracing support, making it easy to add distributed tracing to your local development workflow.
+Running Man includes built-in OpenTelemetry tracing support, making it easy to add distributed tracing to your local development workflow.
 
-## Overview
+## 📊 Overview
 
-Running Man provides:
+Running Man provides a complete OpenTelemetry solution for local development:
+
 - **OTLP HTTP receiver** on port 4318 (configurable)
 - **Automatic environment variable injection** for managed processes
 - **In-memory span storage** with configurable retention
-- **Trace-log correlation** (coming soon)
+- **Trace-log correlation** via `trace_id`
+- **MCP tools** for trace exploration via AI agents
+- **REST API** for programmatic access to traces
 
-## Quick Start
+## 🚀 Quick Start
 
 ### 1. Enable Tracing
 
-Tracing is enabled by default. To verify, run:
+Tracing is enabled by default. To verify:
 
 ```bash
 running-man run --process "echo 'Hello'" --no-tui
@@ -30,23 +33,26 @@ Tracing: OTLP receiver on http://localhost:4318
 
 Running Man automatically injects OTEL environment variables into managed processes:
 
-- `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`
-- `OTEL_SERVICE_NAME=<process_name>`
-- `OTEL_PROPAGATORS=tracecontext,baggage`
-- Plus recommended defaults for local development
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | OTLP endpoint URL |
+| `OTEL_SERVICE_NAME` | Process name from config | Service name for traces |
+| `OTEL_PROPAGATORS` | `tracecontext,baggage` | Context propagation |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | OTLP protocol |
+| `OTEL_RESOURCE_ATTRIBUTES` | `deployment.environment=local` | Resource attributes |
+| `OTEL_TRACES_SAMPLER` | `always_on` | Sample all traces |
+| `OTEL_METRICS_SAMPLER` | `always_on` | Sample all metrics |
+| `OTEL_LOGS_SAMPLER` | `always_on` | Sample all logs |
 
-## Python Setup Examples
+## 🐍 Python Setup Examples
 
 ### Basic Python Application
-
-Here's a minimal Python application with OpenTelemetry instrumentation:
 
 **requirements.txt:**
 ```txt
 opentelemetry-api==1.28.0
 opentelemetry-sdk==1.28.0
 opentelemetry-exporter-otlp==1.28.0
-opentelemetry-instrumentation==0.51b0
 ```
 
 **app.py:**
@@ -114,8 +120,6 @@ processes:
 ```
 
 ### Flask Web Application
-
-For web applications, use OpenTelemetry instrumentation:
 
 **requirements.txt:**
 ```txt
@@ -205,17 +209,7 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
 ```
 
-**running-man.yml:**
-```yaml
-processes:
-  - name: flask-api
-    command: python flask_app.py
-    # Auto-instrumentation will capture all requests automatically
-```
-
 ### Django Application
-
-For Django applications, use Django instrumentation:
 
 **requirements.txt:**
 ```txt
@@ -272,15 +266,7 @@ if __name__ == '__main__':
     main()
 ```
 
-**running-man.yml:**
-```yaml
-processes:
-  - name: django-app
-    command: python manage.py runserver
-    # Django will be auto-instrumented
-```
-
-## Configuration Options
+## ⚙️ Configuration
 
 ### YAML Configuration
 
@@ -312,22 +298,119 @@ running-man run --process "python app.py" --tracing-port 4321
 running-man run --config my-config.yml
 ```
 
-## Environment Variables Injected
+## 🔍 Querying Traces
 
-Running Man injects these environment variables into managed processes:
+### REST API
 
-| Variable | Value | Purpose |
-|----------|-------|---------|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | OTLP endpoint URL |
-| `OTEL_SERVICE_NAME` | Process name from config | Service name for traces |
-| `OTEL_PROPAGATORS` | `tracecontext,baggage` | Context propagation |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | OTLP protocol |
-| `OTEL_RESOURCE_ATTRIBUTES` | `deployment.environment=local` | Resource attributes |
-| `OTEL_TRACES_SAMPLER` | `always_on` | Sample all traces |
-| `OTEL_METRICS_SAMPLER` | `always_on` | Sample all metrics |
-| `OTEL_LOGS_SAMPLER` | `always_on` | Sample all logs |
+```bash
+# List recent traces
+curl "http://localhost:9000/traces?since=5m"
 
-## Troubleshooting
+# Get specific trace
+curl "http://localhost:9000/traces/abc123-def456"
+
+# Filter by service
+curl "http://localhost:9000/traces?service_name=backend&since=10m"
+
+# Find slow traces
+curl "http://localhost:9000/traces?min_duration=1s&since=5m"
+
+# Traces with errors
+curl "http://localhost:9000/traces?status=error&since=30m"
+```
+
+### MCP Tools (AI Agent Integration)
+
+Running Man provides MCP tools for trace exploration:
+
+1. **`get_traces`** - List recent traces with filters
+   - "Show me traces from the last 10 minutes"
+   - "Find traces with errors from the backend service"
+   - "Show me slow traces (longer than 1 second)"
+
+2. **`get_trace`** - Get detailed trace information
+   - "Show me details for trace abc123-def456"
+   - "Get all spans for workflow XYZ"
+
+3. **`get_slow_traces`** - Find traces exceeding duration thresholds
+   - "Find traces slower than 500ms"
+   - "Show me the slowest API endpoints"
+
+### Example MCP Usage
+
+```bash
+# Start Running Man with tracing
+running-man run --process "python app.py"
+
+# AI agent can now:
+# - "Show me recent traces with errors"
+# - "Find the slowest database queries"
+# - "Get trace details for failed user login"
+# - "Show me traces from the payment service"
+```
+
+## 🎯 Advanced Usage
+
+### Custom Span Attributes
+
+Add custom attributes to spans for better filtering:
+
+```python
+from opentelemetry import trace
+
+tracer = trace.get_tracer(__name__)
+
+with tracer.start_as_current_span("api_request") as span:
+    span.set_attribute("http.method", "GET")
+    span.set_attribute("http.route", "/api/users")
+    span.set_attribute("user.id", "12345")
+    span.set_attribute("response.size_bytes", 2048)
+
+    # Add events (timed annotations)
+    span.add_event("cache.hit", {"key": "users:all"})
+
+    # Set status
+    span.set_status(trace.Status(trace.StatusCode.OK))
+```
+
+### Manual Instrumentation (Without Auto-injection)
+
+If you need to manually set OTEL environment variables:
+
+```python
+import os
+from opentelemetry import trace
+
+# Manually set if not using Running Man's injection
+os.environ.setdefault('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://localhost:4318')
+os.environ.setdefault('OTEL_SERVICE_NAME', 'my-manual-app')
+
+# Rest of your OpenTelemetry setup...
+```
+
+### Trace-Log Correlation
+
+Running Man automatically correlates logs with traces when logs contain `trace_id`:
+
+```python
+import logging
+from opentelemetry import trace
+
+logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
+
+def process_request(request_id):
+    with tracer.start_as_current_span("process_request") as span:
+        # Log with trace context
+        logger.info(f"Processing request {request_id}", extra={
+            "trace_id": span.get_span_context().trace_id,
+            "span_id": span.get_span_context().span_id
+        })
+        
+        # Your processing logic...
+```
+
+## 🚨 Troubleshooting
 
 ### Spans Not Appearing
 
@@ -360,54 +443,68 @@ Running Man injects these environment variables into managed processes:
 
 **"Environment variables not set"**: Ensure tracing is enabled (default is true).
 
-## Advanced Usage
+**"Trace storage full"**: Increase `max_spans` in configuration or reduce retention time.
 
-### Manual Instrumentation (Without Auto-injection)
+### Performance Considerations
 
-If you need to manually set OTEL environment variables:
+**Storage estimates:**
+- Span size: ~0.5KB (limited attributes)
+- 100 spans/minute: ~30KB/30min
+- Default limit: 10,000 spans (~5MB)
 
-```python
-import os
-from opentelemetry import trace
-
-# Manually set if not using Running Man's injection
-os.environ.setdefault('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://localhost:4318')
-os.environ.setdefault('OTEL_SERVICE_NAME', 'my-manual-app')
-
-# Rest of your OpenTelemetry setup...
+**If you need more capacity:**
+```yaml
+tracing:
+  max_spans: 50000  # Increase limit
+  max_span_age: 1h  # Reduce retention
 ```
 
-### Custom Span Attributes
+## 📚 Architecture
 
-Add custom attributes to spans for better filtering:
+### Components
 
-```python
-from opentelemetry import trace
+1. **OTEL Receiver** (`internal/tracing/receiver.go`)
+   - OTLP HTTP receiver on port 4318
+   - Supports JSON and Protobuf formats
+   - Health endpoint for readiness checks
 
-tracer = trace.get_tracer(__name__)
+2. **Trace Storage** (`internal/tracing/storage.go`)
+   - In-memory storage with configurable retention
+   - Query capabilities by trace ID, service, status
+   - Automatic correlation with logs
 
-with tracer.start_as_current_span("api_request") as span:
-    span.set_attribute("http.method", "GET")
-    span.set_attribute("http.route", "/api/users")
-    span.set_attribute("user.id", "12345")
-    span.set_attribute("response.size_bytes", 2048)
+3. **Span Management** (`internal/tracing/span.go`)
+   - Span data structure with full OTEL attributes
+   - Parent-child relationship tracking
+   - Duration calculation and status mapping
 
-    # Add events (timed annotations)
-    span.add_event("cache.hit", {"key": "users:all"})
+### Data Flow
 
-    # Set status
-    span.set_status(trace.Status(trace.StatusCode.OK))
+```
+Instrumented App → OTLP HTTP → Running Man Receiver → Trace Storage
+                                                          ↓
+                                                    REST API / MCP
+                                                          ↓
+                                                  Developer / AI Agent
 ```
 
-## Next Steps
+## 🔮 Future Enhancements
 
-- **Trace visualization**: View traces in the Running Man TUI (coming soon)
-- **Trace-log correlation**: Correlate traces with log entries
-- **Custom exporters**: Export traces to Jaeger, Zipkin, etc.
-- **Metrics support**: Add OpenTelemetry metrics collection
+Planned tracing improvements:
 
-## Resources
+- **Trace visualization** in TUI
+- **Export to Jaeger/Zipkin** for external analysis
+- **Metrics collection** via OpenTelemetry
+- **Custom span processors** for filtering/transformation
+- **Distributed context propagation** across services
+
+## 📖 Resources
 
 - [OpenTelemetry Python Documentation](https://opentelemetry.io/docs/instrumentation/python/)
 - [OpenTelemetry Python GitHub](https://github.com/open-telemetry/opentelemetry-python)
 - [Running Man GitHub](https://github.com/elbeanio/the_running_man)
+- [OpenTelemetry Specification](https://opentelemetry.io/docs/specs/)
+
+---
+
+**Need help?** Check the [Troubleshooting Guide](TROUBLESHOOTING.md) or file an issue on [GitHub](https://github.com/elbeanio/the_running_man/issues).

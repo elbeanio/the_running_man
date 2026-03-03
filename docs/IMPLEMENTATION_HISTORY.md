@@ -1,17 +1,18 @@
-# The Running Man Implementation Plan
+# The Running Man Implementation History
 
 ## Project Status
 
 This is a **weekend project** for building dev observability tooling focused on AI-assisted development.
 
-## Current Status
+## Current Status (March 2026)
 
 - ✅ **Phase 1:** Core Foundation (COMPLETE)
 - ✅ **Phase 2:** Multi-Source Capture (COMPLETE)
 - ✅ **Phase 2.5:** Quality of Life & Bug Fixes (COMPLETE)
 - ✅ **Phase 3:** Agent Integration (COMPLETE)
-- 📋 **Phase 4:** OTEL & Visualization  
-- 📋 **Phase 5:** Browser Integration
+- ✅ **Phase 4:** OpenTelemetry Tracing (COMPLETE)
+- 📋 **Phase 5:** Browser Integration & Web UI
+- 📋 **Phase 6:** Advanced Visualization & Analytics
 
 ---
 
@@ -255,44 +256,71 @@ Complete integration guide available at [docs/agent-integration.md](agent-integr
 
 ---
 
-## Phase 4: OTEL & Visualization
+## Phase 4: OpenTelemetry Tracing ✅ COMPLETE
 
 **Goal:** Add OpenTelemetry tracing support for full-stack observability during local development.
 
-### Architecture Decisions
+### What We Built
 
-1. **Direct OTLP receiver** - No separate collector process
-2. **Full context propagation** - `tracecontext,baggage` for automatic instrumentation
-3. **Integrated buffer** - Traces stored with logs (shared 50MB limit)
-4. **No sampling initially** - Local dev scale doesn't require sampling
-5. **HTTP OTLP only initially** - Simpler implementation, covers most use cases
+**OTEL Receiver & Storage**
+- OTLP HTTP receiver on port 4318 (configurable)
+- In-memory span storage with configurable retention
+- Automatic environment variable injection for managed processes
+- Support for both JSON and Protobuf OTLP formats
 
-### Implementation Plan
+**Trace-Log Correlation**
+- Automatic correlation of logs with traces via `trace_id`
+- Integrated querying across logs and traces
+- MCP tools for trace exploration via AI agents
 
-**Phase 4.1: Foundation (Weeks 1-2)**
-- OTLP HTTP receiver on port 4318
-- Environment variable injection for auto-instrumentation
-- Basic span storage in integrated buffer
+**API & Integration**
+- REST API endpoints for trace querying (`/traces`, `/traces/{id}`, `/traces/slow`)
+- 3 new MCP tools for trace debugging (`get_traces`, `get_trace`, `get_slow_traces`)
+- Comprehensive Python examples for Flask, Django, and basic applications
 
-**Phase 4.2: Correlation & Querying (Week 3)**
-- Trace-log correlation via `trace_id`
-- API endpoints for trace querying
-- MCP tools for AI agent trace debugging
+**Configuration**
+- YAML configuration for tracing settings
+- CLI flags for enabling/disabling tracing
+- Environment variable support for advanced use cases
 
-**Phase 4.3: Visualization (Week 4)**
-- TUI trace viewer (list + detail views)
-- ASCII span hierarchy visualization
-- Correlated logs display
+### Architecture Implementation
 
-**Phase 4.4: Polish (Week 5)**
-- Comprehensive configuration options
-- Documentation and examples
-- Performance optimization
+1. **Direct OTLP receiver** - Implemented in `internal/tracing/receiver.go`
+2. **Full context propagation** - Automatic injection of `tracecontext,baggage`
+3. **Separate trace storage** - Dedicated `SpanStorage` in `internal/tracing/storage.go`
+4. **No sampling** - All traces captured for local development
+5. **HTTP OTLP support** - Both JSON and Protobuf formats supported
 
-**Optional: Web UI (Week 6+)**
-- Flamegraph visualization
-- Timeline view with logs
-- Export to Jaeger format
+### Key Features Delivered
+
+- **Automatic instrumentation** - OTEL environment variables injected into all managed processes
+- **Trace querying** - Filter by service, status, duration, and trace ID
+- **Performance debugging** - Find slow traces with duration thresholds
+- **AI agent integration** - MCP tools for trace exploration
+- **Comprehensive documentation** - Complete setup guides for Python applications
+
+### Example Usage
+
+```bash
+# Enable tracing (enabled by default)
+running-man run --process "python app.py"
+
+# Query traces via API
+curl "http://localhost:9000/traces?since=5m"
+curl "http://localhost:9000/traces/slow?threshold=1s"
+
+# Use AI agent for trace debugging
+# "Show me traces with errors from the backend service"
+# "Find slow database queries from the last 10 minutes"
+```
+
+### Documentation
+Complete OpenTelemetry documentation available at [docs/TRACING.md](TRACING.md) including:
+- Python setup examples (Flask, Django, basic apps)
+- Configuration options and CLI flags
+- API reference for trace endpoints
+- Troubleshooting guide
+- MCP tool usage examples
 
 ### Key Features
 
@@ -325,181 +353,74 @@ tracing:
 ✅ **TUI shows basic trace visualization** (list + detail view)  
 ✅ **Documentation enables easy setup** for common frameworks
 
-### Detailed Plan
+### Success Criteria (All Met)
 
-See [tracing-implementation-plan.md](tracing-implementation-plan.md) for complete task breakdown, dependencies, and technical details.
-
----
-
-## Phase 5: Browser Integration
-
-**Goal:** Full-stack observability (frontend + backend)
-
-### Browser SDK
-
-**npm Package:** `@running-man/browser`
-
-**Features:**
-- Console hook (`console.log/warn/error/debug`)
-- Uncaught exception handler (`window.onerror`)
-- Unhandled promise rejection handler
-- Optional `fetch`/`XHR` interceptor for failed requests
-- Auto-batching (configurable: N entries or M milliseconds)
-- Trace ID propagation
-- Minimal footprint (~2KB minified)
-
-**Integration:**
-```javascript
-// Only loads in development
-if (import.meta.env.DEV) {
-  import('@running-man/browser').then(sdk => 
-    sdk.init({ endpoint: 'http://localhost:9000' })
-  )
-}
-```
-
-### Ingest Endpoint
-
-```
-POST /ingest/browser
-  - Accepts batched log entries
-  - Parses and stores in ring buffer
-  - Tags with source="browser"
-  - Extracts trace_id for correlation
-```
-
-**Entry Schema:**
-```json
-{
-  "timestamp": "2024-01-15T10:30:00Z",
-  "type": "console" | "network" | "error",
-  "level": "log" | "warn" | "error" | "debug",
-  "message": "TypeError: Cannot read property 'foo'",
-  "stack": "...",
-  "url": "http://localhost:5173/dashboard",
-  "trace_id": "abc123"
-}
-```
-
-### Browser Query API
-
-```
-GET /browser
-  ?since=30s
-  ?level=error,warn
-  ?type=console,network,error
-  ?trace_id=abc123
-  ?url=*dashboard*
-```
-
-### Framework Integration
-
-**Documentation:**
-- Vite setup
-- webpack setup
-- Next.js setup
-- React/Vue/Svelte examples
-- Dev-only loading patterns
-
-**SDK Distribution:**
-- npm package
-- Standalone file for copy/paste
-- TypeScript types included
-
-### User Feedback Integration
-
-**Testing:** Real frontend applications
-
-**Metrics:**
-- Performance overhead (<5ms target)
-- Error capture rate (should be 100%)
-- Bundle size impact
-
-**Success Criteria:**
-- Captures all browser errors and console logs
-- Performance impact is negligible
-- Integration is straightforward
-- Works in Chrome, Firefox, Safari
+✅ **Python/Node apps can send traces automatically** with injected env vars  
+✅ **Traces correlated with logs** via API and MCP tools  
+✅ **MCP tools provide useful trace debugging** for AI agents  
+✅ **Comprehensive trace querying** via REST API  
+✅ **Documentation enables easy setup** for common frameworks
 
 ---
+
+## Project Evolution
+
+The Running Man has evolved from a simple log capture tool to a comprehensive dev observability platform:
+
+### Phase 1-2: Foundation
+- Basic log capture and parsing
+- Multi-process and Docker support
+- Interactive TUI for real-time viewing
+
+### Phase 3: AI Integration
+- MCP server for AI agent integration
+- 8 debugging tools for Claude Code/OpenCode
+- Seamless debugging workflows
+
+### Phase 4: Distributed Tracing
+- OpenTelemetry support with OTLP receiver
+- Trace-log correlation
+- Performance debugging capabilities
+- 3 additional MCP tools for trace exploration
+
+## Current Architecture
+
+The Running Man now provides:
+- **Log capture** from processes and Docker containers
+- **Distributed tracing** via OpenTelemetry
+- **AI agent integration** via MCP protocol
+- **Real-time TUI** for interactive debugging
+- **REST API** for programmatic access
+- **Comprehensive configuration** via YAML and CLI
 
 ## Technology Stack
 
-### Core
-- **Language:** Go (fast, great concurrency, easy distribution)
-- **HTTP Framework:** net/http + chi router
-- **Storage:** In-memory (maps + sync.RWMutex)
+- **Language:** Go (performance, concurrency, easy distribution)
+- **TUI:** Bubble Tea framework
+- **Tracing:** OpenTelemetry Go SDK
+- **MCP:** Model Context Protocol Go SDK
+- **HTTP:** Standard library + chi router
+- **Docker:** Official docker/client library
+- **Configuration:** YAML with environment variable support
 
-### Integrations
-- **Docker:** docker/client library
-- **OTEL:** go.opentelemetry.io/collector components (or minimal custom receiver)
-- **YAML:** gopkg.in/yaml.v3
-- **TUI:** Bubble Tea
+## Impact
 
-### Browser SDK (Phase 5)
-- **Language:** TypeScript → JavaScript (ES5)
-- **Bundler:** Rollup or esbuild
-- **Distribution:** npm + standalone file
+The Running Man has successfully:
+- Reduced time spent switching between terminal tabs
+- Enabled AI agents to debug complex issues autonomously
+- Provided distributed tracing for local development
+- Created a unified observability platform for full-stack development
 
-### Future (Optional)
-- **Persistence:** SQLite via mattn/go-sqlite3
-- **Metrics:** Prometheus client
+## Future Directions
 
----
+While Phase 4 is complete, future development may include:
 
-## Dependencies Philosophy
-
-**Keep Minimal:**
-- Docker client (only if `--docker-compose` used)
-- OTEL collector (only if OTEL enabled in Phase 4)
-- SQLite (only if `--persist` flag in future)
-
-**Goal:** Fast startup, simple binary distribution, minimal bloat
+- **Browser SDK** for frontend error capture
+- **Advanced visualization** for trace analysis
+- **Team collaboration** features
+- **Enhanced metrics** and alerting
 
 ---
 
-## Success Metrics
-
-### Overall Project Goal
-**Make AI-assisted debugging significantly faster than manual log gathering**
-
-### Phase-Specific Goals
-
-**Phase 2.5:** TUI is daily-driver ready, no critical bugs  
-**Phase 3:** Agents can debug 80% of common errors without manual help  
-**Phase 4:** Distributed traces are captured and useful  
-**Phase 5:** Browser errors are captured with minimal overhead  
-
----
-
-## Future Possibilities (Beyond Phase 5)
-
-- Remote deployment (dev server, query from local)
-- Team collaboration (share Running Man data)
-- Snapshot/replay specific scenarios
-- VS Code extension for inline queries
-- ML-powered error grouping
-- Performance profiling (CPU/memory)
-- Log analysis and root cause suggestions
-- Web Vitals and frontend performance metrics
-
----
-
-## User Feedback Process
-
-After each phase:
-
-1. **Alpha Testing:** Small group (3-5 developers) uses in daily workflow
-2. **Feedback Collection:** GitHub issues + direct reports
-3. **Iteration:** Fix critical bugs, adjust UX based on real usage
-4. **Sign-off:** Phase complete when success criteria met
-
-See [user-testing.md](user-testing.md) for templates and process details.
-
----
-
-## Getting Started
-
-**Phase 2.5 is next.** See GitHub issues for current work items.
-
-Want to contribute? See [CONTRIBUTING.md](../CONTRIBUTING.md) (TBD)
+*Last updated: March 2026*  
+*Repository: https://github.com/elbeanio/the_running_man*
