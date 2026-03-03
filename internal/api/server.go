@@ -276,9 +276,11 @@ func (s *Server) writeJSON(w http.ResponseWriter, data interface{}) {
 func (s *Server) writeError(w http.ResponseWriter, code int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"error": message,
-	})
+	}); err != nil {
+		fmt.Printf("[api] Failed to write error response: %v\n", err)
+	}
 }
 
 // parseDuration parses duration strings like "30s", "5m", "1h"
@@ -526,7 +528,9 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 	// Serve the embedded OpenAPI spec file
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
-	w.Write(openapiSpec)
+	if _, err := w.Write(openapiSpec); err != nil {
+		fmt.Printf("[api] Failed to write OpenAPI spec: %v\n", err)
+	}
 }
 
 func (s *Server) handleTraces(w http.ResponseWriter, r *http.Request) {
@@ -705,5 +709,7 @@ func (s *Server) handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
 </html>`
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(html))
+	if _, err := w.Write([]byte(html)); err != nil {
+		fmt.Printf("[api] Failed to write HTML: %v\n", err)
+	}
 }

@@ -1706,7 +1706,10 @@ func tuiCommandWithManager(args []string, manager *process.Manager) {
 	// Parse flags
 	fs := flag.NewFlagSet("tui", flag.ExitOnError)
 	apiPort := fs.Int("api-port", defaultAPIPort, "API server port")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
+		os.Exit(1)
+	}
 
 	apiURL := fmt.Sprintf("http://localhost:%d", *apiPort)
 

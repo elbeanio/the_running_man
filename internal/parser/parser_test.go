@@ -157,8 +157,9 @@ func TestPythonParser_PartialTraceback(t *testing.T) {
 		t.Fatal("Expected flush to return entry")
 	}
 
-	if !parser.IsInProgress() {
-		// After flush, should be reset
+	// After flush, should be reset
+	if parser.IsInProgress() {
+		t.Error("Parser should not be in progress after flush")
 	}
 }
 

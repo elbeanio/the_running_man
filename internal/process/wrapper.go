@@ -251,7 +251,9 @@ func (w *ProcessWrapper) Stop() error {
 		// Send SIGINT to entire process group first (graceful)
 		if err := syscall.Kill(-pgid, syscall.SIGINT); err != nil {
 			// If SIGINT fails, send SIGTERM to process group
-			syscall.Kill(-pgid, syscall.SIGTERM)
+			if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
+				fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGTERM to process group %d: %v\n", -pgid, err)
+			}
 		}
 
 		// Give it 5 seconds to shut down gracefully
@@ -260,7 +262,9 @@ func (w *ProcessWrapper) Stop() error {
 			if w.cmd.Process != nil {
 				fmt.Fprintf(os.Stderr, "[running-man] Process didn't stop gracefully, killing entire process group...\n")
 				// Kill entire process group forcefully
-				syscall.Kill(-pgid, syscall.SIGKILL)
+				if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
+					fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGKILL to process group %d: %v\n", -pgid, err)
+				}
 			}
 		})
 		w.timerMu.Unlock()

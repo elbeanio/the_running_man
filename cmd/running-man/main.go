@@ -132,7 +132,10 @@ func runCommand(args []string) {
 	var procs processFlags
 	fs.Var(&procs, "process", "Process to run (can be specified multiple times, overrides config file)")
 
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Load config file if specified or found
 	cfg, err := config.LoadConfigOrDefault(*configPath)
@@ -414,12 +417,16 @@ func runCommand(args []string) {
 
 		// Stop all container streamers
 		for _, streamer := range containerStreamers {
-			streamer.Stop()
+			if err := streamer.Stop(); err != nil {
+				fmt.Fprintf(os.Stderr, "[running-man] Failed to stop container streamer: %v\n", err)
+			}
 		}
 
 		// Wait for container streamers to finish
 		for _, streamer := range containerStreamers {
-			streamer.Wait()
+			if err := streamer.Wait(); err != nil {
+				fmt.Fprintf(os.Stderr, "[running-man] Error waiting for container streamer: %v\n", err)
+			}
 		}
 
 		// Get exit codes
@@ -450,10 +457,14 @@ func runCommand(args []string) {
 		fmt.Printf("\n[running-man] Shutting down processes...\n")
 
 		// Stop all processes
-		manager.Stop()
+		if err := manager.Stop(); err != nil {
+			fmt.Fprintf(os.Stderr, "[running-man] Failed to stop manager: %v\n", err)
+		}
 
 		// Wait for processes to finish stopping
-		manager.Wait()
+		if err := manager.Wait(); err != nil {
+			fmt.Fprintf(os.Stderr, "[running-man] Error waiting for manager: %v\n", err)
+		}
 
 		// Stop all container streamers
 		for _, streamer := range containerStreamers {
