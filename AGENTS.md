@@ -22,29 +22,78 @@ bd close <id>         # Complete work
 bd sync               # Sync with git
 ```
 
+## Branch Protection Workflow
+
+**MAIN BRANCH IS PROTECTED:** All changes must be made in feature branches and merged via pull requests.
+
+**MANDATORY WORKFLOW FOR ALL CHANGES:**
+
+1. **Check beads for related work:**
+   ```bash
+   bd ready              # Find available work
+   bd show <id>          # View issue details
+   bd update <id> --status in_progress  # Claim work
+   ```
+
+2. **Create feature branch (use bead ID when possible):**
+   ```bash
+   # When working on a beads issue (preferred):
+   git checkout -b beads/<bead-id>-short-description
+   # Example: git checkout -b beads/the_running_man-yut-otel-tracing
+   
+   # When no beads issue:
+   git checkout -b feature/descriptive-name
+   # or
+   git checkout -b fix/issue-description
+   # or  
+   git checkout -b docs/topic-update
+   ```
+
+3. **Make changes and commit:**
+   ```bash
+   git add .
+   git commit -m "Descriptive commit message"
+   ```
+
+4. **Push branch to remote:**
+   ```bash
+   git push -u origin branch-name
+   ```
+
+5. **Create pull request (reference beads issue in PR body):**
+   ```bash
+   gh pr create --title "PR Title" --body "Description of changes\n\nRelated to beads: <bead-id>"
+   ```
+
+6. **Wait for PR review/approval** before merging
+
 ## Landing the Plane (Session Completion)
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until changes are in a PR.
 
 **MANDATORY WORKFLOW:**
 
 1. **File issues for remaining work** - Create issues for anything that needs follow-up
 2. **Run quality gates** (if code changed) - Tests, linters, builds
 3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
+4. **CREATE/UPDATE PR** - This is MANDATORY:
    ```bash
-   git pull --rebase
-   bd sync
+   # If new branch:
+   git push -u origin branch-name
+   gh pr create --title "Title" --body "Description\n\nRelated to beads: <bead-id>"
+   
+   # If existing branch:
    git push
-   git status  # MUST show "up to date with origin"
+   # PR will auto-update
    ```
 5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
+6. **Verify** - All changes are in a PR (not necessarily merged)
 7. **Hand off** - Provide context for next session
 
 **CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
+- NEVER push directly to main branch
+- ALWAYS create a feature branch for changes
+- ALWAYS create a PR before ending session
+- Work is NOT complete until changes are in a PR
+- If PR creation fails, resolve and retry until it succeeds
 
