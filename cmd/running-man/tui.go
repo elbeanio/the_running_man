@@ -1381,25 +1381,25 @@ var (
 	// Tab styles for Docker containers - Green
 	dockerTabStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("250")).
-			Background(lipgloss.Color("22")). // Dark green
+			Background(lipgloss.Color("29")). // SpringGreen4 - clearer green
 			Padding(0, 1)
 
 	dockerSelectedTabStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color("15")).
-				Background(lipgloss.Color("34")). // Bright green
+				Background(lipgloss.Color("42")). // SpringGreen2 - brighter green
 				Padding(0, 1)
 
-	// Tab styles for processes - Yellow/Orange
+	// Tab styles for processes - Cyan
 	processTabStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("250")).
-			Background(lipgloss.Color("94")). // Dark orange
+			Background(lipgloss.Color("30")). // DarkCyan - cyan
 			Padding(0, 1)
 
 	processSelectedTabStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color("15")).
-				Background(lipgloss.Color("214")). // Bright orange
+				Background(lipgloss.Color("51")). // Cyan - brighter cyan
 				Padding(0, 1)
 
 	// Tab styles for Traces view - Purple
