@@ -4,6 +4,11 @@
 
 > **Stay running when your apps crash** - Capture everything automatically and expose it via queryable APIs for AI agents and developers.
 
+[![CI](https://github.com/elbeanio/the_running_man/actions/workflows/ci.yml/badge.svg)](https://github.com/elbeanio/the_running_man/actions/workflows/ci.yml)
+[![Security Scan](https://github.com/elbeanio/the_running_man/actions/workflows/security.yml/badge.svg)](https://github.com/elbeanio/the_running_man/actions/workflows/security.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/elbeanio/the_running_man)](https://goreportcard.com/report/github.com/elbeanio/the_running_man)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 ## ✨ Features
 
 - **📊 Multi-process Management** - Run and monitor multiple processes with shell support (cd, &&, pipes)
@@ -247,9 +252,26 @@ the_running_man/
 
 **Future:** Browser SDK and more
 
-See [docs/implementation-plan.md](docs/implementation-plan.md) for the full vision.
+See [docs/implementation-history.md](docs/implementation-history.md) for the full vision and historical development phases.
 
-## Development
+## CI/CD & Security
+
+The Running Man uses GitHub Actions for continuous integration and security scanning:
+
+### Automated Workflows:
+- **CI Pipeline** - Runs tests, linting, and builds on every push/PR
+- **Security Scanning** - Weekly vulnerability checks with CodeQL and govulncheck
+- **Dependency Updates** - Automated PRs for dependency updates
+- **SBOM Generation** - Software Bill of Materials for releases
+- **License Compliance** - Checks for problematic licenses
+
+### Quality Gates:
+- ✅ All tests must pass
+- ✅ No security vulnerabilities
+- ✅ Code passes linting checks
+- ✅ Builds successfully on Linux, macOS, and Windows
+
+### Development
 
 ```bash
 # Build
@@ -268,11 +290,15 @@ go test ./... -cover
 ## Documentation
 
 - [Overview](docs/overview.md) - What is The Running Man and why?
+- [Getting Started](docs/getting-started.md) - Quick start guide
+- [Configuration](docs/configuration.md) - YAML configuration reference
 - [Architecture](docs/architecture.md) - How it works
-- [Implementation Plan](docs/implementation-plan.md) - Roadmap and phases
+- [Implementation History](docs/implementation-history.md) - Roadmap and historical phases
 - [API Reference](docs/api-reference.md) - REST API documentation
-- [Agent Integration](docs/agent-integration.md) - Using with AI coding assistants (Phase 3)
-- [User Testing](docs/user-testing.md) - How to provide feedback
+- [Agent Integration](docs/agent-integration.md) - Using with AI coding assistants
+- [OpenTelemetry Tracing](docs/tracing.md) - Distributed tracing setup
+- [Development Guide](docs/development.md) - Building and contributing
+- [Troubleshooting](docs/troubleshooting.md) - Common issues and solutions
 
 ## Roadmap
 
