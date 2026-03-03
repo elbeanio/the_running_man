@@ -94,6 +94,7 @@ bd sync               # Sync with git
 - NEVER push directly to main branch
 - ALWAYS create a feature branch for changes
 - ALWAYS create a PR before ending session
+- **NEVER merge a PR without explicit permission from the user**
 - Work is NOT complete until changes are in a PR
 - If PR creation fails, resolve and retry until it succeeds
 
