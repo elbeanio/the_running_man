@@ -315,7 +315,7 @@ curl "http://localhost:9000/traces/slow?threshold=1s"
 ```
 
 ### Documentation
-Complete OpenTelemetry documentation available at [docs/TRACING.md](TRACING.md) including:
+Complete OpenTelemetry documentation available at [docs/tracing.md](tracing.md) including:
 - Python setup examples (Flask, Django, basic apps)
 - Configuration options and CLI flags
 - API reference for trace endpoints

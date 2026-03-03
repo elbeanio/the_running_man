@@ -530,10 +530,10 @@ retention: 30   # Incorrect
 
 ## 📚 Related Documentation
 
-- [GETTING_STARTED.md](GETTING_STARTED.md) - Getting started guide
-- [TRACING.md](TRACING.md) - OpenTelemetry configuration
+- [getting-started.md](getting-started.md) - Getting started guide
+- [tracing.md](tracing.md) - OpenTelemetry configuration
 - [api-reference.md](api-reference.md) - API configuration reference
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Troubleshooting configuration issues
+- [troubleshooting.md](troubleshooting.md) - Troubleshooting configuration issues
 
 ---
 

@@ -6,12 +6,12 @@ Welcome to The Running Man documentation! This guide will help you navigate the 
 
 ### Getting Started
 - **[README.md](../README.md)** - Project overview and quick start
-- **[GETTING_STARTED.md](GETTING_STARTED.md)** - Comprehensive guide for new users
+- **[getting-started.md](getting-started.md)** - Comprehensive guide for new users
 - **[overview.md](overview.md)** - What is The Running Man and why it exists
 
 ### Usage Guides
-- **[CONFIGURATION.md](CONFIGURATION.md)** - Complete configuration reference
-- **[TRACING.md](TRACING.md)** - OpenTelemetry setup and usage
+- **[configuration.md](configuration.md)** - Complete configuration reference
+- **[tracing.md](tracing.md)** - OpenTelemetry setup and usage
 - **[agent-integration.md](agent-integration.md)** - AI agent (MCP) integration
 
 ### Reference
@@ -19,33 +19,33 @@ Welcome to The Running Man documentation! This guide will help you navigate the 
 - **[architecture.md](architecture.md)** - System design and components
 
 ### Development
-- **[DEVELOPMENT.md](DEVELOPMENT.md)** - Building and contributing
-- **[IMPLEMENTATION_HISTORY.md](IMPLEMENTATION_HISTORY.md)** - Historical development phases
+- **[development.md](development.md)** - Building and contributing
+- **[implementation-history.md](implementation-history.md)** - Historical development phases
 
 ### Troubleshooting
-- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and solutions
+- **[troubleshooting.md](troubleshooting.md)** - Common issues and solutions
 
 ## 🚀 Quick Start Path
 
 If you're new to The Running Man, follow this path:
 
 1. **Start with the [README.md](../README.md)** for a quick overview
-2. **Follow the [GETTING_STARTED.md](GETTING_STARTED.md)** for installation and basic usage
-3. **Configure your project** using [CONFIGURATION.md](CONFIGURATION.md)
+2. **Follow the [getting-started.md](getting-started.md)** for installation and basic usage
+3. **Configure your project** using [configuration.md](configuration.md)
 4. **Explore advanced features:**
-   - [OpenTelemetry Tracing](TRACING.md) for distributed tracing
+   - [OpenTelemetry Tracing](tracing.md) for distributed tracing
    - [AI Agent Integration](agent-integration.md) for MCP tools
 5. **Refer to the [API Reference](api-reference.md)** for programmatic access
 
 ## 🎯 Key Documentation by Use Case
 
 ### For New Users
-- [GETTING_STARTED.md](GETTING_STARTED.md) - Complete beginner's guide
+- [getting-started.md](getting-started.md) - Complete beginner's guide
 - [overview.md](overview.md) - Understanding the project vision
-- [CONFIGURATION.md](CONFIGURATION.md) - Setting up your first project
+- [configuration.md](configuration.md) - Setting up your first project
 
 ### For Developers Adding Tracing
-- [TRACING.md](TRACING.md) - OpenTelemetry setup guide
+- [tracing.md](tracing.md) - OpenTelemetry setup guide
 - Python, Flask, Django examples
 - Configuration options for tracing
 
@@ -60,9 +60,9 @@ If you're new to The Running Man, follow this path:
 - Query parameters and response formats
 
 ### For Contributors
-- [DEVELOPMENT.md](DEVELOPMENT.md) - Building from source
+- [development.md](development.md) - Building from source
 - [architecture.md](architecture.md) - Understanding the codebase
-- [IMPLEMENTATION_HISTORY.md](IMPLEMENTATION_HISTORY.md) - Project evolution
+- [implementation-history.md](implementation-history.md) - Project evolution
 
 ## 🔧 Configuration Files
 
@@ -72,7 +72,7 @@ If you're new to The Running Man, follow this path:
 - **CLI flags** - Override configuration file values
 
 ### Example Configurations
-See the [CONFIGURATION.md](CONFIGURATION.md) guide for:
+See the [configuration.md](configuration.md) guide for:
 - Basic multi-process setup
 - Docker Compose integration
 - OpenTelemetry tracing configuration
@@ -112,9 +112,9 @@ See [agent-integration.md](agent-integration.md) for complete details.
 - **In-memory span storage** with configurable retention
 
 ### Setup Guides
-- [Python applications](TRACING.md#python-setup-examples)
-- [Flask web applications](TRACING.md#flask-web-application)
-- [Django applications](TRACING.md#django-application)
+- [Python applications](tracing.md#python-setup-examples)
+- [Flask web applications](tracing.md#flask-web-application)
+- [Django applications](tracing.md#django-application)
 
 ### Querying Traces
 - **REST API**: `/traces`, `/traces/{id}`, `/traces/slow`
@@ -190,7 +190,7 @@ Common issues and solutions:
 - Logs not appearing
 - Tracing not working
 
-See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for complete troubleshooting guide.
+See [troubleshooting.md](troubleshooting.md) for complete troubleshooting guide.
 
 ## 📖 Additional Resources
 
@@ -207,7 +207,7 @@ See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for complete troubleshooting guide.
 ## 🤝 Contributing
 
 Interested in contributing? See:
-- [DEVELOPMENT.md](DEVELOPMENT.md) for build instructions
+- [development.md](development.md) for build instructions
 - [architecture.md](architecture.md) for codebase understanding
 - GitHub issues for current work items
 

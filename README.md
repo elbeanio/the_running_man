@@ -72,13 +72,13 @@ See [running-man.yml](running-man.yml) for all configuration options.
 
 ## 📖 Documentation
 
-- **[Getting Started](docs/GETTING_STARTED.md)** - Comprehensive guide for new users
-- **[Configuration Guide](docs/CONFIGURATION.md)** - All YAML options and CLI flags
-- **[OpenTelemetry Tracing](docs/TRACING.md)** - Complete OTEL setup and usage
+- **[Getting Started](docs/getting-started.md)** - Comprehensive guide for new users
+- **[Configuration Guide](docs/configuration.md)** - All YAML options and CLI flags
+- **[OpenTelemetry Tracing](docs/tracing.md)** - Complete OTEL setup and usage
 - **[AI Agent Integration](docs/agent-integration.md)** - MCP setup for Claude Code/OpenCode
 - **[API Reference](docs/api-reference.md)** - REST API and MCP tools documentation
 - **[Architecture](docs/architecture.md)** - System design and components
-- **[Development Guide](docs/DEVELOPMENT.md)** - Building and contributing
+- **[Development Guide](docs/development.md)** - Building and contributing
 
 ## 🏗️ Architecture
 
@@ -149,7 +149,7 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 otlp_exporter = OTLPSpanExporter()
 ```
 
-See [Tracing Guide](docs/TRACING.md) for complete setup instructions.
+See [Tracing Guide](docs/tracing.md) for complete setup instructions.
 
 ## 🗺️ Roadmap
 
@@ -161,7 +161,7 @@ See [Tracing Guide](docs/TRACING.md) for complete setup instructions.
 - 📋 **Phase 5:** Browser Integration & Web UI
 - 📋 **Phase 6:** Advanced Visualization & Analytics
 
-See [Implementation History](docs/IMPLEMENTATION_HISTORY.md) for detailed progress.
+See [Implementation History](docs/implementation-history.md) for detailed progress.
 
 ## 🚦 Quick Examples
 
@@ -211,7 +211,7 @@ go test ./...
 ./running-man run --process "python -m http.server 8080"
 ```
 
-See [Development Guide](docs/DEVELOPMENT.md) for contributor information.
+See [Development Guide](docs/development.md) for contributor information.
 
 ## 📄 License
 

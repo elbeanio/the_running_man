@@ -68,6 +68,6 @@ This makes it invaluable for the hardest debugging scenarios: the ones where you
 
 See [README.md](../README.md) for installation and detailed usage.
 
-See [GETTING_STARTED.md](GETTING_STARTED.md) for a comprehensive getting started guide.
+See [getting-started.md](getting-started.md) for a comprehensive getting started guide.
 
-See [IMPLEMENTATION_HISTORY.md](IMPLEMENTATION_HISTORY.md) for historical development phases.
+See [implementation-history.md](implementation-history.md) for historical development phases.

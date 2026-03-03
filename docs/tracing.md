@@ -507,4 +507,4 @@ Planned tracing improvements:
 
 ---
 
-**Need help?** Check the [Troubleshooting Guide](TROUBLESHOOTING.md) or file an issue on [GitHub](https://github.com/elbeanio/the_running_man/issues).
+**Need help?** Check the [Troubleshooting Guide](troubleshooting.md) or file an issue on [GitHub](https://github.com/elbeanio/the_running_man/issues).

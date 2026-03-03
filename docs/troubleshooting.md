@@ -686,9 +686,9 @@ RUNNING_MAN_DEBUG=1 running-man run --process "echo test" 2>&1 | tail -50
 
 ## 📚 Additional Resources
 
-- [Getting Started Guide](GETTING_STARTED.md)
-- [Configuration Guide](CONFIGURATION.md)
-- [OpenTelemetry Guide](TRACING.md)
+- [Getting Started Guide](getting-started.md)
+- [Configuration Guide](configuration.md)
+- [OpenTelemetry Guide](tracing.md)
 - [API Reference](api-reference.md)
 - [GitHub Repository](https://github.com/elbeanio/the_running_man)
 

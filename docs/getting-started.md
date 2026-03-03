@@ -430,8 +430,8 @@ running-man run --tracing-port 4321
 
 ### Getting Help
 
-- Check the [Troubleshooting Guide](TROUBLESHOOTING.md)
-- Review [Configuration Guide](CONFIGURATION.md) for all options
+- Check the [Troubleshooting Guide](troubleshooting.md)
+- Review [Configuration Guide](configuration.md) for all options
 - See [API Reference](api-reference.md) for endpoint details
 - File issues on [GitHub](https://github.com/elbeanio/the_running_man/issues)
 
@@ -439,8 +439,8 @@ running-man run --tracing-port 4321
 
 Now that you're up and running, explore:
 
-1. **[Configuration Guide](CONFIGURATION.md)** - All YAML options and CLI flags
-2. **[OpenTelemetry Tracing](TRACING.md)** - Complete OTEL setup and examples
+1. **[Configuration Guide](configuration.md)** - All YAML options and CLI flags
+2. **[OpenTelemetry Tracing](tracing.md)** - Complete OTEL setup and examples
 3. **[AI Agent Integration](agent-integration.md)** - Advanced MCP usage
 4. **[API Reference](api-reference.md)** - Complete API documentation
 5. **[Architecture](architecture.md)** - Understand how it works internally
