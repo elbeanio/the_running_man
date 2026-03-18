@@ -245,28 +245,18 @@ func (w *ProcessWrapper) Wait() error {
 func (w *ProcessWrapper) Stop() error {
 	if w.cmd.Process != nil {
 		pid := w.cmd.Process.Pid
-		// Try to get session ID first (most effective for killing entire tree)
-		sid, err := syscall.Getsid(pid)
-		hasSid := err == nil && sid > 0
+		// Get process group ID (negative PID sends signal to process group)
+		pgid, err := syscall.Getpgid(pid)
+		hasPgid := err == nil && pgid > 0
 
-		if hasSid {
-			// We have SID, kill entire session (all processes in session)
-			// Send SIGTERM to entire session
-			syscall.Kill(-sid, syscall.SIGTERM)
+		if hasPgid {
+			// We have PGID, kill entire process group
+			// Send SIGTERM to entire process group
+			syscall.Kill(-pgid, syscall.SIGTERM)
 		} else {
-			// Fall back to process group
-			pgid, err := syscall.Getpgid(pid)
-			hasPgid := err == nil && pgid > 0
-
-			if hasPgid {
-				// We have PGID, kill entire process group
-				// Send SIGTERM to entire process group
-				syscall.Kill(-pgid, syscall.SIGTERM)
-			} else {
-				// If we can't get PGID, kill just the process
-				// Send SIGTERM to process
-				syscall.Kill(pid, syscall.SIGTERM)
-			}
+			// If we can't get PGID, kill just the process
+			// Send SIGTERM to process
+			syscall.Kill(pid, syscall.SIGTERM)
 		}
 
 		// Also proactively find and kill any child processes
@@ -283,27 +273,18 @@ func (w *ProcessWrapper) Stop() error {
 			// Check if process is still running
 			if w.cmd.Process != nil && w.IsRunning() {
 				fmt.Fprintf(os.Stderr, "[running-man] Process didn't stop gracefully, sending SIGKILL...\n")
-				// Re-get PID and SID/PGID since they might have changed
+				// Re-get PID and PGID since they might have changed
 				currentPid := w.cmd.Process.Pid
-				currentSid, err := syscall.Getsid(currentPid)
-				currentHasSid := err == nil && currentSid > 0
+				currentPgid, err := syscall.Getpgid(currentPid)
+				currentHasPgid := err == nil && currentPgid > 0
 
 				// Kill forcefully with SIGKILL
-				if currentHasSid {
-					// Try to kill session if we have it
-					syscall.Kill(-currentSid, syscall.SIGKILL)
+				if currentHasPgid {
+					// Try to kill process group if we have it
+					syscall.Kill(-currentPgid, syscall.SIGKILL)
 				} else {
-					// Fall back to process group
-					currentPgid, err := syscall.Getpgid(currentPid)
-					currentHasPgid := err == nil && currentPgid > 0
-
-					if currentHasPgid {
-						// Try to kill process group if we have it
-						syscall.Kill(-currentPgid, syscall.SIGKILL)
-					} else {
-						// Kill just the process
-						syscall.Kill(currentPid, syscall.SIGKILL)
-					}
+					// Kill just the process
+					syscall.Kill(currentPid, syscall.SIGKILL)
 				}
 				// Also kill any remaining child processes
 				findAndKillChildProcesses(currentPid)
@@ -328,27 +309,18 @@ func isNoSuchProcess(err error) bool {
 
 // killProcessTree kills a process and all its children
 func killProcessTree(pid int) {
-	// Try to get session ID (SID)
-	sid, err := syscall.Getsid(pid)
-	if err == nil && sid > 0 {
-		// Kill entire session (all processes in session)
-		syscall.Kill(-sid, syscall.SIGTERM)
+	// Try to get process group
+	pgid, err := syscall.Getpgid(pid)
+	if err == nil && pgid > 0 {
+		// Kill entire process group
+		syscall.Kill(-pgid, syscall.SIGTERM)
 		time.Sleep(100 * time.Millisecond)
-		syscall.Kill(-sid, syscall.SIGKILL)
+		syscall.Kill(-pgid, syscall.SIGKILL)
 	} else {
-		// Fall back to process group
-		pgid, err := syscall.Getpgid(pid)
-		if err == nil && pgid > 0 {
-			// Kill entire process group
-			syscall.Kill(-pgid, syscall.SIGTERM)
-			time.Sleep(100 * time.Millisecond)
-			syscall.Kill(-pgid, syscall.SIGKILL)
-		} else {
-			// Fall back to killing just the process
-			syscall.Kill(pid, syscall.SIGTERM)
-			time.Sleep(100 * time.Millisecond)
-			syscall.Kill(pid, syscall.SIGKILL)
-		}
+		// Fall back to killing just the process
+		syscall.Kill(pid, syscall.SIGTERM)
+		time.Sleep(100 * time.Millisecond)
+		syscall.Kill(pid, syscall.SIGKILL)
 	}
 }
 
