@@ -96,9 +96,11 @@ func NewWithOTEL(name string, command string, args []string, shell string, handl
 	// Execute command in shell to support cd, &&, pipes, etc.
 	cmd := exec.CommandContext(ctx, shell, "-c", fullCommand)
 
-	// Set up process group for proper termination of shell and all child processes
+	// Set up session for proper termination of shell and all child processes
+	// Using Setsid instead of Setpgid creates a new session which is better for
+	// killing entire process trees (all descendants are in same session)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true, // Create new process group
+		Setsid: true, // Create new session
 	}
 
 	// Start with inherited environment
@@ -243,23 +245,33 @@ func (w *ProcessWrapper) Wait() error {
 func (w *ProcessWrapper) Stop() error {
 	if w.cmd.Process != nil {
 		pid := w.cmd.Process.Pid
-		// Get the process group ID (negative PID sends signal to process group)
-		pgid, err := syscall.Getpgid(pid)
-		hasPgid := err == nil && pgid > 0
+		// Try to get session ID first (most effective for killing entire tree)
+		sid, err := syscall.Getsid(pid)
+		hasSid := err == nil && sid > 0
 
-		// Always try to kill process group first for shell commands with children
-		// This ensures we kill the shell and all processes it spawned
-		if hasPgid {
-			// We have PGID, kill entire process group
-			// Send SIGTERM to entire process group (more forceful than SIGINT)
-			if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil && !isNoSuchProcess(err) {
-				fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGTERM to process group %d: %v\n", -pgid, err)
+		if hasSid {
+			// We have SID, kill entire session (all processes in session)
+			// Send SIGTERM to entire session
+			if err := syscall.Kill(-sid, syscall.SIGTERM); err != nil && !isNoSuchProcess(err) {
+				fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGTERM to session %d: %v\n", -sid, err)
 			}
 		} else {
-			// If we can't get PGID, kill just the process
-			// Send SIGTERM to process
-			if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !isNoSuchProcess(err) {
-				fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGTERM to process %d: %v\n", pid, err)
+			// Fall back to process group
+			pgid, err := syscall.Getpgid(pid)
+			hasPgid := err == nil && pgid > 0
+
+			if hasPgid {
+				// We have PGID, kill entire process group
+				// Send SIGTERM to entire process group
+				if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil && !isNoSuchProcess(err) {
+					fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGTERM to process group %d: %v\n", -pgid, err)
+				}
+			} else {
+				// If we can't get PGID, kill just the process
+				// Send SIGTERM to process
+				if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !isNoSuchProcess(err) {
+					fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGTERM to process %d: %v\n", pid, err)
+				}
 			}
 		}
 
@@ -281,21 +293,32 @@ func (w *ProcessWrapper) Stop() error {
 			// Check if process is still running
 			if w.cmd.Process != nil && w.IsRunning() {
 				fmt.Fprintf(os.Stderr, "[running-man] Process didn't stop gracefully, sending SIGKILL...\n")
-				// Re-get PID and PGID since they might have changed
+				// Re-get PID and SID/PGID since they might have changed
 				currentPid := w.cmd.Process.Pid
-				currentPgid, err := syscall.Getpgid(currentPid)
-				currentHasPgid := err == nil && currentPgid > 0
+				currentSid, err := syscall.Getsid(currentPid)
+				currentHasSid := err == nil && currentSid > 0
 
 				// Kill forcefully with SIGKILL
-				if currentHasPgid {
-					// Try to kill process group if we have it
-					if err := syscall.Kill(-currentPgid, syscall.SIGKILL); err != nil && !isNoSuchProcess(err) {
-						fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGKILL to process group %d: %v\n", -currentPgid, err)
+				if currentHasSid {
+					// Try to kill session if we have it
+					if err := syscall.Kill(-currentSid, syscall.SIGKILL); err != nil && !isNoSuchProcess(err) {
+						fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGKILL to session %d: %v\n", -currentSid, err)
 					}
 				} else {
-					// Kill just the process
-					if err := syscall.Kill(currentPid, syscall.SIGKILL); err != nil && !isNoSuchProcess(err) {
-						fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGKILL to process %d: %v\n", currentPid, err)
+					// Fall back to process group
+					currentPgid, err := syscall.Getpgid(currentPid)
+					currentHasPgid := err == nil && currentPgid > 0
+
+					if currentHasPgid {
+						// Try to kill process group if we have it
+						if err := syscall.Kill(-currentPgid, syscall.SIGKILL); err != nil && !isNoSuchProcess(err) {
+							fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGKILL to process group %d: %v\n", -currentPgid, err)
+						}
+					} else {
+						// Kill just the process
+						if err := syscall.Kill(currentPid, syscall.SIGKILL); err != nil && !isNoSuchProcess(err) {
+							fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGKILL to process %d: %v\n", currentPid, err)
+						}
 					}
 				}
 				// Also kill any remaining child processes
@@ -321,18 +344,27 @@ func isNoSuchProcess(err error) bool {
 
 // killProcessTree kills a process and all its children
 func killProcessTree(pid int) {
-	// First try to get process group and kill entire group
-	pgid, err := syscall.Getpgid(pid)
-	if err == nil && pgid > 0 {
-		// Kill entire process group
-		syscall.Kill(-pgid, syscall.SIGTERM)
+	// Try to get session ID (SID)
+	sid, err := syscall.Getsid(pid)
+	if err == nil && sid > 0 {
+		// Kill entire session (all processes in session)
+		syscall.Kill(-sid, syscall.SIGTERM)
 		time.Sleep(100 * time.Millisecond)
-		syscall.Kill(-pgid, syscall.SIGKILL)
+		syscall.Kill(-sid, syscall.SIGKILL)
 	} else {
-		// Fall back to killing just the process
-		syscall.Kill(pid, syscall.SIGTERM)
-		time.Sleep(100 * time.Millisecond)
-		syscall.Kill(pid, syscall.SIGKILL)
+		// Fall back to process group
+		pgid, err := syscall.Getpgid(pid)
+		if err == nil && pgid > 0 {
+			// Kill entire process group
+			syscall.Kill(-pgid, syscall.SIGTERM)
+			time.Sleep(100 * time.Millisecond)
+			syscall.Kill(-pgid, syscall.SIGKILL)
+		} else {
+			// Fall back to killing just the process
+			syscall.Kill(pid, syscall.SIGTERM)
+			time.Sleep(100 * time.Millisecond)
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
 	}
 }
 

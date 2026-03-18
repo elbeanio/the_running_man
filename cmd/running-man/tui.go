@@ -1677,14 +1677,6 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.sources) > 0 && !m.isTraceView() {
 			processName := m.sources[m.selectedSource]
 
-			// Add restart message to logs
-			now := time.Now().Format(time.RFC3339)
-			m.logs = append(m.logs, logEntry{
-				Timestamp: now,
-				Source:    "running-man",
-				Message:   fmt.Sprintf("Restarting process: %s", processName),
-			})
-
 			// Make async HTTP call to restart
 			go func() {
 				url := fmt.Sprintf("%s/processes/%s/restart", m.apiURL, processName)
