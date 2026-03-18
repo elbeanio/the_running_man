@@ -277,12 +277,8 @@ func (w *ProcessWrapper) Stop() error {
 
 		// Also proactively find and kill any child processes
 		// This helps with processes like Uvicorn that create child processes
-		// Run in goroutine so it doesn't block
-		go func() {
-			// Give processes a moment to start shutting down
-			time.Sleep(100 * time.Millisecond)
-			findAndKillChildProcesses(pid)
-		}()
+		// Run it immediately (not in goroutine) to avoid races
+		findAndKillChildProcesses(pid)
 
 		// Give it 2 seconds to shut down gracefully (reduced from 5 for faster restart)
 		w.timerMu.Lock()
@@ -380,6 +376,9 @@ func findAndKillChildProcesses(parentPid int) {
 
 	// Parse output to build parent-child relationships
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+
+	// Debug: log how many processes we found
+	fmt.Fprintf(os.Stderr, "[running-man] Debug: ps found %d total processes, looking for children of PID %d\n", len(lines), parentPid)
 	childPids := make(map[int]bool)
 
 	// First pass: find direct children
@@ -390,6 +389,7 @@ func findAndKillChildProcesses(parentPid int) {
 			ppid, _ := strconv.Atoi(fields[1])
 			if ppid == parentPid {
 				childPids[pid] = true
+				fmt.Fprintf(os.Stderr, "[running-man] Debug: Found direct child PID %d (PPID %d)\n", pid, ppid)
 			}
 		}
 	}
