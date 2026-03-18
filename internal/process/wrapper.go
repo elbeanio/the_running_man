@@ -25,6 +25,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -246,42 +247,59 @@ func (w *ProcessWrapper) Stop() error {
 		pgid, err := syscall.Getpgid(pid)
 		hasPgid := err == nil && pgid > 0
 
-		if !hasPgid {
-			// If we can't get PGID, kill just the process (not process group)
-			// Send SIGINT to process first (graceful)
-			if err := syscall.Kill(pid, syscall.SIGINT); err != nil && !isNoSuchProcess(err) {
-				// If SIGINT fails, send SIGTERM to process
-				if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !isNoSuchProcess(err) {
-					fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGTERM to process %d: %v\n", pid, err)
-				}
+		// Always try to kill process group first for shell commands with children
+		// This ensures we kill the shell and all processes it spawned
+		if hasPgid {
+			// We have PGID, kill entire process group
+			// Send SIGTERM to entire process group (more forceful than SIGINT)
+			if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil && !isNoSuchProcess(err) {
+				fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGTERM to process group %d: %v\n", -pgid, err)
 			}
 		} else {
-			// We have PGID, kill entire process group
-			// Send SIGINT to entire process group first (graceful)
-			if err := syscall.Kill(-pgid, syscall.SIGINT); err != nil && !isNoSuchProcess(err) {
-				// If SIGINT fails, send SIGTERM to process group
-				if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil && !isNoSuchProcess(err) {
-					fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGTERM to process group %d: %v\n", -pgid, err)
-				}
+			// If we can't get PGID, kill just the process
+			// Send SIGTERM to process
+			if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !isNoSuchProcess(err) {
+				fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGTERM to process %d: %v\n", pid, err)
 			}
 		}
 
-		// Give it 5 seconds to shut down gracefully
+		// Also proactively find and kill any child processes
+		// This helps with processes like Uvicorn that create child processes
+		// Run in goroutine so it doesn't block
+		go func() {
+			// Give processes a moment to start shutting down
+			time.Sleep(100 * time.Millisecond)
+			findAndKillChildProcesses(pid)
+		}()
+
+		// Give it 2 seconds to shut down gracefully (reduced from 5 for faster restart)
 		w.timerMu.Lock()
-		w.killTimer = time.AfterFunc(5*time.Second, func() {
-			if w.cmd.Process != nil {
-				fmt.Fprintf(os.Stderr, "[running-man] Process didn't stop gracefully, killing...\n")
-				// Kill forcefully
-				if hasPgid {
+		w.killTimer = time.AfterFunc(2*time.Second, func() {
+			w.timerMu.Lock()
+			defer w.timerMu.Unlock()
+
+			// Check if process is still running
+			if w.cmd.Process != nil && w.IsRunning() {
+				fmt.Fprintf(os.Stderr, "[running-man] Process didn't stop gracefully, sending SIGKILL...\n")
+				// Re-get PID and PGID since they might have changed
+				currentPid := w.cmd.Process.Pid
+				currentPgid, err := syscall.Getpgid(currentPid)
+				currentHasPgid := err == nil && currentPgid > 0
+
+				// Kill forcefully with SIGKILL
+				if currentHasPgid {
 					// Try to kill process group if we have it
-					if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil && !isNoSuchProcess(err) {
-						// Fall back to killing just the process
-						syscall.Kill(pid, syscall.SIGKILL)
+					if err := syscall.Kill(-currentPgid, syscall.SIGKILL); err != nil && !isNoSuchProcess(err) {
+						fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGKILL to process group %d: %v\n", -currentPgid, err)
 					}
 				} else {
 					// Kill just the process
-					syscall.Kill(pid, syscall.SIGKILL)
+					if err := syscall.Kill(currentPid, syscall.SIGKILL); err != nil && !isNoSuchProcess(err) {
+						fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGKILL to process %d: %v\n", currentPid, err)
+					}
 				}
+				// Also kill any remaining child processes
+				findAndKillChildProcesses(currentPid)
 			}
 		})
 		w.timerMu.Unlock()
@@ -299,6 +317,80 @@ func isNoSuchProcess(err error) bool {
 	return err != nil && (err.Error() == "no such process" ||
 		err.Error() == "process already finished" ||
 		err.Error() == "os: process already finished")
+}
+
+// killProcessTree kills a process and all its children
+func killProcessTree(pid int) {
+	// First try to get process group and kill entire group
+	pgid, err := syscall.Getpgid(pid)
+	if err == nil && pgid > 0 {
+		// Kill entire process group
+		syscall.Kill(-pgid, syscall.SIGTERM)
+		time.Sleep(100 * time.Millisecond)
+		syscall.Kill(-pgid, syscall.SIGKILL)
+	} else {
+		// Fall back to killing just the process
+		syscall.Kill(pid, syscall.SIGTERM)
+		time.Sleep(100 * time.Millisecond)
+		syscall.Kill(pid, syscall.SIGKILL)
+	}
+}
+
+// findAndKillChildProcesses finds and kills all child processes of the given PID
+func findAndKillChildProcesses(parentPid int) {
+	// Use ps to find all processes with PPID = parentPid
+	cmd := exec.Command("ps", "-o", "pid=", "-o", "ppid=", "-A")
+	output, err := cmd.Output()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[running-man] Warning: failed to list processes: %v\n", err)
+		return
+	}
+
+	// Parse output to build parent-child relationships
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	childPids := make(map[int]bool)
+
+	// First pass: find direct children
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			pid, _ := strconv.Atoi(fields[0])
+			ppid, _ := strconv.Atoi(fields[1])
+			if ppid == parentPid {
+				childPids[pid] = true
+			}
+		}
+	}
+
+	// Second pass: find grandchildren (children of children)
+	// Keep looping until no new children are found
+	changed := true
+	for changed {
+		changed = false
+		for _, line := range lines {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				pid, _ := strconv.Atoi(fields[0])
+				ppid, _ := strconv.Atoi(fields[1])
+				if childPids[ppid] && !childPids[pid] {
+					childPids[pid] = true
+					changed = true
+				}
+			}
+		}
+	}
+
+	// Kill all child processes
+	for childPid := range childPids {
+		// Try SIGTERM first, then SIGKILL
+		syscall.Kill(childPid, syscall.SIGTERM)
+		time.Sleep(50 * time.Millisecond)
+		syscall.Kill(childPid, syscall.SIGKILL)
+	}
+
+	if len(childPids) > 0 {
+		fmt.Fprintf(os.Stderr, "[running-man] Killed %d child process(es) of PID %d\n", len(childPids), parentPid)
+	}
 }
 
 // ExitCode returns the exit code of the process, or -1 if still running
