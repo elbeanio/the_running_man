@@ -252,9 +252,7 @@ func (w *ProcessWrapper) Stop() error {
 		if hasSid {
 			// We have SID, kill entire session (all processes in session)
 			// Send SIGTERM to entire session
-			if err := syscall.Kill(-sid, syscall.SIGTERM); err != nil && !isNoSuchProcess(err) {
-				fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGTERM to session %d: %v\n", -sid, err)
-			}
+			syscall.Kill(-sid, syscall.SIGTERM)
 		} else {
 			// Fall back to process group
 			pgid, err := syscall.Getpgid(pid)
@@ -263,15 +261,11 @@ func (w *ProcessWrapper) Stop() error {
 			if hasPgid {
 				// We have PGID, kill entire process group
 				// Send SIGTERM to entire process group
-				if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil && !isNoSuchProcess(err) {
-					fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGTERM to process group %d: %v\n", -pgid, err)
-				}
+				syscall.Kill(-pgid, syscall.SIGTERM)
 			} else {
 				// If we can't get PGID, kill just the process
 				// Send SIGTERM to process
-				if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !isNoSuchProcess(err) {
-					fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGTERM to process %d: %v\n", pid, err)
-				}
+				syscall.Kill(pid, syscall.SIGTERM)
 			}
 		}
 
@@ -297,9 +291,7 @@ func (w *ProcessWrapper) Stop() error {
 				// Kill forcefully with SIGKILL
 				if currentHasSid {
 					// Try to kill session if we have it
-					if err := syscall.Kill(-currentSid, syscall.SIGKILL); err != nil && !isNoSuchProcess(err) {
-						fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGKILL to session %d: %v\n", -currentSid, err)
-					}
+					syscall.Kill(-currentSid, syscall.SIGKILL)
 				} else {
 					// Fall back to process group
 					currentPgid, err := syscall.Getpgid(currentPid)
@@ -307,14 +299,10 @@ func (w *ProcessWrapper) Stop() error {
 
 					if currentHasPgid {
 						// Try to kill process group if we have it
-						if err := syscall.Kill(-currentPgid, syscall.SIGKILL); err != nil && !isNoSuchProcess(err) {
-							fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGKILL to process group %d: %v\n", -currentPgid, err)
-						}
+						syscall.Kill(-currentPgid, syscall.SIGKILL)
 					} else {
 						// Kill just the process
-						if err := syscall.Kill(currentPid, syscall.SIGKILL); err != nil && !isNoSuchProcess(err) {
-							fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGKILL to process %d: %v\n", currentPid, err)
-						}
+						syscall.Kill(currentPid, syscall.SIGKILL)
 					}
 				}
 				// Also kill any remaining child processes
@@ -376,9 +364,6 @@ func findAndKillChildProcesses(parentPid int) {
 
 	// Parse output to build parent-child relationships
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-
-	// Debug: log how many processes we found
-	fmt.Fprintf(os.Stderr, "[running-man] Debug: ps found %d total processes, looking for children of PID %d\n", len(lines), parentPid)
 	childPids := make(map[int]bool)
 
 	// First pass: find direct children
@@ -389,7 +374,6 @@ func findAndKillChildProcesses(parentPid int) {
 			ppid, _ := strconv.Atoi(fields[1])
 			if ppid == parentPid {
 				childPids[pid] = true
-				fmt.Fprintf(os.Stderr, "[running-man] Debug: Found direct child PID %d (PPID %d)\n", pid, ppid)
 			}
 		}
 	}
@@ -420,9 +404,6 @@ func findAndKillChildProcesses(parentPid int) {
 		syscall.Kill(childPid, syscall.SIGKILL)
 	}
 
-	if len(childPids) > 0 {
-		fmt.Fprintf(os.Stderr, "[running-man] Killed %d child process(es) of PID %d\n", len(childPids), parentPid)
-	}
 }
 
 // ExitCode returns the exit code of the process, or -1 if still running

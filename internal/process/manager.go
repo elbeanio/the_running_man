@@ -241,12 +241,19 @@ func (m *Manager) Restart(processName string) error {
 		m.handler(processName, fmt.Sprintf("Restarting process..."), time.Now(), false)
 
 		if err := existing.Stop(); err != nil {
-			fmt.Fprintf(os.Stderr, "[running-man] Warning: error stopping process %s: %v\n", processName, err)
+			// Log warning through handler
+			m.handler("running-man", fmt.Sprintf("Warning: error stopping process %s: %v", processName, err), time.Now(), true)
 		}
 		if err := existing.Wait(); err != nil {
 			// Ignore "Wait was already called" errors - process already exited
-			if !strings.Contains(err.Error(), "Wait was already called") {
-				fmt.Fprintf(os.Stderr, "[running-man] Warning: error waiting for process %s: %v\n", processName, err)
+			// Also ignore expected exit statuses when killing processes
+			if !strings.Contains(err.Error(), "Wait was already called") &&
+				!strings.Contains(err.Error(), "signal: killed") &&
+				!strings.Contains(err.Error(), "signal: terminated") &&
+				!strings.Contains(err.Error(), "exit status 1") && // Common when killed
+				!strings.Contains(err.Error(), "exit status 137") { // SIGKILL
+				// Log warning through handler for unexpected errors
+				m.handler("running-man", fmt.Sprintf("Warning: error waiting for process %s: %v", processName, err), time.Now(), true)
 			}
 		}
 	}
