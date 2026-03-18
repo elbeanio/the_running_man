@@ -241,18 +241,28 @@ func (w *ProcessWrapper) Wait() error {
 // Stop gracefully stops the process and all its children
 func (w *ProcessWrapper) Stop() error {
 	if w.cmd.Process != nil {
+		pid := w.cmd.Process.Pid
 		// Get the process group ID (negative PID sends signal to process group)
-		pgid, err := syscall.Getpgid(w.cmd.Process.Pid)
-		if err != nil {
-			// Fall back to killing just the process if we can't get PGID
-			pgid = w.cmd.Process.Pid
-		}
+		pgid, err := syscall.Getpgid(pid)
+		hasPgid := err == nil && pgid > 0
 
-		// Send SIGINT to entire process group first (graceful)
-		if err := syscall.Kill(-pgid, syscall.SIGINT); err != nil {
-			// If SIGINT fails, send SIGTERM to process group
-			if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
-				fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGTERM to process group %d: %v\n", -pgid, err)
+		if !hasPgid {
+			// If we can't get PGID, kill just the process (not process group)
+			// Send SIGINT to process first (graceful)
+			if err := syscall.Kill(pid, syscall.SIGINT); err != nil && !isNoSuchProcess(err) {
+				// If SIGINT fails, send SIGTERM to process
+				if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !isNoSuchProcess(err) {
+					fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGTERM to process %d: %v\n", pid, err)
+				}
+			}
+		} else {
+			// We have PGID, kill entire process group
+			// Send SIGINT to entire process group first (graceful)
+			if err := syscall.Kill(-pgid, syscall.SIGINT); err != nil && !isNoSuchProcess(err) {
+				// If SIGINT fails, send SIGTERM to process group
+				if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil && !isNoSuchProcess(err) {
+					fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGTERM to process group %d: %v\n", -pgid, err)
+				}
 			}
 		}
 
@@ -260,10 +270,17 @@ func (w *ProcessWrapper) Stop() error {
 		w.timerMu.Lock()
 		w.killTimer = time.AfterFunc(5*time.Second, func() {
 			if w.cmd.Process != nil {
-				fmt.Fprintf(os.Stderr, "[running-man] Process didn't stop gracefully, killing entire process group...\n")
-				// Kill entire process group forcefully
-				if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
-					fmt.Fprintf(os.Stderr, "[running-man] Failed to send SIGKILL to process group %d: %v\n", -pgid, err)
+				fmt.Fprintf(os.Stderr, "[running-man] Process didn't stop gracefully, killing...\n")
+				// Kill forcefully
+				if hasPgid {
+					// Try to kill process group if we have it
+					if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil && !isNoSuchProcess(err) {
+						// Fall back to killing just the process
+						syscall.Kill(pid, syscall.SIGKILL)
+					}
+				} else {
+					// Kill just the process
+					syscall.Kill(pid, syscall.SIGKILL)
 				}
 			}
 		})
@@ -274,6 +291,14 @@ func (w *ProcessWrapper) Stop() error {
 	w.cancel()
 
 	return nil
+}
+
+// isNoSuchProcess checks if a kill error is because the process doesn't exist
+func isNoSuchProcess(err error) bool {
+	// Check for "no such process" errors which are harmless when stopping
+	return err != nil && (err.Error() == "no such process" ||
+		err.Error() == "process already finished" ||
+		err.Error() == "os: process already finished")
 }
 
 // ExitCode returns the exit code of the process, or -1 if still running

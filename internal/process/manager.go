@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -240,7 +241,10 @@ func (m *Manager) Restart(processName string) error {
 			fmt.Fprintf(os.Stderr, "[running-man] Warning: error stopping process %s: %v\n", processName, err)
 		}
 		if err := existing.Wait(); err != nil {
-			fmt.Fprintf(os.Stderr, "[running-man] Warning: error waiting for process %s: %v\n", processName, err)
+			// Ignore "Wait was already called" errors - process already exited
+			if !strings.Contains(err.Error(), "Wait was already called") {
+				fmt.Fprintf(os.Stderr, "[running-man] Warning: error waiting for process %s: %v\n", processName, err)
+			}
 		}
 	}
 
