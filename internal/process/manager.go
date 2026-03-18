@@ -238,7 +238,7 @@ func (m *Manager) Restart(processName string) error {
 	// Wait outside the lock to avoid blocking other operations
 	if existing != nil {
 		// Log restart message
-		m.handler(processName, fmt.Sprintf("Restarting process..."), time.Now(), false)
+		m.handler(processName, "Restarting process...", time.Now(), false)
 
 		if err := existing.Stop(); err != nil {
 			// Log warning through handler

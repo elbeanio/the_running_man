@@ -252,11 +252,11 @@ func (w *ProcessWrapper) Stop() error {
 		if hasPgid {
 			// We have PGID, kill entire process group
 			// Send SIGTERM to entire process group
-			syscall.Kill(-pgid, syscall.SIGTERM)
+			_ = syscall.Kill(-pgid, syscall.SIGTERM)
 		} else {
 			// If we can't get PGID, kill just the process
 			// Send SIGTERM to process
-			syscall.Kill(pid, syscall.SIGTERM)
+			_ = syscall.Kill(pid, syscall.SIGTERM)
 		}
 
 		// Also proactively find and kill any child processes
@@ -281,10 +281,10 @@ func (w *ProcessWrapper) Stop() error {
 				// Kill forcefully with SIGKILL
 				if currentHasPgid {
 					// Try to kill process group if we have it
-					syscall.Kill(-currentPgid, syscall.SIGKILL)
+					_ = syscall.Kill(-currentPgid, syscall.SIGKILL)
 				} else {
 					// Kill just the process
-					syscall.Kill(currentPid, syscall.SIGKILL)
+					_ = syscall.Kill(currentPid, syscall.SIGKILL)
 				}
 				// Also kill any remaining child processes
 				findAndKillChildProcesses(currentPid)
@@ -297,31 +297,6 @@ func (w *ProcessWrapper) Stop() error {
 	w.cancel()
 
 	return nil
-}
-
-// isNoSuchProcess checks if a kill error is because the process doesn't exist
-func isNoSuchProcess(err error) bool {
-	// Check for "no such process" errors which are harmless when stopping
-	return err != nil && (err.Error() == "no such process" ||
-		err.Error() == "process already finished" ||
-		err.Error() == "os: process already finished")
-}
-
-// killProcessTree kills a process and all its children
-func killProcessTree(pid int) {
-	// Try to get process group
-	pgid, err := syscall.Getpgid(pid)
-	if err == nil && pgid > 0 {
-		// Kill entire process group
-		syscall.Kill(-pgid, syscall.SIGTERM)
-		time.Sleep(100 * time.Millisecond)
-		syscall.Kill(-pgid, syscall.SIGKILL)
-	} else {
-		// Fall back to killing just the process
-		syscall.Kill(pid, syscall.SIGTERM)
-		time.Sleep(100 * time.Millisecond)
-		syscall.Kill(pid, syscall.SIGKILL)
-	}
 }
 
 // findAndKillChildProcesses finds and kills all child processes of the given PID
@@ -371,9 +346,9 @@ func findAndKillChildProcesses(parentPid int) {
 	// Kill all child processes
 	for childPid := range childPids {
 		// Try SIGTERM first, then SIGKILL
-		syscall.Kill(childPid, syscall.SIGTERM)
+		_ = syscall.Kill(childPid, syscall.SIGTERM)
 		time.Sleep(50 * time.Millisecond)
-		syscall.Kill(childPid, syscall.SIGKILL)
+		_ = syscall.Kill(childPid, syscall.SIGKILL)
 	}
 
 }
