@@ -542,24 +542,59 @@ func (m model) View() string {
 	// Calculate available height for content
 	availableHeight := m.height - lipgloss.Height(header) - lipgloss.Height(searchBar) - lipgloss.Height(help) - 2
 
+	// Account for border (2 chars on each side for width, 1 line on top/bottom for height)
+	borderWidth := 2
+	borderHeight := 1
+	contentWidth := m.width - (borderWidth * 2)
+	contentHeight := availableHeight - (borderHeight * 2)
+	if contentWidth < 0 {
+		contentWidth = 0
+	}
+	if contentHeight < 0 {
+		contentHeight = 0
+	}
+
 	// Render content based on mode
 	var content string
 	switch m.mode {
 	case ModeTraceDetail:
 		// Render trace detail view
-		content = renderTraceDetail(m.selectedTraceID, m.traceSpans, m.traceLogs, availableHeight, m.width, m.traceDetailScrollOffset)
+		content = renderTraceDetail(m.selectedTraceID, m.traceSpans, m.traceLogs, contentHeight, contentWidth, m.traceDetailScrollOffset)
 	case ModeNormal:
 		// Check if we're in Traces tab
 		if len(m.sources) > 0 && m.sources[m.selectedSource] == "Traces" {
 			// Render trace list
-			content = renderTraceList(m.traces, availableHeight, m.width, m.traceScrollOffset, m.selectedTraceIdx)
+			content = renderTraceList(m.traces, contentHeight, contentWidth, m.traceScrollOffset, m.selectedTraceIdx)
 		} else {
 			// Render logs with search highlighting and current match index
-			content = renderLogs(m.logs, availableHeight, m.width, m.scrollOffset, m.searchQuery, m.searchMatchIdx, m.showTraceIDs)
+			content = renderLogs(m.logs, contentHeight, contentWidth, m.scrollOffset, m.searchQuery, m.searchMatchIdx, m.showTraceIDs)
 		}
 	default:
 		// For search mode or others, render logs
-		content = renderLogs(m.logs, availableHeight, m.width, m.scrollOffset, m.searchQuery, m.searchMatchIdx, m.showTraceIDs)
+		content = renderLogs(m.logs, contentHeight, contentWidth, m.scrollOffset, m.searchQuery, m.searchMatchIdx, m.showTraceIDs)
+	}
+
+	// Add colored border around content based on active tab
+	if len(m.sources) > 0 {
+		var borderColor lipgloss.Color
+		source := m.sources[m.selectedSource]
+
+		if source == "running-man" {
+			borderColor = lipgloss.Color("39") // Bright blue
+		} else if source == "Traces" {
+			borderColor = lipgloss.Color("93") // Bright purple
+		} else if isDockerContainer(source) {
+			borderColor = lipgloss.Color("42") // SpringGreen2
+		} else {
+			borderColor = lipgloss.Color("51") // Cyan
+		}
+
+		contentStyle := lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(borderColor).
+			Width(m.width)
+
+		content = contentStyle.Render(content)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, searchBar, content, help)
@@ -1366,52 +1401,60 @@ var (
 			Foreground(lipgloss.Color("15")).
 			Background(lipgloss.Color("57"))
 
-	// Tab styles for running-man (system logs) - Cyan/Blue
+	// Tab styles - White text on black background with colored borders
 	runningManTabStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("250")).
-				Background(lipgloss.Color("24")). // Dark blue
+				Foreground(lipgloss.Color("15")). // White
+				Background(lipgloss.Color("0")).  // Black
 				Padding(0, 1)
 
 	runningManSelectedTabStyle = lipgloss.NewStyle().
 					Bold(true).
-					Foreground(lipgloss.Color("15")).
-					Background(lipgloss.Color("39")). // Bright blue
+					Foreground(lipgloss.Color("15")). // White
+					Background(lipgloss.Color("0")).  // Black
+					Border(lipgloss.NormalBorder()).
+					BorderForeground(lipgloss.Color("39")). // Bright blue border
 					Padding(0, 1)
 
-	// Tab styles for Docker containers - Green
+	// Tab styles for Docker containers - Green border
 	dockerTabStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("250")).
-			Background(lipgloss.Color("29")). // SpringGreen4 - clearer green
+			Foreground(lipgloss.Color("15")). // White
+			Background(lipgloss.Color("0")).  // Black
 			Padding(0, 1)
 
 	dockerSelectedTabStyle = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(lipgloss.Color("15")).
-				Background(lipgloss.Color("42")). // SpringGreen2 - brighter green
+				Foreground(lipgloss.Color("15")). // White
+				Background(lipgloss.Color("0")).  // Black
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(lipgloss.Color("42")). // SpringGreen2 border
 				Padding(0, 1)
 
-	// Tab styles for processes - Cyan
+	// Tab styles for processes - Cyan border
 	processTabStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("250")).
-			Background(lipgloss.Color("30")). // DarkCyan - cyan
+			Foreground(lipgloss.Color("15")). // White
+			Background(lipgloss.Color("0")).  // Black
 			Padding(0, 1)
 
 	processSelectedTabStyle = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(lipgloss.Color("15")).
-				Background(lipgloss.Color("51")). // Cyan - brighter cyan
+				Foreground(lipgloss.Color("15")). // White
+				Background(lipgloss.Color("0")).  // Black
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(lipgloss.Color("51")). // Cyan border
 				Padding(0, 1)
 
-	// Tab styles for Traces view - Purple
+	// Tab styles for Traces view - Purple border
 	tracesTabStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("250")).
-			Background(lipgloss.Color("54")). // Dark purple
+			Foreground(lipgloss.Color("15")). // White
+			Background(lipgloss.Color("0")).  // Black
 			Padding(0, 1)
 
 	tracesSelectedTabStyle = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(lipgloss.Color("15")).
-				Background(lipgloss.Color("93")). // Bright purple
+				Foreground(lipgloss.Color("15")). // White
+				Background(lipgloss.Color("0")).  // Black
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(lipgloss.Color("93")). // Bright purple border
 				Padding(0, 1)
 
 	logStyle = lipgloss.NewStyle().

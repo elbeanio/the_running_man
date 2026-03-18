@@ -857,3 +857,62 @@ func TestModel_ToggleTraceIndicators(t *testing.T) {
 		t.Errorf("Pressing 't' again should toggle showTraceIDs from false to true, got %v", nm2.showTraceIDs)
 	}
 }
+
+func TestRenderHeader_TabStyles(t *testing.T) {
+	tests := []struct {
+		name     string
+		sources  []string
+		selected int
+	}{
+		{
+			name:     "running-man selected",
+			sources:  []string{"running-man", "backend", "frontend"},
+			selected: 0,
+		},
+		{
+			name:     "docker container selected",
+			sources:  []string{"running-man", "postgres", "redis"},
+			selected: 1,
+		},
+		{
+			name:     "process selected",
+			sources:  []string{"running-man", "backend", "frontend"},
+			selected: 1,
+		},
+		{
+			name:     "traces selected",
+			sources:  []string{"running-man", "Traces", "backend"},
+			selected: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := renderHeader(tt.sources, tt.selected)
+
+			// Basic validation - should contain all source names
+			for _, source := range tt.sources {
+				if !strings.Contains(result, source) {
+					t.Errorf("renderHeader result should contain source name %q", source)
+				}
+			}
+
+			// Check that we have the expected number of tabs
+			// Each tab is rendered with the source name
+			expectedTabCount := len(tt.sources)
+			uniqueCount := 0
+			for _, source := range tt.sources {
+				// Look for the source name in the result (with some padding)
+				if strings.Contains(result, " "+source+" ") ||
+					strings.Contains(result, "["+source+"]") ||
+					strings.Contains(result, " "+source) ||
+					strings.Contains(result, source+" ") {
+					uniqueCount++
+				}
+			}
+			if uniqueCount != expectedTabCount {
+				t.Errorf("Expected %d tabs, found %d unique sources in header", expectedTabCount, uniqueCount)
+			}
+		})
+	}
+}
