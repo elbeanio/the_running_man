@@ -38,3 +38,7 @@ the_running_man
 # Beads export state
 .beads/export-state/
 internal/api/openapi.yaml
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db
