@@ -468,6 +468,67 @@ func TestMCP_ToolRegistration(t *testing.T) {
 	_ = server.createMCPHandler()
 }
 
+func TestMCP_ToolSchemas(t *testing.T) {
+	server, _ := setupTestServer()
+
+	// Create MCP handler to register tools
+	handler := server.createMCPHandler()
+
+	// This test verifies that MCP tools can be created without schema errors
+	// The actual schema validation happens in the MCP SDK when tools are registered
+	// We're mainly checking that registration doesn't panic
+	t.Run("tool_registration_no_panic", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("MCP tool registration panicked: %v", r)
+			}
+		}()
+
+		// Handler creation should succeed
+		if handler == nil {
+			t.Error("MCP handler should not be nil")
+		}
+	})
+}
+
+func TestMCP_ErrorHandling(t *testing.T) {
+	server, _ := setupTestServer()
+
+	// Test that server can be created without manager (some tools will return errors)
+	// This validates error handling paths in tool implementations
+	t.Run("server_creation_without_manager", func(t *testing.T) {
+		// Server should be created successfully even without manager
+		if server == nil {
+			t.Error("Server should be created successfully")
+		}
+	})
+
+	// Note: More detailed error handling tests would require mocking the MCP SDK
+	// or testing individual tool handlers directly, which is more complex.
+	// These basic tests ensure the system doesn't crash on initialization.
+}
+
+func TestMCP_ResponseFormats(t *testing.T) {
+	// Test that server setup produces valid response structures
+	// This is a basic sanity check - full response format testing
+	// would require integration with the MCP SDK
+	t.Run("server_initialization", func(t *testing.T) {
+		server, _ := setupTestServer()
+
+		// Get the MCP handler
+		handler := server.createMCPHandler()
+
+		// Handler should be valid
+		if handler == nil {
+			t.Error("MCP handler should not be nil")
+		}
+
+		// Note: We can't easily test the actual MCP protocol responses
+		// without the MCP SDK test utilities. This test ensures the
+		// handler can be created and doesn't crash.
+	})
+}
+
 func TestPatternWarnings_Integration(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
 

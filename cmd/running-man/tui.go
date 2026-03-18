@@ -1671,6 +1671,23 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.isTraceView() {
 			m.showTraceIDs = !m.showTraceIDs
 		}
+
+	case "r":
+		// Restart current process (only in log view, not trace view)
+		if len(m.sources) > 0 && !m.isTraceView() {
+			processName := m.sources[m.selectedSource]
+
+			// Make async HTTP call to restart
+			go func() {
+				url := fmt.Sprintf("%s/processes/%s/restart", m.apiURL, processName)
+				resp, err := http.Post(url, "", nil)
+				if err != nil {
+					// Error will appear in logs via normal logging
+					return
+				}
+				resp.Body.Close()
+			}()
+		}
 	}
 
 	return m, nil

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -236,11 +237,30 @@ func (m *Manager) Restart(processName string) error {
 
 	// Wait outside the lock to avoid blocking other operations
 	if existing != nil {
+		// Log restart message if handler is available
+		if m.handler != nil {
+			m.handler(processName, "Restarting process...", time.Now(), false)
+		}
+
 		if err := existing.Stop(); err != nil {
-			fmt.Fprintf(os.Stderr, "[running-man] Warning: error stopping process %s: %v\n", processName, err)
+			// Log warning through handler if available
+			if m.handler != nil {
+				m.handler("running-man", fmt.Sprintf("Warning: error stopping process %s: %v", processName, err), time.Now(), true)
+			}
 		}
 		if err := existing.Wait(); err != nil {
-			fmt.Fprintf(os.Stderr, "[running-man] Warning: error waiting for process %s: %v\n", processName, err)
+			// Ignore "Wait was already called" errors - process already exited
+			// Also ignore expected exit statuses when killing processes
+			if !strings.Contains(err.Error(), "Wait was already called") &&
+				!strings.Contains(err.Error(), "signal: killed") &&
+				!strings.Contains(err.Error(), "signal: terminated") &&
+				!strings.Contains(err.Error(), "exit status 1") && // Common when killed
+				!strings.Contains(err.Error(), "exit status 137") { // SIGKILL
+				// Log warning through handler if available
+				if m.handler != nil {
+					m.handler("running-man", fmt.Sprintf("Warning: error waiting for process %s: %v", processName, err), time.Now(), true)
+				}
+			}
 		}
 	}
 
