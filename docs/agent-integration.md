@@ -331,18 +331,71 @@ All 11 MCP tools have been tested and verified:
 
 ## REST API (Alternative)
 
-If MCP is not available, agents can use the REST API:
+If MCP is not available, agents can use the REST API directly. The Running Man provides a comprehensive REST API with OpenAPI documentation available at `/docs`.
 
+### Quick Start
 ```bash
-# Recent errors
-curl "http://localhost:9000/errors?since=5m"
+# Interactive API documentation
+open http://localhost:9000/docs
 
-# Process status
-curl "http://localhost:9000/processes"
+# List all available endpoints
+curl http://localhost:9000/
 
-# Health check
-curl "http://localhost:9000/health"
+# System health and buffer stats
+curl http://localhost:9000/health
 ```
+
+### Common Debugging Patterns
+
+#### 1. Error Investigation
+```bash
+# Recent errors with context
+curl "http://localhost:9000/errors?since=10m"
+
+# Search for specific error patterns
+curl "http://localhost:9000/logs?contains='connection failed'&since=15m"
+```
+
+#### 2. Cross-Source Search
+```bash
+# Search across all backend services
+curl "http://localhost:9000/logs?source=app-*&since=5m"
+
+# Compare multiple services
+curl "http://localhost:9000/logs?source=api,worker,database&since=2m"
+```
+
+#### 3. Trace-Log Correlation
+```bash
+# Find traces with errors
+curl "http://localhost:9000/traces?status=error&since=5m"
+
+# Get all logs for a specific trace
+curl "http://localhost:9000/traces/{trace_id}/logs"
+```
+
+#### 4. Process Management
+```bash
+# Check all processes
+curl http://localhost:9000/processes
+
+# Restart a failing process
+curl -X POST http://localhost:9000/processes/{name}/restart
+```
+
+### OpenCode Skill
+For OpenCode users, load the `debug-logs` skill for comprehensive debugging guidance:
+```bash
+# The skill is automatically discovered when .opencode/skills/debug-logs/SKILL.md exists
+# Agents can load it with: skill({ name: "debug-logs" })
+```
+
+### API Features
+- **Glob pattern support**: Use `*` in source names (e.g., `app-*`)
+- **Flexible time filters**: `since` parameter accepts durations like "30s", "5m", "1h"
+- **Multi-source queries**: Comma-separated source lists
+- **Trace correlation**: Automatic trace ID extraction from logs
+- **OpenAPI documentation**: Interactive docs at `/docs`
 
 See [api-reference.md](api-reference.md) for complete API documentation.
 
