@@ -1062,16 +1062,16 @@ func renderHeader(sources []string, selected int, width int) string {
 		style := normalStyle
 		if i == selected {
 			style = selectedStyle
-			// Active tab: background = active color, text = black, borders = neutral
+			// DEBUG: Try bright white text instead of black for better contrast
 			style = style.
 				Background(activeTabColor).
-				Foreground(lipgloss.Color("0")). // Black
+				Foreground(lipgloss.Color("15")). // Bright white (instead of black)
 				BorderForeground(neutralBorderColor)
 		} else {
-			// Inactive tab: background = black, text = white, borders = neutral
+			// Inactive tab: background = dark grey, text = bright white, borders = neutral
 			style = style.
-				Background(lipgloss.Color("0")).  // Black
-				Foreground(lipgloss.Color("15")). // White (bright)
+				Background(lipgloss.Color("236")). // Dark grey (not pure black)
+				Foreground(lipgloss.Color("15")).  // Bright white
 				BorderForeground(neutralBorderColor)
 		}
 
@@ -1511,7 +1511,7 @@ var (
 
 	runningManSelectedTabStyle = runningManTabStyle.
 					Bold(true).
-					Background(lipgloss.Color("0")). // Black
+					Background(lipgloss.Color("#000000")). // True black
 					Border(activeTabBorder, true)
 
 	// Docker tabs - Green
