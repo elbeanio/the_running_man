@@ -1018,24 +1018,27 @@ func renderHeader(sources []string, selected int, width int) string {
 		return headerStyle.Render("Loading sources...")
 	}
 
-	// Determine active tab color
+	// Determine active tab color (distinct, readable colors)
 	var activeTabColor lipgloss.Color
 	if selected < len(sources) {
 		source := sources[selected]
 		if source == "running-man" {
-			activeTabColor = lipgloss.Color("39") // Blue
+			activeTabColor = lipgloss.Color("33") // Dodger blue
 		} else if source == "Traces" {
-			activeTabColor = lipgloss.Color("93") // Purple
+			activeTabColor = lipgloss.Color("127") // Medium purple
 		} else if isDockerContainer(source) {
-			activeTabColor = lipgloss.Color("42") // Green
+			activeTabColor = lipgloss.Color("70") // Medium sea green
 		} else {
-			activeTabColor = lipgloss.Color("51") // Cyan
+			activeTabColor = lipgloss.Color("37") // Cyan
 		}
 	} else {
-		activeTabColor = lipgloss.Color("39") // Default blue
+		activeTabColor = lipgloss.Color("33") // Default blue
 	}
 
-	// Build tabs - ALL tabs use active tab color when rendered
+	// All borders use neutral grey color
+	neutralBorderColor := lipgloss.Color("240") // Dark grey
+
+	// Build tabs with neutral borders, colored content
 	tabs := []string{}
 	for i, source := range sources {
 		// Determine style based on source group
@@ -1059,10 +1062,18 @@ func renderHeader(sources []string, selected int, width int) string {
 		style := normalStyle
 		if i == selected {
 			style = selectedStyle
+			// Active tab: background = active color, text = black, borders = neutral
+			style = style.
+				Background(activeTabColor).
+				Foreground(lipgloss.Color("0")). // Black
+				BorderForeground(neutralBorderColor)
+		} else {
+			// Inactive tab: background = black, text = white, borders = neutral
+			style = style.
+				Background(lipgloss.Color("0")).  // Black
+				Foreground(lipgloss.Color("15")). // White (bright)
+				BorderForeground(neutralBorderColor)
 		}
-
-		// Override border color to match active tab
-		style = style.BorderForeground(activeTabColor)
 
 		tabs = append(tabs, style.Render(fmt.Sprintf(" %s ", source)))
 	}
@@ -1073,15 +1084,15 @@ func renderHeader(sources []string, selected int, width int) string {
 	// Shift tabs right by 2 spaces
 	leftMargin := 2
 
-	// Create gap style with active tab color (for right gap)
+	// Create gap style with neutral border color
 	gapStyle := lipgloss.NewStyle().
 		Border(tabBorder, false, false, true, false). // Only bottom border
-		BorderForeground(activeTabColor)
+		BorderForeground(neutralBorderColor)
 
 	// Left gap: corner + border line "┌──"
 	// This shows where content box corner would be
 	leftGapStyle := lipgloss.NewStyle().
-		Foreground(activeTabColor)
+		Foreground(neutralBorderColor)
 	leftGap := leftGapStyle.Render("┌" + strings.Repeat("─", leftMargin))
 
 	// Right gap (after tabs) - fills remaining space with bottom border
@@ -1090,7 +1101,7 @@ func renderHeader(sources []string, selected int, width int) string {
 
 	// Add corner at the end
 	cornerStyle := lipgloss.NewStyle().
-		Foreground(activeTabColor)
+		Foreground(neutralBorderColor)
 	corner := cornerStyle.Render("┐")
 
 	// Join left gap + tabs + right gap + corner with Bottom alignment
