@@ -888,7 +888,7 @@ func TestRenderHeader_TabStyles(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := renderHeader(tt.sources, tt.selected)
+			result := renderHeader(tt.sources, tt.selected, 80)
 
 			// Basic validation - should contain all source names
 			for _, source := range tt.sources {

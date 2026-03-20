@@ -456,7 +456,7 @@ func (m model) View() string {
 	}
 
 	// Header with source tabs
-	header := renderHeader(m.sources, m.selectedSource)
+	header := renderHeader(m.sources, m.selectedSource, m.width)
 
 	// Search bar - use textinput when in search mode
 	var searchBar string
@@ -542,11 +542,10 @@ func (m model) View() string {
 	// Calculate available height for content
 	availableHeight := m.height - lipgloss.Height(header) - lipgloss.Height(searchBar) - lipgloss.Height(help) - 2
 
-	// Account for border (2 chars on each side for width, 1 line on bottom for height)
+	// Account for border (borders are added OUTSIDE content width)
 	// No top border since it connects with active tab
-	borderWidth := 2
-	borderHeight := 1 // Only bottom border
-	contentWidth := m.width - (borderWidth * 2)
+	borderHeight := 1                               // Only bottom border
+	contentWidth := m.width - 2                     // Content is 2 chars narrower for left/right borders
 	contentHeight := availableHeight - borderHeight // Only subtract bottom border
 	if contentWidth < 0 {
 		contentWidth = 0
@@ -595,12 +594,18 @@ func (m model) View() string {
 			Border(lipgloss.NormalBorder()).
 			BorderTop(false). // No top border to connect with active tab
 			BorderForeground(borderColor).
-			Width(m.width)
+			Width(m.width - 2) // Borders are added OUTSIDE width
 
 		content = contentStyle.Render(content)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, searchBar, content, help)
+	// Only include searchBar when it's not empty
+	components := []string{header}
+	if searchBar != "" {
+		components = append(components, searchBar)
+	}
+	components = append(components, content, help)
+	return lipgloss.JoinVertical(lipgloss.Left, components...)
 }
 
 func renderTraceList(traces []traceSummary, height, width, scrollOffset, selectedIdx int) string {
@@ -1008,11 +1013,29 @@ func isDockerContainer(name string) bool {
 	return false
 }
 
-func renderHeader(sources []string, selected int) string {
+func renderHeader(sources []string, selected int, width int) string {
 	if len(sources) == 0 {
 		return headerStyle.Render("Loading sources...")
 	}
 
+	// Determine active tab color
+	var activeTabColor lipgloss.Color
+	if selected < len(sources) {
+		source := sources[selected]
+		if source == "running-man" {
+			activeTabColor = lipgloss.Color("39") // Blue
+		} else if source == "Traces" {
+			activeTabColor = lipgloss.Color("93") // Purple
+		} else if isDockerContainer(source) {
+			activeTabColor = lipgloss.Color("42") // Green
+		} else {
+			activeTabColor = lipgloss.Color("51") // Cyan
+		}
+	} else {
+		activeTabColor = lipgloss.Color("39") // Default blue
+	}
+
+	// Build tabs - ALL tabs use active tab color when rendered
 	tabs := []string{}
 	for i, source := range sources {
 		// Determine style based on source group
@@ -1038,10 +1061,40 @@ func renderHeader(sources []string, selected int) string {
 			style = selectedStyle
 		}
 
+		// Override border color to match active tab
+		style = style.BorderForeground(activeTabColor)
+
 		tabs = append(tabs, style.Render(fmt.Sprintf(" %s ", source)))
 	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
+	// Join tabs horizontally at top
+	row := lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
+
+	// Shift tabs right by 2 spaces
+	leftMargin := 2
+
+	// Create gap style with active tab color (for right gap)
+	gapStyle := lipgloss.NewStyle().
+		Border(tabBorder, false, false, true, false). // Only bottom border
+		BorderForeground(activeTabColor)
+
+	// Left gap: corner + border line "┌──"
+	// This shows where content box corner would be
+	leftGapStyle := lipgloss.NewStyle().
+		Foreground(activeTabColor)
+	leftGap := leftGapStyle.Render("┌" + strings.Repeat("─", leftMargin))
+
+	// Right gap (after tabs) - fills remaining space with bottom border
+	rightGapWidth := max(0, width-lipgloss.Width(row)-lipgloss.Width(leftGap)-1) // -1 for corner
+	rightGap := gapStyle.Render(strings.Repeat(" ", rightGapWidth))
+
+	// Add corner at the end
+	cornerStyle := lipgloss.NewStyle().
+		Foreground(activeTabColor)
+	corner := cornerStyle.Render("┐")
+
+	// Join left gap + tabs + right gap + corner with Bottom alignment
+	return lipgloss.JoinHorizontal(lipgloss.Bottom, leftGap, row, rightGap, corner)
 }
 
 func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery string, currentMatchIdx int, showTraceIDs bool) string {
@@ -1120,10 +1173,11 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 
 			// Truncate long lines (only if trace indicator wasn't added above)
 			// When trace indicator is added, we've already handled truncation
-			if !(i == 0 && showTraceIDs && log.TraceID != "") && lipgloss.Width(line) > width-2 {
+			// Use width-10 to ensure plenty of room for right border
+			if !(i == 0 && showTraceIDs && log.TraceID != "") && lipgloss.Width(line) > width-10 {
 				// Need to truncate the unstyled string, not the styled one
 				// Find how many characters to keep
-				charsToKeep := width - 5 // Leave room for "..."
+				charsToKeep := width - 13 // Leave room for "..."
 				if charsToKeep < 0 {
 					charsToKeep = 0
 				}
@@ -1404,82 +1458,83 @@ var (
 			Foreground(lipgloss.Color("15")).
 			Background(lipgloss.Color("57"))
 
-	// Tab styles - White text on black background with colored borders
-	// Non-active tabs: white text on dark gray background with top padding to match border height
-	runningManTabStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("15")).  // White
-				Background(lipgloss.Color("236")). // Dark gray
-				Padding(0, 1).
-				PaddingTop(1) // Add top padding to align with bordered tab
+	// Tab border definitions from lipgloss example (using NormalBorder characters)
+	activeTabBorder = lipgloss.Border{
+		Top:         "─",
+		Bottom:      " ", // Space to connect with content box
+		Left:        "│",
+		Right:       "│",
+		TopLeft:     "┌",
+		TopRight:    "┐",
+		BottomLeft:  "┘",
+		BottomRight: "└",
+	}
 
-	runningManSelectedTabStyle = lipgloss.NewStyle().
+	tabBorder = lipgloss.Border{
+		Top:         "─",
+		Bottom:      "─",
+		Left:        "│",
+		Right:       "│",
+		TopLeft:     "┌",
+		TopRight:    "┐",
+		BottomLeft:  "┴",
+		BottomRight: "┴",
+	}
+
+	// Base tab style
+	baseTabStyle = lipgloss.NewStyle().
+			Border(tabBorder, true).
+			Padding(0, 1)
+
+	// Tab gap style (for filling remaining space)
+	tabGapStyle = baseTabStyle.
+			BorderTop(false).
+			BorderLeft(false).
+			BorderRight(false)
+
+	// Tab styles with different border colors
+	runningManTabStyle = baseTabStyle.
+				BorderForeground(lipgloss.Color("39")). // Blue
+				Foreground(lipgloss.Color("15")).       // White
+				Background(lipgloss.Color("236"))       // Dark gray
+
+	runningManSelectedTabStyle = runningManTabStyle.
 					Bold(true).
-					Foreground(lipgloss.Color("15")). // White
-					Background(lipgloss.Color("0")).  // Black
-					Border(lipgloss.NormalBorder()).
-					BorderTop(true).
-					BorderLeft(true).
-					BorderRight(true).
-					BorderBottom(false).                    // No bottom border to connect with content
-					BorderForeground(lipgloss.Color("39")). // Bright blue border
-					Padding(0, 1)
+					Background(lipgloss.Color("0")). // Black
+					Border(activeTabBorder, true)
 
-	// Tab styles for Docker containers - Green border
-	dockerTabStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("15")).  // White
-			Background(lipgloss.Color("236")). // Dark gray
-			Padding(0, 1).
-			PaddingTop(1) // Add top padding to align with bordered tab
+	// Docker tabs - Green
+	dockerTabStyle = baseTabStyle.
+			BorderForeground(lipgloss.Color("42")). // Green
+			Foreground(lipgloss.Color("15")).       // White
+			Background(lipgloss.Color("236"))       // Dark gray
 
-	dockerSelectedTabStyle = lipgloss.NewStyle().
+	dockerSelectedTabStyle = dockerTabStyle.
 				Bold(true).
-				Foreground(lipgloss.Color("15")). // White
-				Background(lipgloss.Color("0")).  // Black
-				Border(lipgloss.NormalBorder()).
-				BorderTop(true).
-				BorderLeft(true).
-				BorderRight(true).
-				BorderBottom(false).                    // No bottom border to connect with content
-				BorderForeground(lipgloss.Color("42")). // SpringGreen2 border
-				Padding(0, 1)
+				Background(lipgloss.Color("0")). // Black
+				Border(activeTabBorder, true)
 
-	// Tab styles for processes - Cyan border
-	processTabStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("15")).  // White
-			Background(lipgloss.Color("236")). // Dark gray
-			Padding(0, 1).
-			PaddingTop(1) // Add top padding to align with bordered tab
+	// Process tabs - Cyan
+	processTabStyle = baseTabStyle.
+			BorderForeground(lipgloss.Color("51")). // Cyan
+			Foreground(lipgloss.Color("15")).       // White
+			Background(lipgloss.Color("236"))       // Dark gray
 
-	processSelectedTabStyle = lipgloss.NewStyle().
+	processSelectedTabStyle = processTabStyle.
 				Bold(true).
-				Foreground(lipgloss.Color("15")). // White
-				Background(lipgloss.Color("0")).  // Black
-				Border(lipgloss.NormalBorder()).
-				BorderTop(true).
-				BorderLeft(true).
-				BorderRight(true).
-				BorderBottom(false).                    // No bottom border to connect with content
-				BorderForeground(lipgloss.Color("51")). // Cyan border
-				Padding(0, 1)
+				Background(lipgloss.Color("0")). // Black
+				Border(activeTabBorder, true)
 
-	// Tab styles for Traces view - Purple border
-	tracesTabStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("15")).  // White
-			Background(lipgloss.Color("236")). // Dark gray
-			Padding(0, 1).
-			PaddingTop(1) // Add top padding to align with bordered tab
+	// Traces tabs - Purple
+	tracesTabStyle = baseTabStyle.
+			BorderForeground(lipgloss.Color("93")). // Purple
+			Foreground(lipgloss.Color("15")).       // White
+			Background(lipgloss.Color("236"))       // Dark gray
 
-	tracesSelectedTabStyle = lipgloss.NewStyle().
+	tracesSelectedTabStyle = tracesTabStyle.
 				Bold(true).
-				Foreground(lipgloss.Color("15")). // White
-				Background(lipgloss.Color("0")).  // Black
-				Border(lipgloss.NormalBorder()).
-				BorderTop(true).
-				BorderLeft(true).
-				BorderRight(true).
-				BorderBottom(false).                    // No bottom border to connect with content
-				BorderForeground(lipgloss.Color("93")). // Bright purple border
-				Padding(0, 1)
+				Background(lipgloss.Color("0")). // Black
+				Border(activeTabBorder, true)
 
 	logStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("252"))
@@ -1782,11 +1837,11 @@ func scrollToMatch(m model) model {
 	return m
 }
 
-func tuiCommand(args []string) {
-	tuiCommandWithManager(args, nil)
+func TuiCommand(args []string) {
+	TuiCommandWithManager(args, nil)
 }
 
-func tuiCommandWithManager(args []string, manager *process.Manager) {
+func TuiCommandWithManager(args []string, manager *process.Manager) {
 	// Parse flags
 	fs := flag.NewFlagSet("tui", flag.ExitOnError)
 	apiPort := fs.Int("api-port", defaultAPIPort, "API server port")

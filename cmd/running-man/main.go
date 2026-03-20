@@ -105,7 +105,7 @@ func main() {
 	case "run":
 		runCommand(os.Args[2:])
 	case "tui":
-		tuiCommand(os.Args[2:])
+		TuiCommand(os.Args[2:])
 	case "version":
 		fmt.Println("The Running Man v0.1.0 (Phase 1)")
 		os.Exit(0)
@@ -451,7 +451,7 @@ func runCommand(args []string) {
 		time.Sleep(200 * time.Millisecond) // Give API a moment to stabilize
 
 		// Run TUI with manager reference so it can stop processes on quit
-		tuiCommandWithManager([]string{fmt.Sprintf("--api-port=%d", finalAPIPort)}, manager)
+		TuiCommandWithManager([]string{fmt.Sprintf("--api-port=%d", finalAPIPort)}, manager)
 
 		// TUI exited (user pressed 'q') - stop processes and clean up
 		fmt.Printf("\n[running-man] Shutting down processes...\n")
