@@ -945,33 +945,6 @@ func renderSpanNode(span spanDetail, children map[string][]spanDetail, prefix st
 	}
 }
 
-// sortSources sorts sources alphabetically with "running-man" always first.
-// Deprecated: Use sortSourcesWithTypes instead when source types are available.
-func sortSources(sources []string) []string {
-	// Simple sort: "running-man" first, then alphabetical
-	result := make([]string, len(sources))
-	copy(result, sources)
-
-	// Put "running-man" first if present
-	for i, source := range result {
-		if source == "running-man" && i > 0 {
-			result[0], result[i] = result[i], result[0]
-			break
-		}
-	}
-
-	// Sort the rest alphabetically
-	startIdx := 0
-	if len(result) > 0 && result[0] == "running-man" {
-		startIdx = 1
-	}
-	if startIdx < len(result) {
-		sort.Strings(result[startIdx:])
-	}
-
-	return result
-}
-
 // sortSourcesWithTypes sorts sources by type (running-man, docker, process) then alphabetically.
 func sortSourcesWithTypes(sources []string, sourceTypes map[string]string) []string {
 	// Group by type
@@ -1081,7 +1054,7 @@ func renderHeader(sources []string, selected int, width int, sourceTypes map[str
 		}
 
 		// Add emoji prefix - use variation selector for gear
-		displayName := source
+		var displayName string
 		if source == "running-man" {
 			displayName = "🏃‍➡️  " + source // Running man facing right
 		} else if source == "Traces" {
@@ -1515,12 +1488,6 @@ var (
 	baseTabStyle = lipgloss.NewStyle().
 			Border(tabBorder, true).
 			Padding(0, 1)
-
-	// Tab gap style (for filling remaining space)
-	tabGapStyle = baseTabStyle.
-			BorderTop(false).
-			BorderLeft(false).
-			BorderRight(false)
 
 	// Tab styles with different border colors
 	runningManTabStyle = baseTabStyle.
