@@ -241,11 +241,12 @@ func stripANSI(s string) string {
 	return result
 }
 
-func TestSortSources(t *testing.T) {
+func TestSortSourcesWithTypes(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    []string
-		expected []string
+		name        string
+		input       []string
+		sourceTypes map[string]string
+		expected    []string
 	}{
 		{
 			name: "all groups present",
@@ -256,12 +257,19 @@ func TestSortSources(t *testing.T) {
 				"the_running_man-db-1",
 				"another-process",
 			},
+			sourceTypes: map[string]string{
+				"running-man":           "system",
+				"the_running_man-web-1": "docker",
+				"the_running_man-db-1":  "docker",
+				"my-process":            "process",
+				"another-process":       "process",
+			},
 			expected: []string{
-				"running-man",
-				"the_running_man-db-1",
-				"the_running_man-web-1",
-				"another-process",
-				"my-process",
+				"running-man",           // system first
+				"the_running_man-db-1",  // docker (alphabetical)
+				"the_running_man-web-1", // docker (alphabetical)
+				"another-process",       // process (alphabetical)
+				"my-process",            // process (alphabetical)
 			},
 		},
 		{
@@ -271,10 +279,15 @@ func TestSortSources(t *testing.T) {
 				"api",
 				"frontend",
 			},
+			sourceTypes: map[string]string{
+				"worker":   "process",
+				"api":      "process",
+				"frontend": "process",
+			},
 			expected: []string{
-				"api",
-				"frontend",
-				"worker",
+				"api",      // process (alphabetical)
+				"frontend", // process (alphabetical)
+				"worker",   // process (alphabetical)
 			},
 		},
 		{
@@ -284,10 +297,15 @@ func TestSortSources(t *testing.T) {
 				"myapp-postgres-1",
 				"myapp-nginx-1",
 			},
+			sourceTypes: map[string]string{
+				"myapp-redis-1":    "docker",
+				"myapp-postgres-1": "docker",
+				"myapp-nginx-1":    "docker",
+			},
 			expected: []string{
-				"myapp-nginx-1",
-				"myapp-postgres-1",
-				"myapp-redis-1",
+				"myapp-nginx-1",    // docker (alphabetical)
+				"myapp-postgres-1", // docker (alphabetical)
+				"myapp-redis-1",    // docker (alphabetical)
 			},
 		},
 		{
@@ -295,30 +313,39 @@ func TestSortSources(t *testing.T) {
 			input: []string{
 				"running-man",
 			},
+			sourceTypes: map[string]string{
+				"running-man": "system",
+			},
 			expected: []string{
 				"running-man",
 			},
 		},
 		{
-			name: "mixed with underscores",
+			name: "mixed with unknown types",
 			input: []string{
 				"simple",
 				"my_app_web_1",
 				"running-man",
 				"my_app_db_1",
 			},
+			sourceTypes: map[string]string{
+				"running-man":  "system",
+				"my_app_web_1": "docker",
+				"my_app_db_1":  "docker",
+				// "simple" has no type -> unknown
+			},
 			expected: []string{
-				"running-man",
-				"my_app_db_1",
-				"my_app_web_1",
-				"simple",
+				"running-man",  // system
+				"my_app_db_1",  // docker (alphabetical)
+				"my_app_web_1", // docker (alphabetical)
+				"simple",       // unknown
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := sortSources(tt.input)
+			result := sortSourcesWithTypes(tt.input, tt.sourceTypes)
 
 			if len(result) != len(tt.expected) {
 				t.Fatalf("Expected %d sources, got %d", len(tt.expected), len(result))
@@ -336,28 +363,20 @@ func TestSortSources(t *testing.T) {
 
 func TestIsDockerContainer(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		expected bool
+		name        string
+		input       string
+		sourceTypes map[string]string
+		expected    bool
 	}{
-		// Docker Compose containers (should be true)
-		{"compose with dash", "myapp-web-1", true},
-		{"compose with underscore", "my_app_web_1", true},
-		{"compose multiple services", "project-redis-server-1", true},
-		{"compose with hash", "myapp-web-a1b2c3d4e5f6", true},
-
-		// Not Docker containers (should be false)
-		{"simple name", "web", false},
-		{"single dash", "my-process", false},
-		{"two parts", "app-server", false},
-		{"running-man", "running-man", false},
-		{"process name", "python-server", false},
-		{"short name", "api", false},
+		{"docker with type info", "myapp-web-1", map[string]string{"myapp-web-1": "docker"}, true},
+		{"process with type info", "backend", map[string]string{"backend": "process"}, false},
+		{"no type info", "unknown", nil, false},
+		{"running-man special", "running-man", map[string]string{"running-man": "system"}, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isDockerContainer(tt.input)
+			result := isDockerContainer(tt.input, tt.sourceTypes)
 			if result != tt.expected {
 				t.Errorf("isDockerContainer(%q) = %v, expected %v", tt.input, result, tt.expected)
 			}
@@ -888,7 +907,7 @@ func TestRenderHeader_TabStyles(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := renderHeader(tt.sources, tt.selected, 80)
+			result := renderHeader(tt.sources, tt.selected, 80, nil)
 
 			// Basic validation - should contain all source names
 			for _, source := range tt.sources {

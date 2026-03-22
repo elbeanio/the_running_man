@@ -44,6 +44,7 @@ const (
 type model struct {
 	apiURL         string
 	sources        []string
+	sourceTypes    map[string]string // source name -> type ("process", "docker", "system", "traces")
 	selectedSource int
 	logs           []logEntry
 	err            error
@@ -116,11 +117,15 @@ type healthResponse struct {
 
 type sourceInfo struct {
 	Name       string `json:"name"`
+	Type       string `json:"type"`
 	EntryCount int    `json:"entry_count"`
 }
 
 // Messages for async operations
-type sourcesMsg []string
+type sourcesMsg struct {
+	names []string
+	types map[string]string
+}
 type logsMsg []logEntry
 type tracesMsg []traceSummary
 type traceSpansMsg []spanDetail
@@ -345,6 +350,7 @@ func initialModel(apiURL string, manager *process.Manager) model {
 	return model{
 		apiURL:         apiURL,
 		sources:        []string{},
+		sourceTypes:    make(map[string]string),
 		selectedSource: 0,
 		logs:           []logEntry{},
 		width:          80,
@@ -400,9 +406,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 	case sourcesMsg:
-		m.sources = sortSources(msg)
+		m.sourceTypes = msg.types
+		m.sources = sortSourcesWithTypes(msg.names, msg.types)
 		// Add "Traces" as a special tab at the end
 		m.sources = append(m.sources, "Traces")
+		if m.sourceTypes == nil {
+			m.sourceTypes = make(map[string]string)
+		}
+		m.sourceTypes["Traces"] = "traces"
 		if len(m.sources) > 0 {
 			return m, fetchLogs(m.apiURL, m.sources[m.selectedSource])
 		}
@@ -456,7 +467,7 @@ func (m model) View() string {
 	}
 
 	// Header with source tabs
-	header := renderHeader(m.sources, m.selectedSource, m.width)
+	header := renderHeader(m.sources, m.selectedSource, m.width, m.sourceTypes)
 
 	// Search bar - use textinput when in search mode
 	var searchBar string
@@ -574,27 +585,14 @@ func (m model) View() string {
 		content = renderLogs(m.logs, contentHeight, contentWidth, m.scrollOffset, m.searchQuery, m.searchMatchIdx, m.showTraceIDs)
 	}
 
-	// Add colored border around content based on active tab
+	// Add neutral grey border around content (matches header borders)
 	// No top border to connect with active tab
 	if len(m.sources) > 0 {
-		var borderColor lipgloss.Color
-		source := m.sources[m.selectedSource]
-
-		if source == "running-man" {
-			borderColor = lipgloss.Color("39") // Bright blue
-		} else if source == "Traces" {
-			borderColor = lipgloss.Color("93") // Bright purple
-		} else if isDockerContainer(source) {
-			borderColor = lipgloss.Color("42") // SpringGreen2
-		} else {
-			borderColor = lipgloss.Color("51") // Cyan
-		}
-
 		contentStyle := lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder()).
-			BorderTop(false). // No top border to connect with active tab
-			BorderForeground(borderColor).
-			Width(m.width - 2) // Borders are added OUTSIDE width
+			BorderTop(false).                        // No top border to connect with active tab
+			BorderForeground(lipgloss.Color("240")). // Neutral grey (matches header)
+			Width(m.width - 2)                       // Borders are added OUTSIDE width
 
 		content = contentStyle.Render(content)
 	}
@@ -947,73 +945,80 @@ func renderSpanNode(span spanDetail, children map[string][]spanDetail, prefix st
 	}
 }
 
-// sortSources organizes sources into logical groups:
-// Group 1: running-man (internal logs)
-// Group 2: Docker containers (alphabetical)
-// Group 3: Processes (alphabetical)
+// sortSources sorts sources alphabetically with "running-man" always first.
+// Deprecated: Use sortSourcesWithTypes instead when source types are available.
 func sortSources(sources []string) []string {
-	runningMan := []string{}
-	docker := []string{}
-	processes := []string{}
+	// Simple sort: "running-man" first, then alphabetical
+	result := make([]string, len(sources))
+	copy(result, sources)
 
-	for _, source := range sources {
-		if source == "running-man" {
-			runningMan = append(runningMan, source)
-		} else if isDockerContainer(source) {
-			docker = append(docker, source)
-		} else {
-			processes = append(processes, source)
+	// Put "running-man" first if present
+	for i, source := range result {
+		if source == "running-man" && i > 0 {
+			result[0], result[i] = result[i], result[0]
+			break
 		}
 	}
 
-	// Sort each group alphabetically
-	sort.Strings(docker)
-	sort.Strings(processes)
-
-	// Combine groups
-	result := []string{}
-	result = append(result, runningMan...)
-	result = append(result, docker...)
-	result = append(result, processes...)
+	// Sort the rest alphabetically
+	startIdx := 0
+	if len(result) > 0 && result[0] == "running-man" {
+		startIdx = 1
+	}
+	if startIdx < len(result) {
+		sort.Strings(result[startIdx:])
+	}
 
 	return result
 }
 
-// isDockerContainer attempts to identify if a source name is a Docker container.
-// Docker Compose containers typically follow the pattern: projectname-servicename-N
-// or projectname_servicename_N (depending on compose version)
-func isDockerContainer(name string) bool {
-	// Look for patterns like "project-service-1" or "project_service_1"
-	// This is a heuristic - containers have multiple segments separated by - or _
-	// and typically end with a number
+// sortSourcesWithTypes sorts sources by type (running-man, docker, process) then alphabetically.
+func sortSourcesWithTypes(sources []string, sourceTypes map[string]string) []string {
+	// Group by type
+	runningMan := []string{}
+	docker := []string{}
+	processes := []string{}
+	unknown := []string{}
 
-	parts := strings.FieldsFunc(name, func(r rune) bool {
-		return r == '-' || r == '_'
-	})
-
-	// Docker containers typically have at least 3 parts: project-service-replica
-	if len(parts) < 3 {
-		return false
-	}
-
-	// Last part is often a number (replica index)
-	lastPart := parts[len(parts)-1]
-	if len(lastPart) > 0 {
-		// Check if it's a hex ID (first 12 chars of container ID)
-		// or a replica number
-		if _, err := fmt.Sscanf(lastPart, "%d", new(int)); err == nil {
-			return true
-		}
-		// Could also be a hash - if it's all hex digits
-		if len(lastPart) == 12 {
-			return true
+	for _, source := range sources {
+		sourceType := sourceTypes[source]
+		switch sourceType {
+		case "system":
+			runningMan = append(runningMan, source)
+		case "docker":
+			docker = append(docker, source)
+		case "process":
+			processes = append(processes, source)
+		default:
+			unknown = append(unknown, source)
 		}
 	}
 
+	// Sort each group alphabetically
+	sort.Strings(runningMan)
+	sort.Strings(docker)
+	sort.Strings(processes)
+	sort.Strings(unknown)
+
+	// Combine in order: running-man, docker, processes, unknown
+	result := []string{}
+	result = append(result, runningMan...)
+	result = append(result, docker...)
+	result = append(result, processes...)
+	result = append(result, unknown...)
+
+	return result
+}
+
+// isDockerContainer checks if a source is a Docker container using source type information.
+func isDockerContainer(name string, sourceTypes map[string]string) bool {
+	if sourceType, ok := sourceTypes[name]; ok {
+		return sourceType == "docker"
+	}
 	return false
 }
 
-func renderHeader(sources []string, selected int, width int) string {
+func renderHeader(sources []string, selected int, width int, sourceTypes map[string]string) string {
 	if len(sources) == 0 {
 		return headerStyle.Render("Loading sources...")
 	}
@@ -1026,10 +1031,10 @@ func renderHeader(sources []string, selected int, width int) string {
 			activeTabColor = lipgloss.Color("33") // Dodger blue
 		} else if source == "Traces" {
 			activeTabColor = lipgloss.Color("127") // Medium purple
-		} else if isDockerContainer(source) {
-			activeTabColor = lipgloss.Color("70") // Medium sea green
+		} else if isDockerContainer(source, sourceTypes) {
+			activeTabColor = lipgloss.Color("70") // Medium sea green (docker)
 		} else {
-			activeTabColor = lipgloss.Color("37") // Cyan
+			activeTabColor = lipgloss.Color("208") // Orange (processes - distinct from docker)
 		}
 	} else {
 		activeTabColor = lipgloss.Color("33") // Default blue
@@ -1050,7 +1055,7 @@ func renderHeader(sources []string, selected int, width int) string {
 		} else if source == "Traces" {
 			normalStyle = tracesTabStyle
 			selectedStyle = tracesSelectedTabStyle
-		} else if isDockerContainer(source) {
+		} else if isDockerContainer(source, sourceTypes) {
 			normalStyle = dockerTabStyle
 			selectedStyle = dockerSelectedTabStyle
 		} else {
@@ -1068,14 +1073,26 @@ func renderHeader(sources []string, selected int, width int) string {
 				Foreground(lipgloss.Color("15")). // Bright white (instead of black)
 				BorderForeground(neutralBorderColor)
 		} else {
-			// Inactive tab: background = dark grey, text = bright white, borders = neutral
+			// Inactive tab: background = black, text = bright white, borders = neutral
 			style = style.
-				Background(lipgloss.Color("236")). // Dark grey (not pure black)
-				Foreground(lipgloss.Color("15")).  // Bright white
+				Background(lipgloss.Color("0")).  // Black
+				Foreground(lipgloss.Color("15")). // Bright white
 				BorderForeground(neutralBorderColor)
 		}
 
-		tabs = append(tabs, style.Render(fmt.Sprintf(" %s ", source)))
+		// Add emoji prefix - use variation selector for gear
+		displayName := source
+		if source == "running-man" {
+			displayName = "🏃‍➡️  " + source // Running man facing right
+		} else if source == "Traces" {
+			displayName = "🔍  " + source // 2 spaces after 2-column emoji
+		} else if isDockerContainer(source, sourceTypes) {
+			displayName = "🐳  " + source // 2 spaces after 2-column emoji
+		} else {
+			displayName = "🔧 " + source // Wrench emoji (2 columns, consistent)
+		}
+
+		tabs = append(tabs, style.Render(fmt.Sprintf(" %s ", displayName)))
 	}
 
 	// Join tabs horizontally at top
@@ -1418,11 +1435,13 @@ func fetchSources(apiURL string) tea.Cmd {
 		}
 
 		sources := make([]string, len(health.Sources))
+		sourceTypes := make(map[string]string)
 		for i, s := range health.Sources {
 			sources[i] = s.Name
+			sourceTypes[s.Name] = s.Type
 		}
 
-		return sourcesMsg(sources)
+		return sourcesMsg{names: sources, types: sourceTypes}
 	}
 }
 
@@ -1525,11 +1544,11 @@ var (
 				Background(lipgloss.Color("0")). // Black
 				Border(activeTabBorder, true)
 
-	// Process tabs - Cyan
+	// Process tabs - Orange (distinct from docker green)
 	processTabStyle = baseTabStyle.
-			BorderForeground(lipgloss.Color("51")). // Cyan
-			Foreground(lipgloss.Color("15")).       // White
-			Background(lipgloss.Color("236"))       // Dark gray
+			BorderForeground(lipgloss.Color("208")). // Orange
+			Foreground(lipgloss.Color("15")).        // White
+			Background(lipgloss.Color("236"))        // Dark gray
 
 	processSelectedTabStyle = processTabStyle.
 				Bold(true).

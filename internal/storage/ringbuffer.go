@@ -200,10 +200,20 @@ func (rb *RingBuffer) Stats() BufferStats {
 }
 
 // SourceInfo contains information about a log source
+type SourceType string
+
+const (
+	SourceTypeProcess SourceType = "process"
+	SourceTypeDocker  SourceType = "docker"
+	SourceTypeSystem  SourceType = "system" // running-man itself
+	SourceTypeTraces  SourceType = "traces"
+)
+
 type SourceInfo struct {
-	Name       string    `json:"name"`
-	EntryCount int       `json:"entry_count"`
-	LastSeen   time.Time `json:"last_seen"`
+	Name       string     `json:"name"`
+	Type       SourceType `json:"type"`
+	EntryCount int        `json:"entry_count"`
+	LastSeen   time.Time  `json:"last_seen"`
 }
 
 // GetSources returns all unique sources with their statistics
@@ -220,8 +230,20 @@ func (rb *RingBuffer) GetSources() []SourceInfo {
 				info.LastSeen = entry.Timestamp
 			}
 		} else {
+			// Determine source type
+			sourceType := SourceTypeProcess // default
+			if entry.SourceType != "" {
+				// Use the source type from log entry
+				sourceType = SourceType(entry.SourceType)
+			} else if entry.Source == "running-man" {
+				sourceType = SourceTypeSystem
+			} else if entry.Source == "Traces" {
+				sourceType = SourceTypeTraces
+			}
+
 			sourceMap[entry.Source] = &SourceInfo{
 				Name:       entry.Source,
+				Type:       sourceType,
 				EntryCount: 1,
 				LastSeen:   entry.Timestamp,
 			}

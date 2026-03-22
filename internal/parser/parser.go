@@ -19,6 +19,7 @@ type LogEntry struct {
 	Timestamp  time.Time
 	Level      LogLevel
 	Source     string
+	SourceType string // "process", "docker", "system", "traces"
 	Message    string
 	Raw        string
 	IsError    bool
@@ -44,13 +45,20 @@ func NewMultiParser() *MultiParser {
 
 // ParseLine attempts to parse a log line using available parsers
 func (m *MultiParser) ParseLine(source string, line string, timestamp time.Time) *LogEntry {
+	return m.ParseLineWithType(source, "", line, timestamp)
+}
+
+// ParseLineWithType parses a log line with source type information
+func (m *MultiParser) ParseLineWithType(source string, sourceType string, line string, timestamp time.Time) *LogEntry {
 	// Try JSON parser first (most structured)
 	if entry, ok := m.jsonParser.Parse(source, line, timestamp); ok {
+		entry.SourceType = sourceType
 		return entry
 	}
 
-	// Try Python traceback parser (stateful, multi-line)
+	// Try Python parser
 	if entry, ok := m.pythonParser.Parse(source, line, timestamp); ok {
+		entry.SourceType = sourceType
 		return entry
 	}
 
@@ -60,7 +68,9 @@ func (m *MultiParser) ParseLine(source string, line string, timestamp time.Time)
 	}
 
 	// Fall back to plain text parser
-	return m.plainTextParser.Parse(source, line, timestamp)
+	entry := m.plainTextParser.Parse(source, line, timestamp)
+	entry.SourceType = sourceType
+	return entry
 }
 
 // Flush returns any in-progress multi-line entries

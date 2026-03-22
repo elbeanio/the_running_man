@@ -280,9 +280,23 @@ func runCommand(args []string) {
 	// Create parser
 	multiParser := parser.NewMultiParser()
 
-	// Setup line handler
-	lineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {
-		entry := multiParser.ParseLine(source, line, timestamp)
+	// Setup line handlers
+	processLineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {
+		entry := multiParser.ParseLineWithType(source, "process", line, timestamp)
+		if entry != nil {
+			buffer.Append(entry)
+		}
+	}
+
+	dockerLineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {
+		entry := multiParser.ParseLineWithType(source, "docker", line, timestamp)
+		if entry != nil {
+			buffer.Append(entry)
+		}
+	}
+
+	systemLineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {
+		entry := multiParser.ParseLineWithType(source, "system", line, timestamp)
 		if entry != nil {
 			buffer.Append(entry)
 		}
@@ -344,7 +358,7 @@ func runCommand(args []string) {
 
 		// Start log streamers for each container
 		for _, container := range containers {
-			streamer := docker.NewContainerStreamer(dockerClient, container.ID, container.Name, lineHandler)
+			streamer := docker.NewContainerStreamer(dockerClient, container.ID, container.Name, dockerLineHandler)
 			if err := streamer.Start(); err != nil {
 				fmt.Fprintf(os.Stderr, "[running-man] Failed to start log streamer for %s: %v\n", container.Name, err)
 				continue
@@ -361,11 +375,11 @@ func runCommand(args []string) {
 		// Use OTEL-enabled manager
 		otelEndpoint := "http://localhost"
 		// Silent mode when TUI is running (not headless mode)
-		manager = process.NewManagerWithOTEL(processes, lineHandler, otelEndpoint, finalTracingPort, true, !*noTUI)
+		manager = process.NewManagerWithOTEL(processes, processLineHandler, otelEndpoint, finalTracingPort, true, !*noTUI)
 	} else {
 		// Use regular manager
 		// Silent mode when TUI is running (not headless mode)
-		manager = process.NewManagerWithOTEL(processes, lineHandler, "", 0, false, !*noTUI)
+		manager = process.NewManagerWithOTEL(processes, processLineHandler, "", 0, false, !*noTUI)
 	}
 
 	// Start API server in background
@@ -373,7 +387,7 @@ func runCommand(args []string) {
 	if spanStorage != nil {
 		traceStorage = spanStorage
 	}
-	apiServer := api.NewServer(buffer, finalAPIPort, lineHandler, manager, traceStorage)
+	apiServer := api.NewServer(buffer, finalAPIPort, systemLineHandler, manager, traceStorage)
 	go func() {
 		if err := apiServer.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] API server error: %v\n", err)
