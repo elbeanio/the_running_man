@@ -203,6 +203,23 @@ running-man run --docker-compose docker-compose.yml
 # Filter by service, search content, view errors
 ```
 
+### Visual Debugging with Screenshots
+```bash
+# Install screenshot capture script (Node.js required)
+cd scripts
+npm install
+npx playwright install chromium
+
+# Capture screenshots of web applications
+node capture-web.js --url http://localhost:3000 --output screenshot.png
+node capture-web.js --url http://localhost:3000 --selector ".app-container" --debug
+node capture-web.js --url http://localhost:3000 --viewport 1920x1080 --full-page
+
+# Use with AI agents for visual debugging
+# "Capture a screenshot of the frontend to see layout issues"
+# "Take a screenshot of the error modal that appears"
+```
+
 ## 🏗️ Development
 
 ```bash
