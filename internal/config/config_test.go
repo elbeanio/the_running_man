@@ -400,3 +400,82 @@ processes:
 		t.Errorf("Minimal config should be valid: %v", err)
 	}
 }
+
+func TestConfig_ProcessConfig_NewFields(t *testing.T) {
+	// Test YAML parsing with new fields
+	yamlData := `
+processes:
+  - name: frontend
+    type: web
+    description: "React frontend with Vite"
+    url: http://localhost:5173
+    command: npm run dev
+  - name: backend
+    type: api
+    description: "Go API server"
+    command: go run main.go
+    restart_on_crash: true
+  - name: worker
+    type: worker
+    command: python worker.py
+`
+
+	var cfg Config
+	if err := yaml.Unmarshal([]byte(yamlData), &cfg); err != nil {
+		t.Fatalf("Failed to parse YAML with new fields: %v", err)
+	}
+
+	if len(cfg.Processes) != 3 {
+		t.Fatalf("Expected 3 processes, got %d", len(cfg.Processes))
+	}
+
+	// Check frontend process
+	frontend := cfg.Processes[0]
+	if frontend.Name != "frontend" {
+		t.Errorf("Expected name 'frontend', got %s", frontend.Name)
+	}
+	if frontend.Type != "web" {
+		t.Errorf("Expected type 'web', got %s", frontend.Type)
+	}
+	if frontend.Description != "React frontend with Vite" {
+		t.Errorf("Expected description 'React frontend with Vite', got %s", frontend.Description)
+	}
+	if frontend.URL != "http://localhost:5173" {
+		t.Errorf("Expected URL 'http://localhost:5173', got %s", frontend.URL)
+	}
+
+	// Check backend process
+	backend := cfg.Processes[1]
+	if backend.Type != "api" {
+		t.Errorf("Expected type 'api', got %s", backend.Type)
+	}
+	if !backend.RestartOnCrash {
+		t.Error("Expected restart_on_crash to be true for backend")
+	}
+
+	// Check worker process (has type but no description/url)
+	worker := cfg.Processes[2]
+	if worker.Type != "worker" {
+		t.Errorf("Expected type 'worker', got %s", worker.Type)
+	}
+	if worker.Description != "" {
+		t.Errorf("Expected empty description for worker, got %s", worker.Description)
+	}
+	if worker.URL != "" {
+		t.Errorf("Expected empty URL for worker, got %s", worker.URL)
+	}
+
+	// Test conversion to process.ProcessConfig
+	processConfigs := cfg.ToProcessConfigs()
+	if len(processConfigs) != 3 {
+		t.Fatalf("Expected 3 process configs, got %d", len(processConfigs))
+	}
+
+	// Verify conversion preserved fields
+	if processConfigs[0].Type != "web" {
+		t.Errorf("Conversion failed: expected type 'web', got %s", processConfigs[0].Type)
+	}
+	if processConfigs[0].Description != "React frontend with Vite" {
+		t.Errorf("Conversion failed: expected description 'React frontend with Vite', got %s", processConfigs[0].Description)
+	}
+}

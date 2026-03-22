@@ -88,6 +88,9 @@ type TracingConfig struct {
 // This matches internal/process.ProcessConfig but with YAML tags.
 type ProcessConfig struct {
 	Name           string   `yaml:"name"`
+	Type           string   `yaml:"type,omitempty"`        // web, api, worker, database, cache, etc.
+	Description    string   `yaml:"description,omitempty"` // Free-text description of the process
+	URL            string   `yaml:"url,omitempty"`         // Optional URL for web applications
 	Command        string   `yaml:"command"`
 	Args           []string `yaml:"args,omitempty"`
 	RestartOnCrash bool     `yaml:"restart_on_crash,omitempty"`
@@ -169,6 +172,9 @@ func (c *Config) ToProcessConfigs() []process.ProcessConfig {
 	for i, proc := range c.Processes {
 		result[i] = process.ProcessConfig{
 			Name:           proc.Name,
+			Type:           proc.Type,
+			Description:    proc.Description,
+			URL:            proc.URL,
 			Command:        proc.Command,
 			Args:           proc.Args,
 			Shell:          shell,

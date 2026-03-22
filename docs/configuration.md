@@ -19,12 +19,17 @@ Running Man automatically searches for configuration files in this order:
 # running-man.yml
 processes:
   - name: backend
+    type: api
+    description: "Python API server"
     command: python server.py
     args: ["--port", "8080"]
     restart_on_crash: true
     shell: /bin/bash
 
   - name: frontend
+    type: web
+    description: "React frontend with Vite"
+    url: http://localhost:5173
     command: npm run dev
     # Shell features work! Use cd, &&, pipes, etc.
 
@@ -53,6 +58,9 @@ List of processes to run and manage.
 
 **Each process supports:**
 - `name` (string, required): Unique identifier for the process
+- `type` (string, optional): Process type (web, api, worker, database, cache, etc.)
+- `description` (string, optional): Free-text description of the process
+- `url` (string, optional): URL for web applications (e.g., http://localhost:3000)
 - `command` (string, required): Command to execute
 - `args` (array of strings, optional): Command arguments
 - `restart_on_crash` (boolean, optional): Auto-restart on non-zero exit (default: `false`)
@@ -62,11 +70,21 @@ List of processes to run and manage.
 ```yaml
 processes:
   - name: api-server
+    type: api
+    description: "Go REST API server"
     command: go run cmd/api/main.go
     args: ["--port", "3000"]
     restart_on_crash: true
 
+  - name: frontend
+    type: web
+    description: "React frontend with Vite"
+    url: http://localhost:5173
+    command: npm run dev
+
   - name: worker
+    type: worker
+    description: "Background job processor"
     command: cd workers && python worker.py
     shell: /bin/bash  # Use bash for cd command
 ```
@@ -275,13 +293,20 @@ running-man run --max-spans 5000 --max-span-age 1h
 # running-man.yml
 processes:
   - name: api
+    type: api
+    description: "Go API server"
     command: go run cmd/api/main.go
     restart_on_crash: true
 
   - name: frontend
+    type: web
+    description: "React frontend"
+    url: http://localhost:3000
     command: npm run dev
 
   - name: database
+    type: database
+    description: "PostgreSQL database"
     command: docker-compose up postgres
 
 api_port: 9000
@@ -294,15 +319,23 @@ shell: /bin/bash
 # running-man.yml
 processes:
   - name: gateway
+    type: api
+    description: "API Gateway"
     command: go run services/gateway/main.go
 
   - name: users
+    type: api
+    description: "User service"
     command: python services/users/main.py
 
   - name: products
+    type: api
+    description: "Product catalog service"
     command: node services/products/index.js
 
   - name: orders
+    type: api
+    description: "Order processing service"
     command: python services/orders/main.py
 
 docker_compose: ./infra/docker-compose.yml

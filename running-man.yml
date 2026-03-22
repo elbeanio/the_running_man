@@ -8,16 +8,23 @@
 # Processes to run and manage
 processes:
   - name: backend
+    type: api
+    description: "Go API server with REST endpoints"
     command: go run cmd/server/main.go
     # args: ["--port", "8080"]  # Optional: command arguments
     # restart_on_crash: true     # Optional: auto-restart if process exits with non-zero code
                                  # Default: false
 
   - name: frontend
+    type: web
+    description: "React frontend with Vite dev server"
+    url: http://localhost:5173  # Optional URL for web applications
     command: npm run ${BUILD_MODE}  # Use BUILD_MODE env var (set BUILD_MODE=dev/prod)
     # Shell features work! Use cd, &&, pipes, etc.
 
   - name: worker
+    type: worker
+    description: "Background job processor"
     command: cd services/worker && python worker.py --port ${WORKER_PORT}
     restart_on_crash: true  # Example: restart worker on crash
 

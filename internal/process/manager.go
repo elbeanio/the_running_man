@@ -17,6 +17,9 @@ import (
 // ProcessConfig represents a process configuration
 type ProcessConfig struct {
 	Name           string
+	Type           string // web, api, worker, database, cache, etc.
+	Description    string // Free-text description of the process
+	URL            string // Optional URL for web applications
 	Command        string
 	Args           []string
 	Shell          string // Shell to use (default: /bin/sh)
@@ -25,12 +28,15 @@ type ProcessConfig struct {
 
 // ProcessInfo contains runtime information about a process
 type ProcessInfo struct {
-	Name      string    `json:"name"`
-	Command   string    `json:"command"`
-	PID       int       `json:"pid"`       // -1 if not started
-	Status    string    `json:"status"`    // "running", "stopped", "failed"
-	ExitCode  int       `json:"exit_code"` // -1 for running processes
-	StartTime time.Time `json:"start_time"`
+	Name        string    `json:"name"`
+	Type        string    `json:"type,omitempty"`        // web, api, worker, database, cache, etc.
+	Description string    `json:"description,omitempty"` // Free-text description of the process
+	URL         string    `json:"url,omitempty"`         // Optional URL for web applications
+	Command     string    `json:"command"`
+	PID         int       `json:"pid"`       // -1 if not started
+	Status      string    `json:"status"`    // "running", "stopped", "failed"
+	ExitCode    int       `json:"exit_code"` // -1 for running processes
+	StartTime   time.Time `json:"start_time"`
 }
 
 // Manager manages multiple ProcessWrappers
@@ -296,6 +302,7 @@ func (m *Manager) ListProcesses() []ProcessInfo {
 
 	infos := make([]ProcessInfo, 0, len(m.processes))
 	for name, p := range m.processes {
+		config, hasConfig := m.configs[name]
 		info := ProcessInfo{
 			Name:      name,
 			Command:   p.CommandString(),
@@ -303,6 +310,12 @@ func (m *Manager) ListProcesses() []ProcessInfo {
 			Status:    p.GetStatus(),
 			StartTime: p.StartTime(),
 			ExitCode:  p.ExitCode(), // Always include exit code (-1 for running processes)
+		}
+		// Add config fields if available
+		if hasConfig {
+			info.Type = config.Type
+			info.Description = config.Description
+			info.URL = config.URL
 		}
 		infos = append(infos, info)
 	}
@@ -333,6 +346,7 @@ func (m *Manager) GetProcess(name string) (*ProcessInfo, error) {
 		return nil, fmt.Errorf("process %s not found", name)
 	}
 
+	config, hasConfig := m.configs[name]
 	info := &ProcessInfo{
 		Name:      name,
 		Command:   p.CommandString(),
@@ -340,6 +354,12 @@ func (m *Manager) GetProcess(name string) (*ProcessInfo, error) {
 		Status:    p.GetStatus(),
 		StartTime: p.StartTime(),
 		ExitCode:  p.ExitCode(), // Always include exit code (-1 for running processes)
+	}
+	// Add config fields if available
+	if hasConfig {
+		info.Type = config.Type
+		info.Description = config.Description
+		info.URL = config.URL
 	}
 	return info, nil
 }
