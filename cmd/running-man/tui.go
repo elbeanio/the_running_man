@@ -44,6 +44,7 @@ const (
 type model struct {
 	apiURL         string
 	sources        []string
+	sourceTypes    map[string]string // source name -> type ("process", "docker", "system", "traces")
 	selectedSource int
 	logs           []logEntry
 	err            error
@@ -116,11 +117,15 @@ type healthResponse struct {
 
 type sourceInfo struct {
 	Name       string `json:"name"`
+	Type       string `json:"type"`
 	EntryCount int    `json:"entry_count"`
 }
 
 // Messages for async operations
-type sourcesMsg []string
+type sourcesMsg struct {
+	names []string
+	types map[string]string
+}
 type logsMsg []logEntry
 type tracesMsg []traceSummary
 type traceSpansMsg []spanDetail
@@ -345,6 +350,7 @@ func initialModel(apiURL string, manager *process.Manager) model {
 	return model{
 		apiURL:         apiURL,
 		sources:        []string{},
+		sourceTypes:    make(map[string]string),
 		selectedSource: 0,
 		logs:           []logEntry{},
 		width:          80,
@@ -400,9 +406,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 	case sourcesMsg:
-		m.sources = sortSources(msg)
+		m.sourceTypes = msg.types
+		m.sources = sortSourcesWithTypes(msg.names, msg.types)
 		// Add "Traces" as a special tab at the end
 		m.sources = append(m.sources, "Traces")
+		if m.sourceTypes == nil {
+			m.sourceTypes = make(map[string]string)
+		}
+		m.sourceTypes["Traces"] = "traces"
 		if len(m.sources) > 0 {
 			return m, fetchLogs(m.apiURL, m.sources[m.selectedSource])
 		}
@@ -456,7 +467,7 @@ func (m model) View() string {
 	}
 
 	// Header with source tabs
-	header := renderHeader(m.sources, m.selectedSource)
+	header := renderHeader(m.sources, m.selectedSource, m.width, m.sourceTypes)
 
 	// Search bar - use textinput when in search mode
 	var searchBar string
@@ -542,11 +553,11 @@ func (m model) View() string {
 	// Calculate available height for content
 	availableHeight := m.height - lipgloss.Height(header) - lipgloss.Height(searchBar) - lipgloss.Height(help) - 2
 
-	// Account for border (2 chars on each side for width, 1 line on top/bottom for height)
-	borderWidth := 2
-	borderHeight := 1
-	contentWidth := m.width - (borderWidth * 2)
-	contentHeight := availableHeight - (borderHeight * 2)
+	// Account for border (borders are added OUTSIDE content width)
+	// No top border since it connects with active tab
+	borderHeight := 1                               // Only bottom border
+	contentWidth := m.width - 2                     // Content is 2 chars narrower for left/right borders
+	contentHeight := availableHeight - borderHeight // Only subtract bottom border
 	if contentWidth < 0 {
 		contentWidth = 0
 	}
@@ -574,30 +585,25 @@ func (m model) View() string {
 		content = renderLogs(m.logs, contentHeight, contentWidth, m.scrollOffset, m.searchQuery, m.searchMatchIdx, m.showTraceIDs)
 	}
 
-	// Add colored border around content based on active tab
+	// Add neutral grey border around content (matches header borders)
+	// No top border to connect with active tab
 	if len(m.sources) > 0 {
-		var borderColor lipgloss.Color
-		source := m.sources[m.selectedSource]
-
-		if source == "running-man" {
-			borderColor = lipgloss.Color("39") // Bright blue
-		} else if source == "Traces" {
-			borderColor = lipgloss.Color("93") // Bright purple
-		} else if isDockerContainer(source) {
-			borderColor = lipgloss.Color("42") // SpringGreen2
-		} else {
-			borderColor = lipgloss.Color("51") // Cyan
-		}
-
 		contentStyle := lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder()).
-			BorderForeground(borderColor).
-			Width(m.width)
+			BorderTop(false).                        // No top border to connect with active tab
+			BorderForeground(lipgloss.Color("240")). // Neutral grey (matches header)
+			Width(m.width - 2)                       // Borders are added OUTSIDE width
 
 		content = contentStyle.Render(content)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, searchBar, content, help)
+	// Only include searchBar when it's not empty
+	components := []string{header}
+	if searchBar != "" {
+		components = append(components, searchBar)
+	}
+	components = append(components, content, help)
+	return lipgloss.JoinVertical(lipgloss.Left, components...)
 }
 
 func renderTraceList(traces []traceSummary, height, width, scrollOffset, selectedIdx int) string {
@@ -939,77 +945,78 @@ func renderSpanNode(span spanDetail, children map[string][]spanDetail, prefix st
 	}
 }
 
-// sortSources organizes sources into logical groups:
-// Group 1: running-man (internal logs)
-// Group 2: Docker containers (alphabetical)
-// Group 3: Processes (alphabetical)
-func sortSources(sources []string) []string {
+// sortSourcesWithTypes sorts sources by type (running-man, docker, process) then alphabetically.
+func sortSourcesWithTypes(sources []string, sourceTypes map[string]string) []string {
+	// Group by type
 	runningMan := []string{}
 	docker := []string{}
 	processes := []string{}
+	unknown := []string{}
 
 	for _, source := range sources {
-		if source == "running-man" {
+		sourceType := sourceTypes[source]
+		switch sourceType {
+		case "system":
 			runningMan = append(runningMan, source)
-		} else if isDockerContainer(source) {
+		case "docker":
 			docker = append(docker, source)
-		} else {
+		case "process":
 			processes = append(processes, source)
+		default:
+			unknown = append(unknown, source)
 		}
 	}
 
 	// Sort each group alphabetically
+	sort.Strings(runningMan)
 	sort.Strings(docker)
 	sort.Strings(processes)
+	sort.Strings(unknown)
 
-	// Combine groups
+	// Combine in order: running-man, docker, processes, unknown
 	result := []string{}
 	result = append(result, runningMan...)
 	result = append(result, docker...)
 	result = append(result, processes...)
+	result = append(result, unknown...)
 
 	return result
 }
 
-// isDockerContainer attempts to identify if a source name is a Docker container.
-// Docker Compose containers typically follow the pattern: projectname-servicename-N
-// or projectname_servicename_N (depending on compose version)
-func isDockerContainer(name string) bool {
-	// Look for patterns like "project-service-1" or "project_service_1"
-	// This is a heuristic - containers have multiple segments separated by - or _
-	// and typically end with a number
-
-	parts := strings.FieldsFunc(name, func(r rune) bool {
-		return r == '-' || r == '_'
-	})
-
-	// Docker containers typically have at least 3 parts: project-service-replica
-	if len(parts) < 3 {
-		return false
+// isDockerContainer checks if a source is a Docker container using source type information.
+func isDockerContainer(name string, sourceTypes map[string]string) bool {
+	if sourceType, ok := sourceTypes[name]; ok {
+		return sourceType == "docker"
 	}
-
-	// Last part is often a number (replica index)
-	lastPart := parts[len(parts)-1]
-	if len(lastPart) > 0 {
-		// Check if it's a hex ID (first 12 chars of container ID)
-		// or a replica number
-		if _, err := fmt.Sscanf(lastPart, "%d", new(int)); err == nil {
-			return true
-		}
-		// Could also be a hash - if it's all hex digits
-		if len(lastPart) == 12 {
-			return true
-		}
-	}
-
 	return false
 }
 
-func renderHeader(sources []string, selected int) string {
+func renderHeader(sources []string, selected int, width int, sourceTypes map[string]string) string {
 	if len(sources) == 0 {
 		return headerStyle.Render("Loading sources...")
 	}
 
+	// Determine active tab color (distinct, readable colors)
+	var activeTabColor lipgloss.Color
+	if selected < len(sources) {
+		source := sources[selected]
+		if source == "running-man" {
+			activeTabColor = lipgloss.Color("33") // Dodger blue
+		} else if source == "Traces" {
+			activeTabColor = lipgloss.Color("127") // Medium purple
+		} else if isDockerContainer(source, sourceTypes) {
+			activeTabColor = lipgloss.Color("70") // Medium sea green (docker)
+		} else {
+			activeTabColor = lipgloss.Color("208") // Orange (processes - distinct from docker)
+		}
+	} else {
+		activeTabColor = lipgloss.Color("33") // Default blue
+	}
+
+	// All borders use neutral grey color
+	neutralBorderColor := lipgloss.Color("240") // Dark grey
+
+	// Build tabs with neutral borders, colored content
 	tabs := []string{}
 	for i, source := range sources {
 		// Determine style based on source group
@@ -1021,7 +1028,7 @@ func renderHeader(sources []string, selected int) string {
 		} else if source == "Traces" {
 			normalStyle = tracesTabStyle
 			selectedStyle = tracesSelectedTabStyle
-		} else if isDockerContainer(source) {
+		} else if isDockerContainer(source, sourceTypes) {
 			normalStyle = dockerTabStyle
 			selectedStyle = dockerSelectedTabStyle
 		} else {
@@ -1033,12 +1040,62 @@ func renderHeader(sources []string, selected int) string {
 		style := normalStyle
 		if i == selected {
 			style = selectedStyle
+			// DEBUG: Try bright white text instead of black for better contrast
+			style = style.
+				Background(activeTabColor).
+				Foreground(lipgloss.Color("15")). // Bright white (instead of black)
+				BorderForeground(neutralBorderColor)
+		} else {
+			// Inactive tab: background = black, text = bright white, borders = neutral
+			style = style.
+				Background(lipgloss.Color("0")).  // Black
+				Foreground(lipgloss.Color("15")). // Bright white
+				BorderForeground(neutralBorderColor)
 		}
 
-		tabs = append(tabs, style.Render(fmt.Sprintf(" %s ", source)))
+		// Add emoji prefix - use variation selector for gear
+		var displayName string
+		if source == "running-man" {
+			displayName = "🏃‍➡️  " + source // Running man facing right
+		} else if source == "Traces" {
+			displayName = "🔍  " + source // 2 spaces after 2-column emoji
+		} else if isDockerContainer(source, sourceTypes) {
+			displayName = "🐳  " + source // 2 spaces after 2-column emoji
+		} else {
+			displayName = "🔧 " + source // Wrench emoji (2 columns, consistent)
+		}
+
+		tabs = append(tabs, style.Render(fmt.Sprintf(" %s ", displayName)))
 	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
+	// Join tabs horizontally at top
+	row := lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
+
+	// Shift tabs right by 2 spaces
+	leftMargin := 2
+
+	// Create gap style with neutral border color
+	gapStyle := lipgloss.NewStyle().
+		Border(tabBorder, false, false, true, false). // Only bottom border
+		BorderForeground(neutralBorderColor)
+
+	// Left gap: corner + border line "┌──"
+	// This shows where content box corner would be
+	leftGapStyle := lipgloss.NewStyle().
+		Foreground(neutralBorderColor)
+	leftGap := leftGapStyle.Render("┌" + strings.Repeat("─", leftMargin))
+
+	// Right gap (after tabs) - fills remaining space with bottom border
+	rightGapWidth := max(0, width-lipgloss.Width(row)-lipgloss.Width(leftGap)-1) // -1 for corner
+	rightGap := gapStyle.Render(strings.Repeat(" ", rightGapWidth))
+
+	// Add corner at the end
+	cornerStyle := lipgloss.NewStyle().
+		Foreground(neutralBorderColor)
+	corner := cornerStyle.Render("┐")
+
+	// Join left gap + tabs + right gap + corner with Bottom alignment
+	return lipgloss.JoinHorizontal(lipgloss.Bottom, leftGap, row, rightGap, corner)
 }
 
 func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery string, currentMatchIdx int, showTraceIDs bool) string {
@@ -1117,10 +1174,11 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 
 			// Truncate long lines (only if trace indicator wasn't added above)
 			// When trace indicator is added, we've already handled truncation
-			if !(i == 0 && showTraceIDs && log.TraceID != "") && lipgloss.Width(line) > width-2 {
+			// Use width-10 to ensure plenty of room for right border
+			if !(i == 0 && showTraceIDs && log.TraceID != "") && lipgloss.Width(line) > width-10 {
 				// Need to truncate the unstyled string, not the styled one
 				// Find how many characters to keep
-				charsToKeep := width - 5 // Leave room for "..."
+				charsToKeep := width - 13 // Leave room for "..."
 				if charsToKeep < 0 {
 					charsToKeep = 0
 				}
@@ -1350,11 +1408,13 @@ func fetchSources(apiURL string) tea.Cmd {
 		}
 
 		sources := make([]string, len(health.Sources))
+		sourceTypes := make(map[string]string)
 		for i, s := range health.Sources {
 			sources[i] = s.Name
+			sourceTypes[s.Name] = s.Type
 		}
 
-		return sourcesMsg(sources)
+		return sourcesMsg{names: sources, types: sourceTypes}
 	}
 }
 
@@ -1401,61 +1461,77 @@ var (
 			Foreground(lipgloss.Color("15")).
 			Background(lipgloss.Color("57"))
 
-	// Tab styles - White text on black background with colored borders
-	runningManTabStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("15")). // White
-				Background(lipgloss.Color("0")).  // Black
-				Padding(0, 1)
+	// Tab border definitions from lipgloss example (using NormalBorder characters)
+	activeTabBorder = lipgloss.Border{
+		Top:         "─",
+		Bottom:      " ", // Space to connect with content box
+		Left:        "│",
+		Right:       "│",
+		TopLeft:     "┌",
+		TopRight:    "┐",
+		BottomLeft:  "┘",
+		BottomRight: "└",
+	}
 
-	runningManSelectedTabStyle = lipgloss.NewStyle().
+	tabBorder = lipgloss.Border{
+		Top:         "─",
+		Bottom:      "─",
+		Left:        "│",
+		Right:       "│",
+		TopLeft:     "┌",
+		TopRight:    "┐",
+		BottomLeft:  "┴",
+		BottomRight: "┴",
+	}
+
+	// Base tab style
+	baseTabStyle = lipgloss.NewStyle().
+			Border(tabBorder, true).
+			Padding(0, 1)
+
+	// Tab styles with different border colors
+	runningManTabStyle = baseTabStyle.
+				BorderForeground(lipgloss.Color("39")). // Blue
+				Foreground(lipgloss.Color("15")).       // White
+				Background(lipgloss.Color("236"))       // Dark gray
+
+	runningManSelectedTabStyle = runningManTabStyle.
 					Bold(true).
-					Foreground(lipgloss.Color("15")). // White
-					Background(lipgloss.Color("0")).  // Black
-					Border(lipgloss.NormalBorder()).
-					BorderForeground(lipgloss.Color("39")). // Bright blue border
-					Padding(0, 1)
+					Background(lipgloss.Color("#000000")). // True black
+					Border(activeTabBorder, true)
 
-	// Tab styles for Docker containers - Green border
-	dockerTabStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("15")). // White
-			Background(lipgloss.Color("0")).  // Black
-			Padding(0, 1)
+	// Docker tabs - Green
+	dockerTabStyle = baseTabStyle.
+			BorderForeground(lipgloss.Color("42")). // Green
+			Foreground(lipgloss.Color("15")).       // White
+			Background(lipgloss.Color("236"))       // Dark gray
 
-	dockerSelectedTabStyle = lipgloss.NewStyle().
+	dockerSelectedTabStyle = dockerTabStyle.
 				Bold(true).
-				Foreground(lipgloss.Color("15")). // White
-				Background(lipgloss.Color("0")).  // Black
-				Border(lipgloss.NormalBorder()).
-				BorderForeground(lipgloss.Color("42")). // SpringGreen2 border
-				Padding(0, 1)
+				Background(lipgloss.Color("0")). // Black
+				Border(activeTabBorder, true)
 
-	// Tab styles for processes - Cyan border
-	processTabStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("15")). // White
-			Background(lipgloss.Color("0")).  // Black
-			Padding(0, 1)
+	// Process tabs - Orange (distinct from docker green)
+	processTabStyle = baseTabStyle.
+			BorderForeground(lipgloss.Color("208")). // Orange
+			Foreground(lipgloss.Color("15")).        // White
+			Background(lipgloss.Color("236"))        // Dark gray
 
-	processSelectedTabStyle = lipgloss.NewStyle().
+	processSelectedTabStyle = processTabStyle.
 				Bold(true).
-				Foreground(lipgloss.Color("15")). // White
-				Background(lipgloss.Color("0")).  // Black
-				Border(lipgloss.NormalBorder()).
-				BorderForeground(lipgloss.Color("51")). // Cyan border
-				Padding(0, 1)
+				Background(lipgloss.Color("0")). // Black
+				Border(activeTabBorder, true)
 
-	// Tab styles for Traces view - Purple border
-	tracesTabStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("15")). // White
-			Background(lipgloss.Color("0")).  // Black
-			Padding(0, 1)
+	// Traces tabs - Purple
+	tracesTabStyle = baseTabStyle.
+			BorderForeground(lipgloss.Color("93")). // Purple
+			Foreground(lipgloss.Color("15")).       // White
+			Background(lipgloss.Color("236"))       // Dark gray
 
-	tracesSelectedTabStyle = lipgloss.NewStyle().
+	tracesSelectedTabStyle = tracesTabStyle.
 				Bold(true).
-				Foreground(lipgloss.Color("15")). // White
-				Background(lipgloss.Color("0")).  // Black
-				Border(lipgloss.NormalBorder()).
-				BorderForeground(lipgloss.Color("93")). // Bright purple border
-				Padding(0, 1)
+				Background(lipgloss.Color("0")). // Black
+				Border(activeTabBorder, true)
 
 	logStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("252"))
@@ -1758,11 +1834,11 @@ func scrollToMatch(m model) model {
 	return m
 }
 
-func tuiCommand(args []string) {
-	tuiCommandWithManager(args, nil)
+func TuiCommand(args []string) {
+	TuiCommandWithManager(args, nil)
 }
 
-func tuiCommandWithManager(args []string, manager *process.Manager) {
+func TuiCommandWithManager(args []string, manager *process.Manager) {
 	// Parse flags
 	fs := flag.NewFlagSet("tui", flag.ExitOnError)
 	apiPort := fs.Int("api-port", defaultAPIPort, "API server port")
