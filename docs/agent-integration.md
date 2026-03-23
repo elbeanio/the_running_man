@@ -385,10 +385,22 @@ curl -X POST http://localhost:9000/processes/{name}/restart
 
 ### OpenCode Skill
 For OpenCode users, load the `debug-logs` skill for comprehensive debugging guidance:
+
 ```bash
 # The skill is automatically discovered when .opencode/skills/debug-logs/SKILL.md exists
 # Agents can load it with: skill({ name: "debug-logs" })
 ```
+
+**Installation:**
+```bash
+# Install skill globally for all projects
+make install-skills
+
+# Or install just to Claude skills location
+make install-skill
+```
+
+The skill provides guidance on using Running Man's MCP tools for debugging web applications.
 
 ### API Features
 - **Glob pattern support**: Use `*` in source names (e.g., `app-*`)

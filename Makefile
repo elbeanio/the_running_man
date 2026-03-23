@@ -68,6 +68,30 @@ lint:
 	@echo "Running linter..."
 	@golangci-lint run || echo "golangci-lint not installed, skipping"
 
+# Install OpenCode skill to ~/.claude/skills
+install-skill:
+	@echo "Installing OpenCode skill to ~/.claude/skills..."
+	@mkdir -p ~/.claude/skills/debug-logs
+	@if [ -d ".opencode/skills/debug-logs" ]; then \
+		cp -r .opencode/skills/debug-logs/* ~/.claude/skills/debug-logs/; \
+		echo "✓ Skill installed to ~/.claude/skills/debug-logs"; \
+	else \
+		echo "❌ Error: .opencode/skills/debug-logs not found"; \
+		exit 1; \
+	fi
+
+# Install skill to both OpenCode and Claude locations
+install-skills: install-skill
+	@echo "Installing skill to OpenCode location..."
+	@mkdir -p ~/.config/opencode/skills/debug-logs
+	@if [ -d ".opencode/skills/debug-logs" ]; then \
+		cp -r .opencode/skills/debug-logs/* ~/.config/opencode/skills/debug-logs/; \
+		echo "✓ Skill installed to ~/.config/opencode/skills/debug-logs"; \
+	else \
+		echo "❌ Error: .opencode/skills/debug-logs not found"; \
+		exit 1; \
+	fi
+
 # Show help
 help:
 	@echo "Available targets:"
@@ -80,6 +104,8 @@ help:
 	@echo "  deps             - Install/update dependencies"
 	@echo "  install          - Install to GOPATH"
 	@echo "  install-local    - Install to ~/bin"
+	@echo "  install-skill    - Install OpenCode skill to ~/.claude/skills"
+	@echo "  install-skills   - Install skill to both OpenCode and Claude locations"
 	@echo "  fmt              - Format code"
 	@echo "  lint             - Run linter"
 	@echo "  help             - Show this help"
