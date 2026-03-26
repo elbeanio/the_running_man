@@ -24,6 +24,7 @@ type ProcessConfig struct {
 	Args           []string
 	Shell          string // Shell to use (default: /bin/sh)
 	RestartOnCrash bool   // Whether to restart process on crash (default: false)
+	Interval       string // Interval for recurring execution (e.g., "1m", "30s", "5h")
 }
 
 // ProcessInfo contains runtime information about a process
@@ -37,6 +38,7 @@ type ProcessInfo struct {
 	Status      string    `json:"status"`    // "running", "stopped", "failed"
 	ExitCode    int       `json:"exit_code"` // -1 for running processes
 	StartTime   time.Time `json:"start_time"`
+	Interval    string    `json:"interval,omitempty"` // Interval for recurring execution (e.g., "1m", "30s")
 }
 
 // Manager manages multiple ProcessWrappers
@@ -94,17 +96,35 @@ func (m *Manager) Start() error {
 
 	// Start each process
 	for name, cfg := range m.configs {
-		wrapper := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled, m.silent)
-		if err := wrapper.Start(); err != nil {
-			// If any process fails to start, stop all started processes
-			if err := m.stopAllLocked(); err != nil {
-				fmt.Printf("[running-man] Failed to stop processes during cleanup: %v\n", err)
+		// Check if this is a recurring process
+		if cfg.Interval != "" {
+			// Parse interval duration
+			interval, err := time.ParseDuration(cfg.Interval)
+			if err != nil {
+				// Should not happen if Validate() was called
+				return fmt.Errorf("invalid interval for process %s: %w", name, err)
 			}
-			// Clear the processes map since all have been stopped
-			m.processes = make(map[string]*ProcessWrapper)
-			return fmt.Errorf("failed to start process %s: %w", name, err)
+
+			// Start recurring process
+			wrapper := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled, m.silent)
+			m.processes[name] = wrapper
+
+			// Start the recurring execution in a goroutine
+			go m.startRecurringProcess(name, cfg, interval)
+		} else {
+			// Start regular (non-recurring) process
+			wrapper := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled, m.silent)
+			if err := wrapper.Start(); err != nil {
+				// If any process fails to start, stop all started processes
+				if err := m.stopAllLocked(); err != nil {
+					fmt.Printf("[running-man] Failed to stop processes during cleanup: %v\n", err)
+				}
+				// Clear the processes map since all have been stopped
+				m.processes = make(map[string]*ProcessWrapper)
+				return fmt.Errorf("failed to start process %s: %w", name, err)
+			}
+			m.processes[name] = wrapper
 		}
-		m.processes[name] = wrapper
 	}
 
 	// Setup signal handlers after all processes are started
@@ -113,23 +133,68 @@ func (m *Manager) Start() error {
 	return nil
 }
 
+// startRecurringProcess starts a process that runs at regular intervals
+func (m *Manager) startRecurringProcess(name string, cfg ProcessConfig, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	// Run immediately on start
+	m.runRecurringProcess(name, cfg)
+
+	for {
+		select {
+		case <-m.ctx.Done():
+			// Context cancelled, stop the recurring process
+			return
+		case <-ticker.C:
+			// Interval elapsed, run the process again
+			m.runRecurringProcess(name, cfg)
+		}
+	}
+}
+
+// runRecurringProcess executes a single instance of a recurring process
+func (m *Manager) runRecurringProcess(name string, cfg ProcessConfig) {
+	// Create a new wrapper for this execution
+	wrapper := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled, m.silent)
+
+	// Start the process
+	if err := wrapper.Start(); err != nil {
+		fmt.Printf("[running-man] Failed to start recurring process %s: %v\n", name, err)
+		return
+	}
+
+	// Wait for the process to complete
+	err := wrapper.Wait()
+	if err != nil {
+		fmt.Printf("[running-man] Recurring process %s exited with error: %v\n", name, err)
+	}
+}
+
 // Wait waits for all processes to complete
 // Returns an error if any process exits with an error
 // Automatically restarts crashed processes if restart_on_crash is enabled
+// Note: Recurring processes (with interval) run forever until context is cancelled
 func (m *Manager) Wait() error {
 	m.mu.RLock()
-	processNames := make([]string, 0, len(m.processes))
+	// Filter out recurring processes
+	nonRecurringProcesses := make([]string, 0)
 	for name := range m.processes {
-		processNames = append(processNames, name)
+		cfg, hasCfg := m.configs[name]
+		if hasCfg && cfg.Interval != "" {
+			// This is a recurring process, skip it (runs forever)
+			continue
+		}
+		nonRecurringProcesses = append(nonRecurringProcesses, name)
 	}
 	m.mu.RUnlock()
 
 	var firstErr error
 	var mu sync.Mutex
 
-	// Wait for each process and handle restarts
+	// Wait for each non-recurring process and handle restarts
 	var wg sync.WaitGroup
-	for _, name := range processNames {
+	for _, name := range nonRecurringProcesses {
 		wg.Add(1)
 		go func(processName string) {
 			defer wg.Done()
@@ -198,6 +263,10 @@ func (m *Manager) Wait() error {
 	}
 
 	wg.Wait()
+
+	// For recurring processes, wait for context cancellation
+	<-m.ctx.Done()
+
 	return firstErr
 }
 
@@ -316,6 +385,7 @@ func (m *Manager) ListProcesses() []ProcessInfo {
 			info.Type = config.Type
 			info.Description = config.Description
 			info.URL = config.URL
+			info.Interval = config.Interval
 		}
 		infos = append(infos, info)
 	}
@@ -360,6 +430,7 @@ func (m *Manager) GetProcess(name string) (*ProcessInfo, error) {
 		info.Type = config.Type
 		info.Description = config.Description
 		info.URL = config.URL
+		info.Interval = config.Interval
 	}
 	return info, nil
 }

@@ -65,6 +65,7 @@ List of processes to run and manage.
 - `args` (array of strings, optional): Command arguments
 - `restart_on_crash` (boolean, optional): Auto-restart on non-zero exit (default: `false`)
 - `shell` (string, optional): Shell to use for this process (overrides global `shell`)
+- `interval` (string, optional): Interval for recurring execution (e.g., "30s", "1m", "5m", "1h")
 
 **Example:**
 ```yaml
@@ -87,7 +88,46 @@ processes:
     description: "Background job processor"
     command: cd workers && python worker.py
     shell: /bin/bash  # Use bash for cd command
+
+  # Recurring processes (run at specified intervals)
+  - name: health-check
+    type: recurring
+    description: "Health check that runs every minute"
+    command: ./scripts/check-health.sh
+    interval: 1m  # Run every minute
+
+  - name: db-backup
+    type: recurring
+    description: "Hourly database backup"
+    command: ./scripts/backup-db.sh
+    interval: 1h  # Run every hour
 ```
+
+#### Recurring Processes
+
+Processes with an `interval` field run repeatedly at the specified interval until The Running Man is stopped.
+
+**Features:**
+- **Immediate execution**: Runs immediately when started, then at each interval
+- **Log capture**: All output is captured and available via logs/API
+- **Independent runs**: Each execution is independent (no state between runs)
+- **Error handling**: Failed executions don't stop the recurring schedule
+
+**Supported interval formats:**
+- `30s` - 30 seconds
+- `1m` - 1 minute
+- `5m` - 5 minutes
+- `1h` - 1 hour
+- `24h` - 24 hours
+
+**Use cases:**
+- Health checks and monitoring scripts
+- Scheduled backups
+- Periodic data synchronization
+- Cron-like tasks without cron
+- Regular maintenance scripts
+
+**Note**: Recurring processes run forever until The Running Man is stopped. They don't participate in the normal process wait/exit logic.
 
 ### Docker Integration
 

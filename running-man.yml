@@ -28,6 +28,20 @@ processes:
     command: cd services/worker && python worker.py --port ${WORKER_PORT}
     restart_on_crash: true  # Example: restart worker on crash
 
+  # Example: Recurring process that runs every minute
+  - name: health-check
+    type: recurring
+    description: "Health check script that runs every minute"
+    command: ./scripts/health-check.sh
+    interval: 1m  # Run every minute (supports: "30s", "1m", "5m", "1h", etc.)
+
+  # Example: Database backup that runs every hour
+  - name: db-backup
+    type: recurring
+    description: "Hourly database backup"
+    command: ./scripts/backup-db.sh
+    interval: 1h
+
 # Docker Compose integration (optional)
 # Automatically streams logs from all services in your compose file
 # docker_compose: ./docker-compose.yml

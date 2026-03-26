@@ -94,6 +94,7 @@ type ProcessConfig struct {
 	Command        string   `yaml:"command"`
 	Args           []string `yaml:"args,omitempty"`
 	RestartOnCrash bool     `yaml:"restart_on_crash,omitempty"`
+	Interval       string   `yaml:"interval,omitempty"` // Interval for recurring execution (e.g., "1m", "30s", "5h")
 }
 
 // Validate checks the config for errors and returns validation errors.
@@ -114,6 +115,12 @@ func (c *Config) Validate() error {
 		}
 		if names[proc.Name] {
 			return fmt.Errorf("duplicate process name: '%s'", proc.Name)
+		}
+		// Validate interval if specified
+		if proc.Interval != "" {
+			if _, err := time.ParseDuration(proc.Interval); err != nil {
+				return fmt.Errorf("process '%s' has invalid interval '%s': %w", proc.Name, proc.Interval, err)
+			}
 		}
 		names[proc.Name] = true
 	}
@@ -179,6 +186,7 @@ func (c *Config) ToProcessConfigs() []process.ProcessConfig {
 			Args:           proc.Args,
 			Shell:          shell,
 			RestartOnCrash: proc.RestartOnCrash,
+			Interval:       proc.Interval,
 		}
 	}
 	return result
