@@ -1,0 +1,29 @@
+{
+  "name": "the-running-man-screenshot-scripts",
+  "version": "1.0.0",
+  "description": "Standalone screenshot capture scripts for The Running Man",
+  "main": "capture-web.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "install-browsers": "npx playwright install chromium"
+  },
+  "keywords": [
+    "screenshot",
+    "playwright",
+    "debugging",
+    "ai-agents",
+    "web-capture"
+  ],
+  "author": "The Running Man Team",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^11.1.0",
+    "playwright": "^1.40.1"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "bin": {
+    "capture-web": "./capture-web.js"
+  }
+}
