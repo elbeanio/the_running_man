@@ -3,7 +3,11 @@ package api
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -52,6 +56,7 @@ func (s *Server) createMCPHandler() http.Handler {
 	s.registerStopAllProcessesTool(server)
 	s.registerGetProcessDetailTool(server)
 	s.registerGetHealthStatusTool(server)
+	s.registerCaptureScreenshotTool(server)
 	s.registerTraceTools(server)
 
 	// Log that MCP endpoint is being initialized
@@ -1197,6 +1202,170 @@ func (s *Server) getHealthStatusHandler(ctx context.Context, req *mcp.CallToolRe
 	}, nil, nil
 }
 
+// registerCaptureScreenshotTool registers the capture_screenshot MCP tool
+func (s *Server) registerCaptureScreenshotTool(server *mcp.Server) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "capture_screenshot",
+		Description: `Capture a screenshot of a web application for visual debugging.
+
+This tool uses the standalone screenshot capture script (scripts/capture-web.js) to take screenshots of web applications. It's designed to help AI agents debug visual layout issues.
+
+Parameters:
+- url (required): URL of the web page to capture (must be http:// or https://)
+- selector (optional): CSS selector for element-specific screenshots
+- viewport (optional): Viewport size (widthxheight, default: 1280x720)
+- output (optional): Output file path (temporary file created if not specified)
+- timeout (optional): Page load timeout in milliseconds (default: 10000)
+
+Security: By default, only localhost (127.0.0.1, ::1) and private IP addresses (10.x.x.x, 172.16.x.x-172.31.x.x, 192.168.x.x) are allowed.
+
+Examples:
+- Basic screenshot: {"url": "http://localhost:3000"}
+- Element-specific: {"url": "http://localhost:3000", "selector": ".app-container"}
+- Mobile view: {"url": "http://localhost:3000", "viewport": "375x667"}
+- Custom timeout: {"url": "http://localhost:3000", "timeout": 30000}
+
+The tool returns the path to the captured screenshot file.`,
+	}, s.captureScreenshotHandler)
+
+	s.log("Registered MCP tool: capture_screenshot", false)
+}
+
+// captureScreenshotHandler implements the capture_screenshot MCP tool
+func (s *Server) captureScreenshotHandler(ctx context.Context, req *mcp.CallToolRequest, args *CaptureScreenshotArgs) (*mcp.CallToolResult, any, error) {
+	// Validate URL
+	if args.URL == "" {
+		return nil, nil, fmt.Errorf("url parameter is required")
+	}
+
+	// Parse URL to validate and check security
+	parsedURL, err := url.Parse(args.URL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid URL: %v", err)
+	}
+
+	// Check if URL has a valid scheme
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return nil, nil, fmt.Errorf("URL must use http:// or https:// scheme")
+	}
+
+	// Security: Restrict to localhost and private IPs by default
+	host := parsedURL.Hostname()
+	if !isAllowedHost(host) {
+		return nil, nil, fmt.Errorf("for security, URL host must be localhost or private IP address. Got: %s", host)
+	}
+
+	// Build command for the screenshot script
+	scriptPath := "scripts/capture-web.js"
+
+	// Check if script exists
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		return nil, nil, fmt.Errorf("screenshot script not found at %s. Make sure the script is installed in the scripts/ directory", scriptPath)
+	}
+
+	// Build command arguments
+	cmdArgs := []string{scriptPath, "--url", args.URL}
+
+	if args.Selector != "" {
+		cmdArgs = append(cmdArgs, "--selector", args.Selector)
+	}
+
+	if args.Viewport != "" {
+		cmdArgs = append(cmdArgs, "--viewport", args.Viewport)
+	}
+
+	if args.Output != "" {
+		cmdArgs = append(cmdArgs, "--output", args.Output)
+	}
+
+	if args.Timeout > 0 {
+		cmdArgs = append(cmdArgs, "--timeout", fmt.Sprintf("%d", args.Timeout))
+	}
+
+	// Execute the screenshot script
+	cmd := exec.Command("node", cmdArgs...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		// Parse error output for helpful messages
+		errorMsg := string(output)
+		if errorMsg == "" {
+			errorMsg = err.Error()
+		}
+		return nil, nil, fmt.Errorf("failed to capture screenshot: %s", errorMsg)
+	}
+
+	// Parse output to get screenshot path
+	outputStr := string(output)
+
+	// Look for "Success: Screenshot saved to" in output
+	successPrefix := "Success: Screenshot saved to "
+	if idx := strings.Index(outputStr, successPrefix); idx != -1 {
+		// Extract file path
+		pathStart := idx + len(successPrefix)
+		pathEnd := strings.Index(outputStr[pathStart:], "\n")
+		if pathEnd == -1 {
+			pathEnd = len(outputStr) - pathStart
+		}
+		filePath := strings.TrimSpace(outputStr[pathStart : pathStart+pathEnd])
+
+		return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: fmt.Sprintf("Screenshot captured successfully: %s", filePath)},
+				},
+			}, map[string]interface{}{
+				"success":   true,
+				"file_path": filePath,
+				"url":       args.URL,
+			}, nil
+	}
+
+	// If we can't parse the output, return generic success
+	return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: "Screenshot captured successfully (output parsing failed)"},
+			},
+		}, map[string]interface{}{
+			"success": true,
+			"output":  outputStr,
+			"url":     args.URL,
+		}, nil
+}
+
+// isAllowedHost checks if a host is allowed for screenshot capture (security)
+func isAllowedHost(host string) bool {
+	// Allow localhost
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+
+	// Parse IP address
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// Not an IP address, could be a hostname
+		// For now, only allow IP addresses for security
+		return false
+	}
+
+	// Check if it's a private IP
+	// 10.0.0.0/8
+	if ip4 := ip.To4(); ip4 != nil {
+		if ip4[0] == 10 {
+			return true
+		}
+		// 172.16.0.0/12
+		if ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31 {
+			return true
+		}
+		// 192.168.0.0/16
+		if ip4[0] == 192 && ip4[1] == 168 {
+			return true
+		}
+	}
+
+	return false
+}
+
 // formatBytes converts bytes to human-readable format
 func formatBytes(bytes int64) string {
 	const unit = 1024
@@ -1243,6 +1412,15 @@ type SlowTraceArgs struct {
 	Threshold   string `json:"threshold,omitempty" jsonschema:"Duration threshold for slow traces. Example: '1s' for traces longer than 1 second, '100ms' for traces longer than 100 milliseconds"`
 	ServiceName string `json:"service_name,omitempty" jsonschema:"Filter by service name. Example: 'web-server' or 'database'"`
 	Limit       int    `json:"limit,omitempty" jsonschema:"Maximum traces to return. Default: 20, Max: 100"`
+}
+
+// CaptureScreenshotArgs defines parameters for capturing web screenshots
+type CaptureScreenshotArgs struct {
+	URL      string `json:"url" jsonschema:"URL of the web page to capture (required). Must be http:// or https://. For security, only localhost and private IPs are allowed by default."`
+	Selector string `json:"selector,omitempty" jsonschema:"CSS selector for element-specific screenshot. Example: '.app-container' or '#main-content'"`
+	Viewport string `json:"viewport,omitempty" jsonschema:"Viewport size (widthxheight). Default: 1280x720. Example: '1920x1080' for desktop, '375x667' for mobile"`
+	Output   string `json:"output,omitempty" jsonschema:"Output file path. If not specified, a temporary file will be created with timestamp."`
+	Timeout  int    `json:"timeout,omitempty" jsonschema:"Page load timeout in milliseconds. Default: 10000 (10 seconds)"`
 }
 
 // registerTraceTools registers all trace-related MCP tools
