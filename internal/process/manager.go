@@ -264,8 +264,21 @@ func (m *Manager) Wait() error {
 
 	wg.Wait()
 
-	// For recurring processes, wait for context cancellation
-	<-m.ctx.Done()
+	// Check if we have any recurring processes (with Interval)
+	hasRecurring := false
+	m.mu.RLock()
+	for _, cfg := range m.configs {
+		if cfg.Interval != "" {
+			hasRecurring = true
+			break
+		}
+	}
+	m.mu.RUnlock()
+
+	// Only wait for context cancellation if we have recurring processes
+	if hasRecurring {
+		<-m.ctx.Done()
+	}
 
 	return firstErr
 }
