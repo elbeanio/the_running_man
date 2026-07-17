@@ -2,6 +2,9 @@ package tracing
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
+	"fmt"
 	"testing"
 	"time"
 
@@ -392,4 +395,66 @@ func TestAttributeValueToString(t *testing.T) {
 		},
 	}
 	assert.Equal(t, "{...}", attributeValueToString(kvlistVal))
+}
+
+// spansJSON builds a minimal OTLP/JSON body with the given trace/span id strings.
+func spansJSON(traceID, spanID string) string {
+	return fmt.Sprintf(
+		`{"resourceSpans":[{"scopeSpans":[{"spans":[`+
+			`{"traceId":%q,"spanId":%q,"name":"n","kind":1}]}]}]}`, traceID, spanID)
+}
+
+// TestFixHexTraceIDs_HexRoundTrips documents the OTLP/JSON hex-id bug and its fix:
+// a conformant exporter sends hex ids, protojson base64-decodes them into garbage,
+// and fixHexTraceIDs recovers the correct bytes. Uses the plan §10 reproducer ids.
+func TestFixHexTraceIDs_HexRoundTrips(t *testing.T) {
+	const hexTrace = "5b8aa5a2d2c872e8321cf37308d69df2" // 32 hex chars → 16 bytes
+	const hexSpan = "051581bf3cb55c13"                  // 16 hex chars → 8 bytes
+	wantTrace, err := hex.DecodeString(hexTrace)
+	require.NoError(t, err)
+	wantSpan, err := hex.DecodeString(hexSpan)
+	require.NoError(t, err)
+
+	var req collectortracev1.ExportTraceServiceRequest
+	require.NoError(t, protojson.Unmarshal([]byte(spansJSON(hexTrace, hexSpan)), &req))
+
+	// Bug: protojson decoded the hex as base64, so the ids are the wrong length.
+	got := req.ResourceSpans[0].ScopeSpans[0].Spans[0]
+	require.Len(t, got.TraceId, 24, "protojson mis-decodes 32 hex chars into 24 bytes")
+	require.NotEqual(t, wantTrace, got.TraceId)
+
+	fixHexTraceIDs(&req)
+
+	got = req.ResourceSpans[0].ScopeSpans[0].Spans[0]
+	assert.Equal(t, wantTrace, got.TraceId)
+	assert.Equal(t, wantSpan, got.SpanId)
+	assert.Equal(t, hexTrace, fmt.Sprintf("%x", got.TraceId))
+	assert.Equal(t, hexSpan, fmt.Sprintf("%x", got.SpanId))
+}
+
+// TestFixHexTraceIDs_Base64Unchanged proves backward compatibility: a client that
+// sends genuine base64 ids (already the right byte length) is left untouched.
+func TestFixHexTraceIDs_Base64Unchanged(t *testing.T) {
+	rawTrace := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	rawSpan := []byte{1, 2, 3, 4, 5, 6, 7, 8}
+	body := spansJSON(
+		base64.StdEncoding.EncodeToString(rawTrace),
+		base64.StdEncoding.EncodeToString(rawSpan),
+	)
+
+	var req collectortracev1.ExportTraceServiceRequest
+	require.NoError(t, protojson.Unmarshal([]byte(body), &req))
+	fixHexTraceIDs(&req)
+
+	got := req.ResourceSpans[0].ScopeSpans[0].Spans[0]
+	assert.Equal(t, rawTrace, got.TraceId)
+	assert.Equal(t, rawSpan, got.SpanId)
+}
+
+// TestHexDecodeID_Edges covers the empty (absent parent) and already-correct cases.
+func TestHexDecodeID_Edges(t *testing.T) {
+	assert.Empty(t, hexDecodeID(nil, 8))
+	assert.Empty(t, hexDecodeID([]byte{}, 8))
+	correct := []byte{1, 2, 3, 4, 5, 6, 7, 8}
+	assert.Equal(t, correct, hexDecodeID(correct, 8))
 }

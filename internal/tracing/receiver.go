@@ -2,6 +2,8 @@ package tracing
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -127,6 +129,7 @@ func (r *Receiver) handleTraces(w http.ResponseWriter, req *http.Request) {
 			http.Error(w, fmt.Sprintf("Failed to parse JSON: %v", err), http.StatusBadRequest)
 			return
 		}
+		fixHexTraceIDs(&traceRequest)
 
 	default:
 		http.Error(w, "Unsupported content type", http.StatusUnsupportedMediaType)
@@ -185,6 +188,52 @@ func (r *Receiver) processTraceRequest(req *tracev1.ExportTraceServiceRequest) i
 	}
 
 	return spansProcessed
+}
+
+// fixHexTraceIDs repairs trace/span ids on an OTLP/JSON request that protojson
+// decoded as base64.
+//
+// The OTLP/JSON spec mandates HEX for trace_id/span_id — a deliberate deviation
+// from the standard protobuf-JSON mapping, and what every conformant OTel
+// exporter emits. But vanilla protojson decodes protobuf `bytes` fields as
+// base64, so a conformant hex id (32/16 chars) is silently base64-decoded into
+// 24/12 bytes of garbage and stored wrong — HTTP 200, no warning. A browser is
+// the first client to hit this, because TRM injects http/protobuf into managed
+// server processes.
+//
+// The repair is exact: hex is valid base64, so re-encoding the mis-decoded
+// bytes to base64 reproduces the original hex string, which we then hex-decode
+// to the correct id. A genuinely base64 id (already the right byte length) is
+// left untouched, so this is backward compatible.
+func fixHexTraceIDs(req *tracev1.ExportTraceServiceRequest) {
+	for _, rs := range req.ResourceSpans {
+		for _, ss := range rs.ScopeSpans {
+			for _, span := range ss.Spans {
+				span.TraceId = hexDecodeID(span.TraceId, 16)
+				span.SpanId = hexDecodeID(span.SpanId, 8)
+				span.ParentSpanId = hexDecodeID(span.ParentSpanId, 8)
+				for _, link := range span.Links {
+					link.TraceId = hexDecodeID(link.TraceId, 16)
+					link.SpanId = hexDecodeID(link.SpanId, 8)
+				}
+			}
+		}
+	}
+}
+
+// hexDecodeID returns b unchanged if it's already the wanted byte length (a real
+// base64 id, or protobuf) or empty; otherwise it treats b as protojson's base64
+// decoding of a hex string, recovers that string, and hex-decodes it. A 32-char
+// hex trace id always base64-decodes to 24 bytes (16-char span id → 12), so the
+// length check cleanly distinguishes the two encodings with no collision.
+func hexDecodeID(b []byte, want int) []byte {
+	if len(b) == want || len(b) == 0 {
+		return b
+	}
+	if decoded, err := hex.DecodeString(base64.StdEncoding.EncodeToString(b)); err == nil && len(decoded) == want {
+		return decoded
+	}
+	return b
 }
 
 // handleHealth provides a health check endpoint
