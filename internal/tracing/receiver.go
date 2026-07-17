@@ -45,7 +45,7 @@ func (r *Receiver) Start() error {
 
 	r.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", r.port),
-		Handler: mux,
+		Handler: withCORS(mux),
 	}
 
 	go func() {
@@ -70,6 +70,26 @@ func (r *Receiver) Stop(ctx context.Context) error {
 
 	r.started = false
 	return r.server.Shutdown(ctx)
+}
+
+// withCORS wraps the OTLP receiver mux with permissive CORS + preflight
+// handling so a browser can export traces/logs directly to the receiver. The
+// :9000 API server does this already (internal/api/server.go corsMiddleware);
+// the receiver, a separate http.Server, never got the same treatment, so a
+// browser preflight was rejected 405 with no CORS headers. Dev convenience —
+// wildcard origin, same as the API server (see its TODO on restricting origins).
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Max-Age", "86400")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // handleTraces handles OTLP trace ingestion requests
