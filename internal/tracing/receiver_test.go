@@ -8,10 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/elbeanio/the_running_man/internal/parser"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	collectorlogsv1 "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectortracev1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
+	logsv1 "go.opentelemetry.io/proto/otlp/logs/v1"
 	resourcev1 "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -20,7 +23,7 @@ import (
 
 func TestReceiver_StartStop(t *testing.T) {
 	storage := NewSpanStorage(100, time.Hour)
-	receiver := NewReceiver(storage, 0) // Port 0 for random port
+	receiver := NewReceiver(storage, nil, 0) // Port 0 for random port
 
 	// Start receiver
 	err := receiver.Start()
@@ -33,7 +36,7 @@ func TestReceiver_StartStop(t *testing.T) {
 
 func TestReceiver_HealthEndpoint(t *testing.T) {
 	storage := NewSpanStorage(100, time.Hour)
-	receiver := NewReceiver(storage, 0)
+	receiver := NewReceiver(storage, nil, 0)
 
 	err := receiver.Start()
 	require.NoError(t, err)
@@ -47,7 +50,7 @@ func TestReceiver_HealthEndpoint(t *testing.T) {
 
 func TestReceiver_HandleTraces_Protobuf(t *testing.T) {
 	storage := NewSpanStorage(100, time.Hour)
-	receiver := NewReceiver(storage, 0)
+	receiver := NewReceiver(storage, nil, 0)
 
 	err := receiver.Start()
 	require.NoError(t, err)
@@ -100,7 +103,7 @@ func TestReceiver_HandleTraces_Protobuf(t *testing.T) {
 
 func TestReceiver_HandleTraces_JSON(t *testing.T) {
 	storage := NewSpanStorage(100, time.Hour)
-	receiver := NewReceiver(storage, 0)
+	receiver := NewReceiver(storage, nil, 0)
 
 	err := receiver.Start()
 	require.NoError(t, err)
@@ -156,7 +159,7 @@ func TestReceiver_HandleTraces_JSON(t *testing.T) {
 
 func TestReceiver_ProcessTraceRequest(t *testing.T) {
 	storage := NewSpanStorage(100, time.Hour)
-	receiver := NewReceiver(storage, 0)
+	receiver := NewReceiver(storage, nil, 0)
 
 	// Create a trace request with multiple spans
 	traceRequest := &collectortracev1.ExportTraceServiceRequest{
@@ -457,4 +460,71 @@ func TestHexDecodeID_Edges(t *testing.T) {
 	assert.Empty(t, hexDecodeID([]byte{}, 8))
 	correct := []byte{1, 2, 3, 4, 5, 6, 7, 8}
 	assert.Equal(t, correct, hexDecodeID(correct, 8))
+}
+
+// captureSink records appended entries for assertions.
+type captureSink struct{ entries []*parser.LogEntry }
+
+func (c *captureSink) Append(e *parser.LogEntry) { c.entries = append(c.entries, e) }
+
+// TestReceiver_ProcessLogsRequest verifies OTLP log records become buffered
+// entries carrying service, level and the correlating trace id.
+func TestReceiver_ProcessLogsRequest(t *testing.T) {
+	sink := &captureSink{}
+	receiver := NewReceiver(NewSpanStorage(100, time.Hour), sink, 0)
+
+	req := &collectorlogsv1.ExportLogsServiceRequest{
+		ResourceLogs: []*logsv1.ResourceLogs{
+			{
+				Resource: &resourcev1.Resource{
+					Attributes: []*commonv1.KeyValue{
+						{Key: "service.name", Value: &commonv1.AnyValue{
+							Value: &commonv1.AnyValue_StringValue{StringValue: "web"}}},
+					},
+				},
+				ScopeLogs: []*logsv1.ScopeLogs{
+					{
+						LogRecords: []*logsv1.LogRecord{
+							{
+								TimeUnixNano:   uint64(time.Now().UnixNano()),
+								SeverityNumber: logsv1.SeverityNumber_SEVERITY_NUMBER_ERROR,
+								Body: &commonv1.AnyValue{
+									Value: &commonv1.AnyValue_StringValue{StringValue: "boom"}},
+								TraceId: []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	n := receiver.processLogsRequest(req)
+	require.Equal(t, 1, n)
+	require.Len(t, sink.entries, 1)
+
+	e := sink.entries[0]
+	assert.Equal(t, "web", e.Source)
+	assert.Equal(t, "boom", e.Message)
+	assert.Equal(t, parser.LevelError, e.Level)
+	assert.True(t, e.IsError)
+	assert.Equal(t, "0102030405060708090a0b0c0d0e0f10", e.TraceID)
+}
+
+// TestFixHexLogIDs_HexRoundTrips confirms the hex-id repair also applies to
+// OTLP/JSON log records (a browser posts hex, protojson mis-decodes to base64).
+func TestFixHexLogIDs_HexRoundTrips(t *testing.T) {
+	const hexTrace = "5b8aa5a2d2c872e8321cf37308d69df2"
+	body := fmt.Sprintf(
+		`{"resourceLogs":[{"scopeLogs":[{"logRecords":[`+
+			`{"traceId":%q,"body":{"stringValue":"hi"}}]}]}]}`, hexTrace)
+
+	var req collectorlogsv1.ExportLogsServiceRequest
+	require.NoError(t, protojson.Unmarshal([]byte(body), &req))
+	require.Len(t, req.ResourceLogs[0].ScopeLogs[0].LogRecords[0].TraceId, 24)
+
+	fixHexLogIDs(&req)
+	got := req.ResourceLogs[0].ScopeLogs[0].LogRecords[0]
+	assert.Equal(t, hexTrace, fmt.Sprintf("%x", got.TraceId))
+	assert.Len(t, got.TraceId, 16)
 }

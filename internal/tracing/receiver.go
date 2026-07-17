@@ -7,10 +7,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/elbeanio/the_running_man/internal/parser"
+	logspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	tracev1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	logsv1 "go.opentelemetry.io/proto/otlp/logs/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -19,15 +23,25 @@ import (
 type Receiver struct {
 	server  *http.Server
 	storage *SpanStorage
+	logs    LogSink
 	mu      sync.RWMutex
 	port    int
 	started bool
 }
 
-// NewReceiver creates a new OTLP trace receiver
-func NewReceiver(storage *SpanStorage, port int) *Receiver {
+// LogSink receives OTLP log records (converted to log entries) so /v1/logs can
+// feed the same ring buffer and log<->trace correlation index as process
+// stdout. *storage.RingBuffer satisfies it; kept as an interface to avoid a
+// tracing→storage import.
+type LogSink interface {
+	Append(entry *parser.LogEntry)
+}
+
+// NewReceiver creates a new OTLP receiver. logs may be nil (traces only).
+func NewReceiver(storage *SpanStorage, logs LogSink, port int) *Receiver {
 	return &Receiver{
 		storage: storage,
+		logs:    logs,
 		port:    port,
 	}
 }
@@ -43,6 +57,7 @@ func (r *Receiver) Start() error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/traces", r.handleTraces)
+	mux.HandleFunc("/v1/logs", r.handleLogs)
 	mux.HandleFunc("/health", r.handleHealth)
 
 	r.server = &http.Server{
@@ -234,6 +249,159 @@ func hexDecodeID(b []byte, want int) []byte {
 		return decoded
 	}
 	return b
+}
+
+// handleLogs handles OTLP log ingestion requests. A browser has no stdout, so
+// this is the only way its console errors / unhandled rejections reach the
+// buffer; tagged with the live trace_id they correlate to the turn's spans.
+func (r *Receiver) handleLogs(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	contentType := req.Header.Get("Content-Type")
+	var logsRequest logspb.ExportLogsServiceRequest
+
+	switch contentType {
+	case "application/x-protobuf":
+		data, err := readRequestBody(req)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to read request: %v", err), http.StatusBadRequest)
+			return
+		}
+		if err := proto.Unmarshal(data, &logsRequest); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to parse protobuf: %v", err), http.StatusBadRequest)
+			return
+		}
+
+	case "application/json":
+		data, err := readRequestBody(req)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to read request: %v", err), http.StatusBadRequest)
+			return
+		}
+		unmarshaler := protojson.UnmarshalOptions{DiscardUnknown: true}
+		if err := unmarshaler.Unmarshal(data, &logsRequest); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to parse JSON: %v", err), http.StatusBadRequest)
+			return
+		}
+		fixHexLogIDs(&logsRequest)
+
+	default:
+		http.Error(w, "Unsupported content type", http.StatusUnsupportedMediaType)
+		return
+	}
+
+	processed := r.processLogsRequest(&logsRequest)
+
+	response := &logspb.ExportLogsServiceResponse{}
+	var responseData []byte
+	var err error
+	if contentType == "application/x-protobuf" {
+		responseData, err = proto.Marshal(response)
+	} else {
+		responseData, err = protojson.MarshalOptions{UseProtoNames: true}.Marshal(response)
+	}
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to marshal response: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(responseData); err != nil {
+		fmt.Printf("[tracing] Failed to write logs response: %v\n", err)
+	}
+
+	fmt.Printf("[tracing] Processed %d log records from OTLP request\n", processed)
+}
+
+// processLogsRequest converts OTLP log records to log entries and buffers them.
+func (r *Receiver) processLogsRequest(req *logspb.ExportLogsServiceRequest) int {
+	if r.logs == nil {
+		return 0
+	}
+	processed := 0
+	for _, resourceLogs := range req.ResourceLogs {
+		service := extractServiceName(resourceLogs.Resource)
+		for _, scopeLogs := range resourceLogs.ScopeLogs {
+			for _, lr := range scopeLogs.LogRecords {
+				r.logs.Append(logRecordToEntry(lr, service))
+				processed++
+			}
+		}
+	}
+	return processed
+}
+
+// logRecordToEntry converts one OTLP LogRecord to a parser.LogEntry, carrying
+// the trace id so it correlates to spans via the ring buffer's trace index.
+func logRecordToEntry(lr *logsv1.LogRecord, service string) *parser.LogEntry {
+	message := ""
+	if lr.Body != nil {
+		message = attributeValueToString(lr.Body)
+	}
+	timestamp := timestampToTime(lr.TimeUnixNano)
+	if timestamp.IsZero() {
+		timestamp = timestampToTime(lr.ObservedTimeUnixNano)
+	}
+	if timestamp.IsZero() {
+		timestamp = time.Now()
+	}
+	level := severityToLevel(lr.SeverityNumber, lr.SeverityText)
+	var traceID string
+	if len(lr.TraceId) > 0 {
+		traceID = bytesToHex(lr.TraceId)
+	}
+	return &parser.LogEntry{
+		Timestamp:  timestamp,
+		Level:      level,
+		Source:     service,
+		SourceType: "otlp",
+		Message:    message,
+		Raw:        message,
+		IsError:    level == parser.LevelError,
+		TraceID:    traceID,
+	}
+}
+
+// severityToLevel maps an OTLP severity number (or its text, when the number is
+// unspecified) to a buffer log level.
+func severityToLevel(num logsv1.SeverityNumber, text string) parser.LogLevel {
+	switch {
+	case num >= logsv1.SeverityNumber_SEVERITY_NUMBER_ERROR:
+		return parser.LevelError
+	case num >= logsv1.SeverityNumber_SEVERITY_NUMBER_WARN:
+		return parser.LevelWarn
+	case num >= logsv1.SeverityNumber_SEVERITY_NUMBER_INFO:
+		return parser.LevelInfo
+	case num >= logsv1.SeverityNumber_SEVERITY_NUMBER_TRACE:
+		return parser.LevelDebug
+	}
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "error", "err", "fatal", "critical":
+		return parser.LevelError
+	case "warn", "warning":
+		return parser.LevelWarn
+	case "debug", "trace":
+		return parser.LevelDebug
+	default:
+		return parser.LevelInfo
+	}
+}
+
+// fixHexLogIDs applies the same hex-id repair to OTLP/JSON log records; see
+// fixHexTraceIDs.
+func fixHexLogIDs(req *logspb.ExportLogsServiceRequest) {
+	for _, resourceLogs := range req.ResourceLogs {
+		for _, scopeLogs := range resourceLogs.ScopeLogs {
+			for _, lr := range scopeLogs.LogRecords {
+				lr.TraceId = hexDecodeID(lr.TraceId, 16)
+				lr.SpanId = hexDecodeID(lr.SpanId, 8)
+			}
+		}
+	}
 }
 
 // handleHealth provides a health check endpoint
