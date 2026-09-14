@@ -649,3 +649,38 @@ func TestRingBuffer_TraceCorrelation(t *testing.T) {
 		t.Errorf("After eviction, expected 2 logs for test-trace, got %d", len(logs5))
 	}
 }
+
+// Review finding R11: the count-eviction loop lacked the len > 0 guard that
+// its two sibling loops have, so a non-positive maxSize made the condition
+// permanently true and rb.entries[0] panicked on an empty slice.
+//
+// Latent rather than live -- config maps max_entries 0 to a default -- but
+// NewRingBuffer is exported, and a panic in the storage layer would take down
+// the whole tool.
+func TestRingBuffer_NonPositiveMaxSizeDoesNotPanic(t *testing.T) {
+	for _, maxSize := range []int{0, -1} {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("maxSize=%d: Append panicked: %v", maxSize, r)
+				}
+			}()
+
+			rb := NewRingBuffer(maxSize, 30*time.Minute, 1024)
+			rb.Append(&parser.LogEntry{Timestamp: time.Now(), Raw: "x", Message: "x"})
+
+			// Clear() re-allocates from maxSize too, so exercise that path.
+			rb.Clear()
+			rb.Append(&parser.LogEntry{Timestamp: time.Now(), Raw: "y", Message: "y"})
+
+			// The requirement is that it degrades rather than crashing. A
+			// non-positive limit cannot be honoured exactly -- eviction runs
+			// before the append, so one entry survives -- and that is fine: the
+			// config layer rejects these values, and a wrong count is vastly
+			// preferable to a panic in the storage layer taking down the tool.
+			if got := rb.Stats().TotalEntries; got > 1 {
+				t.Errorf("maxSize=%d: expected at most 1 entry retained, got %d", maxSize, got)
+			}
+		}()
+	}
+}

@@ -65,7 +65,7 @@ List of processes to run and manage.
 - `args` (array of strings, optional): Command arguments
 - `restart_on_crash` (boolean, optional): Auto-restart on non-zero exit (default: `false`)
 - `shell` (string, optional): Shell to use for this process (overrides global `shell`)
-- `interval` (string, optional): Interval for recurring execution (e.g., "30s", "1m", "5m", "1h")
+- `interval` (string, optional): Interval for recurring execution (e.g., "30s", "1m", "5m", "1h"). Must be **positive** — a zero or negative interval is rejected at startup.
 
 **Example:**
 ```yaml
@@ -158,7 +158,9 @@ api_port: 9001
 ### Log Retention
 
 #### `retention` (duration string, optional)
-How long to keep logs in memory (default: `30m`).
+How long to keep logs in memory (default: `30m`). Must be **positive** — a zero or
+negative retention is rejected at startup, since it would discard every log entry the
+moment it arrived.
 
 **Supported formats:**
 - `30s` - 30 seconds
@@ -216,7 +218,7 @@ OpenTelemetry tracing configuration.
 - `enabled` (boolean): Enable/disable tracing (default: `true`)
 - `port` (integer): OTLP HTTP receiver port (default: `4318`)
 - `max_spans` (integer): Maximum spans to store (default: `10000`)
-- `max_span_age` (duration): How long to keep spans (default: `30m`)
+- `max_span_age` (duration): How long to keep spans (default: `30m`). Must be **positive**.
 
 **Example:**
 ```yaml
