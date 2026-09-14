@@ -96,7 +96,7 @@ The REST API and the TUI are both readers of that buffer.
 
 **The REST API is the agent-facing interface.** It is self-describing: `/` lists the
 endpoints and `/docs` serves OpenAPI. `/logs` takes `since`, `level`, `source`,
-`contains`, `exclude`; there are also `/errors`, `/health`, `/processes`,
+`contains`, `exclude`, `limit`; there are also `/errors`, `/health`, `/processes`,
 `/processes/{name}`, `/processes/{name}/restart`, `/processes/stop-all`, `/traces` with
 filters, and `/traces/{id}/logs`. Default port 9000; OTLP on 4318.
 

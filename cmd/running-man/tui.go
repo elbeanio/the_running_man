@@ -75,12 +75,12 @@ type model struct {
 }
 
 type logEntry struct {
-	Timestamp string `json:"Timestamp"`
-	Level     string `json:"Level"`
-	Source    string `json:"Source"`
-	Message   string `json:"Message"`
-	IsError   bool   `json:"IsError"`
-	TraceID   string `json:"TraceID,omitempty"` // Optional trace ID for correlation
+	Timestamp string `json:"timestamp"`
+	Level     string `json:"level"`
+	Source    string `json:"source"`
+	Message   string `json:"message"`
+	IsError   bool   `json:"is_error"`
+	TraceID   string `json:"trace_id,omitempty"` // Optional trace ID for correlation
 }
 
 type traceSummary struct {
@@ -169,18 +169,18 @@ func fetchTraces(apiURL string) tea.Cmd {
 		// Parse the response
 		var response struct {
 			Traces []struct {
-				TraceID      string            `json:"TraceID"`
-				SpanID       string            `json:"SpanID"`
-				ParentSpanID string            `json:"ParentSpanID"`
-				Name         string            `json:"Name"`
-				Kind         string            `json:"Kind"`
-				StartTime    time.Time         `json:"StartTime"`
-				EndTime      time.Time         `json:"EndTime"`
-				Duration     string            `json:"Duration"` // Duration as string like "1.23456789s"
-				Status       string            `json:"Status"`
-				StatusCode   string            `json:"StatusCode"`
-				ServiceName  string            `json:"ServiceName"`
-				Attributes   map[string]string `json:"Attributes"`
+				TraceID      string            `json:"trace_id"`
+				SpanID       string            `json:"span_id"`
+				ParentSpanID string            `json:"parent_span_id"`
+				Name         string            `json:"name"`
+				Kind         string            `json:"kind"`
+				StartTime    time.Time         `json:"start_time"`
+				EndTime      time.Time         `json:"end_time"`
+				Duration     string            `json:"duration"` // Duration as string like "1.23456789s"
+				Status       string            `json:"status"`
+				StatusCode   string            `json:"status_code"`
+				ServiceName  string            `json:"service_name"`
+				Attributes   map[string]string `json:"attributes"`
 			} `json:"traces"`
 			Count int `json:"count"`
 		}
@@ -271,18 +271,18 @@ func fetchTraceSpans(apiURL, traceID string) tea.Cmd {
 		// Parse the response
 		var response struct {
 			Traces []struct {
-				TraceID      string            `json:"TraceID"`
-				SpanID       string            `json:"SpanID"`
-				ParentSpanID string            `json:"ParentSpanID"`
-				Name         string            `json:"Name"`
-				Kind         string            `json:"Kind"`
-				StartTime    time.Time         `json:"StartTime"`
-				EndTime      time.Time         `json:"EndTime"`
-				Duration     string            `json:"Duration"`
-				Status       string            `json:"Status"`
-				StatusCode   string            `json:"StatusCode"`
-				ServiceName  string            `json:"ServiceName"`
-				Attributes   map[string]string `json:"Attributes"`
+				TraceID      string            `json:"trace_id"`
+				SpanID       string            `json:"span_id"`
+				ParentSpanID string            `json:"parent_span_id"`
+				Name         string            `json:"name"`
+				Kind         string            `json:"kind"`
+				StartTime    time.Time         `json:"start_time"`
+				EndTime      time.Time         `json:"end_time"`
+				Duration     string            `json:"duration"`
+				Status       string            `json:"status"`
+				StatusCode   string            `json:"status_code"`
+				ServiceName  string            `json:"service_name"`
+				Attributes   map[string]string `json:"attributes"`
 			} `json:"traces"`
 			Count int `json:"count"`
 		}

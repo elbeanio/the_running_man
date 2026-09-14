@@ -135,6 +135,17 @@ paths:
           schema:
             type: string
             example: "error connecting"
+        - name: limit
+          in: query
+          description: |
+            Maximum number of entries to return, keeping the MOST RECENT matches.
+            Defaults to 1000. Use `limit=0` for no limit. Negative values are rejected.
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 1000
+            example: 100
       responses:
         '200':
           description: List of log entries matching the filters
@@ -182,6 +193,17 @@ paths:
           schema:
             type: string
             example: "1h"
+        - name: limit
+          in: query
+          description: |
+            Maximum number of entries to return, keeping the MOST RECENT matches.
+            Defaults to 1000. Use `limit=0` for no limit.
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 1000
+            example: 50
       responses:
         '200':
           description: List of error log entries
@@ -297,7 +319,13 @@ paths:
   /processes/{name}/restart:
     post:
       summary: Restart a process
-      description: Stops and restarts the specified managed process
+      description: |
+        Stops and restarts the specified managed process.
+
+        **Local requests only.** This endpoint changes process state, so it is served
+        only to loopback callers (127.0.0.0/8 and ::1) and returns 403 otherwise, even
+        though the API itself is bound to all interfaces. Start running-man with
+        `--allow-remote-control` to open it.
       tags:
         - processes
       parameters:
@@ -335,6 +363,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: |
+            Request did not come from this machine. Process control is loopback-only
+            unless `--allow-remote-control` is set.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControlForbiddenResponse'
         '404':
           description: Process not found
           content:
@@ -359,7 +395,13 @@ paths:
   /processes/stop-all:
     post:
       summary: Stop all managed processes
-      description: Gracefully stops all processes managed by Running Man
+      description: |
+        Gracefully stops all processes managed by Running Man.
+
+        **Local requests only.** This endpoint changes process state, so it is served
+        only to loopback callers (127.0.0.0/8 and ::1) and returns 403 otherwise, even
+        though the API itself is bound to all interfaces. Start running-man with
+        `--allow-remote-control` to open it.
       tags:
         - processes
       responses:
@@ -377,6 +419,14 @@ paths:
               example:
                 message: "All processes stopped"
                 stopped_count: 2
+        '403':
+          description: |
+            Request did not come from this machine. Process control is loopback-only
+            unless `--allow-remote-control` is set.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControlForbiddenResponse'
         '503':
           description: Process manager not available
           content:
@@ -386,6 +436,35 @@ paths:
 
 components:
   schemas:
+    ControlForbiddenResponse:
+      type: object
+      description: |
+        Returned when a state-changing endpoint is called from somewhere other than
+        the machine running running-man. Includes the caller's own address, because
+        the usual cause is believing you are local when you are not (Docker bridge
+        addresses, VPNs, 0.0.0.0 vs 127.0.0.1, IPv6 ::1 vs IPv4).
+      properties:
+        error:
+          type: string
+          description: Short reason for the refusal
+        detail:
+          type: string
+          description: Which endpoint was refused, and the address it came from
+        remote_addr:
+          type: string
+          description: The calling address, as seen by the server
+        allow:
+          type: string
+          description: How to permit the call
+        docs:
+          type: string
+          description: Path to the API documentation
+      example:
+        error: "process control is restricted to local requests"
+        detail: "POST /processes/stop-all changes process state, so it is only served to loopback callers. This request arrived from 192.168.1.42."
+        remote_addr: "192.168.1.42"
+        allow: "Call it from the machine running running-man, or restart running-man with --allow-remote-control."
+        docs: "/docs"
     LogEntry:
       type: object
       description: A single log entry
@@ -409,10 +488,25 @@ components:
           description: Original unparsed log line
         is_error:
           type: boolean
-          description: Whether this log came from stderr
+          description: |
+            Whether this entry represents an error condition. Set by the parsers from
+            the entry's content (level, or the presence of a stack trace) -- not from
+            whether it arrived on stderr.
         stacktrace:
           type: string
           description: Stack trace if this is an error with traceback (Python, etc.)
+        source_type:
+          type: string
+          enum: [process, docker, system, traces, otlp]
+          description: |
+            What kind of producer the source is. `otlp` entries were POSTed to the
+            OTLP receiver rather than captured from a process, so their source name
+            and timestamp come from the sender.
+        trace_id:
+          type: string
+          description: |
+            Trace correlation ID, when the application emitted one. Use
+            `GET /traces/{id}/logs` to fetch every entry for a trace.
       required:
         - timestamp
         - level
@@ -420,7 +514,6 @@ components:
         - message
         - raw
         - is_error
-        - stacktrace
 
     LogsResponse:
       type: object
@@ -432,6 +525,9 @@ components:
         count:
           type: integer
           description: Number of log entries returned
+        limit:
+          type: integer
+          description: The limit applied to this query (0 means no limit)
       required:
         - logs
         - count

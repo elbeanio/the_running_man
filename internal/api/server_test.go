@@ -1,10 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1399,5 +1403,251 @@ func TestRoot_MarksLocalOnlyEndpoints(t *testing.T) {
 		if !seen[p] {
 			t.Errorf("root listing is missing %s", p)
 		}
+	}
+}
+
+// --- Review findings R4 and R5: the agent-facing API describing itself truthfully ---
+
+// R4: parser.LogEntry had no json tags, so it serialised under Go field names
+// ("Timestamp", "IsError") while docs/openapi.yaml documented snake_case and
+// every other endpoint used snake_case. An agent following /docs -- the
+// discovery mechanism the tool depends on -- got every field name wrong on the
+// endpoint it uses most.
+func TestLogsResponse_UsesSnakeCaseFieldNames(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	buffer.Append(&parser.LogEntry{
+		Timestamp:  time.Now(),
+		Level:      parser.LevelError,
+		Source:     "backend",
+		SourceType: "process",
+		Message:    "boom",
+		Raw:        "boom",
+		IsError:    true,
+		Stacktrace: "trace here",
+		TraceID:    "abc123",
+	})
+	server := NewServer(buffer, 9000, nil, nil, nil)
+
+	req := httptest.NewRequest("GET", "/logs", nil)
+	w := httptest.NewRecorder()
+	server.handleLogs(w, req)
+
+	var body struct {
+		Logs []map[string]interface{} `json:"logs"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response is not JSON: %v", err)
+	}
+	if len(body.Logs) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(body.Logs))
+	}
+	entry := body.Logs[0]
+
+	// These are the names docs/openapi.yaml promises.
+	for _, key := range []string{
+		"timestamp", "level", "source", "source_type",
+		"message", "raw", "is_error", "stacktrace", "trace_id",
+	} {
+		if _, ok := entry[key]; !ok {
+			t.Errorf("missing documented field %q; got keys %v", key, keysOf(entry))
+		}
+	}
+
+	// And the old Go-name keys must be gone, so nothing depends on them.
+	for _, key := range []string{"Timestamp", "Level", "Source", "Message", "IsError", "TraceID"} {
+		if _, ok := entry[key]; ok {
+			t.Errorf("field %q is still serialised under its Go name", key)
+		}
+	}
+}
+
+func keysOf(m map[string]interface{}) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// R5: `limit` was documented on /logs but never implemented -- the parameter
+// was silently ignored, and a bare `curl /logs` returned the whole buffer (up
+// to 10,000 entries by default). limit=notanumber returned 200 where /traces
+// returned 400 for the same input.
+func TestLogs_LimitIsApplied(t *testing.T) {
+	buffer := storage.NewRingBuffer(1000, 30*time.Minute, 50*1024*1024)
+	for i := 0; i < 50; i++ {
+		buffer.Append(&parser.LogEntry{
+			Timestamp: time.Now(),
+			Level:     parser.LevelInfo,
+			Source:    "app",
+			Message:   fmt.Sprintf("line-%d", i),
+			Raw:       fmt.Sprintf("line-%d", i),
+		})
+	}
+	server := NewServer(buffer, 9000, nil, nil, nil)
+
+	tests := []struct {
+		query     string
+		wantCount int
+	}{
+		{"/logs?limit=10", 10},
+		{"/logs?limit=1", 1},
+		{"/logs?limit=0", 50},   // 0 means no limit
+		{"/logs?limit=999", 50}, // more than available
+		{"/logs", 50},           // under the 1000 default
+	}
+	for _, tt := range tests {
+		req := httptest.NewRequest("GET", tt.query, nil)
+		w := httptest.NewRecorder()
+		server.handleLogs(w, req)
+
+		var body struct {
+			Count int `json:"count"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: not JSON: %v", tt.query, err)
+		}
+		if body.Count != tt.wantCount {
+			t.Errorf("%s: count = %d, want %d", tt.query, body.Count, tt.wantCount)
+		}
+	}
+}
+
+// The limit must keep the NEWEST matches: truncating to the oldest would be
+// useless for debugging.
+func TestLogs_LimitKeepsMostRecent(t *testing.T) {
+	buffer := storage.NewRingBuffer(1000, 30*time.Minute, 50*1024*1024)
+	for i := 0; i < 10; i++ {
+		buffer.Append(&parser.LogEntry{
+			Timestamp: time.Now(),
+			Level:     parser.LevelInfo,
+			Source:    "app",
+			Message:   fmt.Sprintf("line-%d", i),
+			Raw:       fmt.Sprintf("line-%d", i),
+		})
+	}
+	server := NewServer(buffer, 9000, nil, nil, nil)
+
+	req := httptest.NewRequest("GET", "/logs?limit=3", nil)
+	w := httptest.NewRecorder()
+	server.handleLogs(w, req)
+
+	var body struct {
+		Logs []struct {
+			Message string `json:"message"`
+		} `json:"logs"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	if len(body.Logs) != 3 {
+		t.Fatalf("got %d entries, want 3", len(body.Logs))
+	}
+	for i, want := range []string{"line-7", "line-8", "line-9"} {
+		if body.Logs[i].Message != want {
+			t.Errorf("entry %d = %q, want %q (the limit must keep the newest)", i, body.Logs[i].Message, want)
+		}
+	}
+}
+
+// The limit is applied after filtering, so "the 5 most recent errors" means
+// that -- not "errors among the 5 most recent entries".
+func TestLogs_LimitAppliesAfterFiltering(t *testing.T) {
+	buffer := storage.NewRingBuffer(1000, 30*time.Minute, 50*1024*1024)
+	// 20 info entries, then 3 errors, then 20 more info entries.
+	add := func(level parser.LogLevel, msg string) {
+		buffer.Append(&parser.LogEntry{
+			Timestamp: time.Now(), Level: level, Source: "app",
+			Message: msg, Raw: msg, IsError: level == parser.LevelError,
+		})
+	}
+	for i := 0; i < 20; i++ {
+		add(parser.LevelInfo, "noise")
+	}
+	for i := 0; i < 3; i++ {
+		add(parser.LevelError, fmt.Sprintf("err-%d", i))
+	}
+	for i := 0; i < 20; i++ {
+		add(parser.LevelInfo, "more noise")
+	}
+
+	server := NewServer(buffer, 9000, nil, nil, nil)
+	req := httptest.NewRequest("GET", "/logs?level=error&limit=5", nil)
+	w := httptest.NewRecorder()
+	server.handleLogs(w, req)
+
+	var body struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	// All 3 errors, despite being nowhere near the last 5 entries.
+	if body.Count != 3 {
+		t.Errorf("count = %d, want 3: the limit must apply after filtering", body.Count)
+	}
+}
+
+func TestLogs_InvalidLimitIsRejected(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	server := NewServer(buffer, 9000, nil, nil, nil)
+
+	// /traces already returned 400 for these; /logs returned 200 and ignored them.
+	for _, query := range []string{"/logs?limit=notanumber", "/logs?limit=-5", "/logs?limit=1.5"} {
+		req := httptest.NewRequest("GET", query, nil)
+		w := httptest.NewRecorder()
+		server.handleLogs(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: got HTTP %d, want 400", query, w.Code)
+		}
+	}
+}
+
+func TestErrors_LimitIsApplied(t *testing.T) {
+	buffer := storage.NewRingBuffer(1000, 30*time.Minute, 50*1024*1024)
+	for i := 0; i < 20; i++ {
+		buffer.Append(&parser.LogEntry{
+			Timestamp: time.Now(), Level: parser.LevelError, Source: "app",
+			Message: fmt.Sprintf("err-%d", i), Raw: "e", IsError: true,
+		})
+	}
+	server := NewServer(buffer, 9000, nil, nil, nil)
+
+	req := httptest.NewRequest("GET", "/errors?limit=4", nil)
+	w := httptest.NewRecorder()
+	server.handleErrors(w, req)
+
+	var body struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	if body.Count != 4 {
+		t.Errorf("count = %d, want 4", body.Count)
+	}
+}
+
+// The spec served at /docs is an embedded copy of docs/openapi.yaml, synced by
+// `go generate ./internal/api`. Nothing enforced that, so the two drifted: the
+// embedded copy was months out of date, and /docs -- the mechanism an agent
+// uses to discover the API -- was serving a spec that omitted several
+// endpoints' documented behaviour.
+//
+// This test fails the moment they diverge again. Run `go generate ./internal/api`
+// to fix it.
+func TestEmbeddedOpenAPISpec_MatchesDocs(t *testing.T) {
+	onDisk, err := os.ReadFile(filepath.Join("..", "..", "docs", "openapi.yaml"))
+	if err != nil {
+		t.Fatalf("cannot read docs/openapi.yaml: %v", err)
+	}
+
+	if !bytes.Equal(bytes.TrimSpace(onDisk), bytes.TrimSpace(openapiSpec)) {
+		t.Errorf("the embedded OpenAPI spec is out of sync with docs/openapi.yaml "+
+			"(embedded %d bytes, docs %d bytes).\n"+
+			"Run: go generate ./internal/api",
+			len(openapiSpec), len(onDisk))
 	}
 }

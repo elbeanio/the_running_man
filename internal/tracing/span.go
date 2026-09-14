@@ -13,27 +13,29 @@ import (
 
 // SpanEntry represents a stored trace span
 type SpanEntry struct {
-	TraceID      string            `json:"TraceID"`
-	SpanID       string            `json:"SpanID"`
-	ParentSpanID string            `json:"ParentSpanID"`
-	Name         string            `json:"Name"`
-	Kind         string            `json:"Kind"`
-	StartTime    time.Time         `json:"StartTime"`
-	EndTime      time.Time         `json:"EndTime"`
-	Duration     time.Duration     `json:"Duration"`
-	Status       string            `json:"Status"`
-	StatusCode   string            `json:"StatusCode"`
-	ServiceName  string            `json:"ServiceName"`
-	Attributes   map[string]string `json:"Attributes"`
-	Events       []SpanEvent       `json:"Events"`
-	Links        []SpanLink        `json:"Links"`
+	TraceID      string            `json:"trace_id"`
+	SpanID       string            `json:"span_id"`
+	ParentSpanID string            `json:"parent_span_id,omitempty"`
+	Name         string            `json:"name"`
+	Kind         string            `json:"kind"`
+	StartTime    time.Time         `json:"start_time"`
+	EndTime      time.Time         `json:"end_time"`
+	Duration     time.Duration     `json:"duration"`
+	Status       string            `json:"status"`
+	StatusCode   string            `json:"status_code"`
+	ServiceName  string            `json:"service_name"`
+	Attributes   map[string]string `json:"attributes,omitempty"`
+	Events       []SpanEvent       `json:"events,omitempty"`
+	Links        []SpanLink        `json:"links,omitempty"`
 }
 
-// MarshalJSON implements custom JSON marshaling for SpanEntry
+// MarshalJSON implements custom JSON marshaling for SpanEntry, rendering the
+// duration as a human-readable string ("1.234s") rather than a nanosecond
+// count.
 func (s SpanEntry) MarshalJSON() ([]byte, error) {
 	type Alias SpanEntry
 	return json.Marshal(&struct {
-		Duration string `json:"Duration"`
+		Duration string `json:"duration"`
 		Alias
 	}{
 		Duration: s.Duration.String(),
@@ -43,16 +45,16 @@ func (s SpanEntry) MarshalJSON() ([]byte, error) {
 
 // SpanEvent represents an event within a span
 type SpanEvent struct {
-	Name       string            `json:"Name"`
-	Timestamp  time.Time         `json:"Timestamp"`
-	Attributes map[string]string `json:"Attributes"`
+	Name       string            `json:"name"`
+	Timestamp  time.Time         `json:"timestamp"`
+	Attributes map[string]string `json:"attributes,omitempty"`
 }
 
 // SpanLink represents a link to another span
 type SpanLink struct {
-	TraceID    string            `json:"TraceID"`
-	SpanID     string            `json:"SpanID"`
-	Attributes map[string]string `json:"Attributes"`
+	TraceID    string            `json:"trace_id"`
+	SpanID     string            `json:"span_id"`
+	Attributes map[string]string `json:"attributes,omitempty"`
 }
 
 // convertOTLPSpan converts an OTLP span to our internal format
