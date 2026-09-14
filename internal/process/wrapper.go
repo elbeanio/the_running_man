@@ -35,6 +35,47 @@ import (
 // LineHandler is called for each line of output
 type LineHandler func(source string, line string, timestamp time.Time, isStderr bool)
 
+// MaxLineBytes is the largest single line kept intact. Longer lines are
+// truncated to this length rather than ending capture for the stream.
+const MaxLineBytes = 1024 * 1024
+
+// streamReadBufferBytes is the read buffer size; unrelated to the maximum line
+// length, which is handled by accumulating across reads.
+const streamReadBufferBytes = 64 * 1024
+
+// readLine reads one newline-terminated line, keeping at most maxBytes of it.
+//
+// If the line is longer, the excess is read and discarded so that parsing
+// resumes cleanly at the next newline, and truncated is true. The returned
+// line never includes the trailing newline. A final line with no newline is
+// returned with err == io.EOF.
+func readLine(reader *bufio.Reader, maxBytes int) (line string, truncated bool, err error) {
+	var buf []byte
+
+	for {
+		chunk, readErr := reader.ReadSlice('\n')
+
+		if len(buf) < maxBytes {
+			room := maxBytes - len(buf)
+			if len(chunk) <= room {
+				buf = append(buf, chunk...)
+			} else {
+				buf = append(buf, chunk[:room]...)
+				truncated = true
+			}
+		} else if len(chunk) > 0 {
+			truncated = true
+		}
+
+		if readErr == bufio.ErrBufferFull {
+			// Line is longer than the read buffer: keep going to find the newline.
+			continue
+		}
+
+		return strings.TrimRight(string(buf), "\r\n"), truncated, readErr
+	}
+}
+
 // outputDrainTimeout bounds how long Wait blocks for the output readers before
 // reaping the process. Only reached when something other than the direct child
 // still holds the pipe open, since an exited process's pipes produce EOF
@@ -198,35 +239,53 @@ func (w *ProcessWrapper) Start() error {
 	return nil
 }
 
-// captureStream reads lines from a stream and forwards them to the handler
+// captureStream reads lines from a stream and forwards them to the handler.
+//
+// Uses a bufio.Reader rather than a bufio.Scanner. A Scanner returns
+// bufio.ErrTooLong on a line above its buffer limit and cannot continue, which
+// ended capture for the stream permanently -- one minified bundle or base64
+// blob and everything the process logged afterwards was lost. Worse, the error
+// was only printed when not silent, and TUI mode is silent, so it happened
+// invisibly.
+//
+// An over-long line is now truncated and kept, and the truncation is reported
+// through the handler so it lands in the buffer rather than only on a terminal
+// nobody is watching.
 func (w *ProcessWrapper) captureStream(stream io.ReadCloser, isStderr bool) {
 	defer w.wg.Done()
 
-	scanner := bufio.NewScanner(stream)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024) // Support up to 1MB lines
+	reader := bufio.NewReaderSize(stream, streamReadBufferBytes)
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		timestamp := time.Now()
+	for {
+		line, truncated, err := readLine(reader, MaxLineBytes)
 
-		// Pass-through to terminal with process name prefix (only when not silent)
-		if !w.silent {
-			if isStderr {
-				fmt.Fprintf(os.Stderr, "[%s] %s\n", w.name, line)
-			} else {
-				fmt.Printf("[%s] %s\n", w.name, line)
+		if line != "" || truncated {
+			timestamp := time.Now()
+
+			if truncated {
+				line += fmt.Sprintf(" [running-man: line truncated at %d bytes]", MaxLineBytes)
+			}
+
+			// Pass-through to terminal with process name prefix (only when not silent)
+			if !w.silent {
+				if isStderr {
+					fmt.Fprintf(os.Stderr, "[%s] %s\n", w.name, line)
+				} else {
+					fmt.Printf("[%s] %s\n", w.name, line)
+				}
+			}
+
+			// Call handler if provided
+			if w.handler != nil {
+				w.handler(w.name, line, timestamp, isStderr)
 			}
 		}
 
-		// Call handler if provided
-		if w.handler != nil {
-			w.handler(w.name, line, timestamp, isStderr)
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		if !w.silent {
-			fmt.Fprintf(os.Stderr, "[running-man] Error reading %s stream: %v\n", w.name, err)
+		if err != nil {
+			if err != io.EOF && !w.silent {
+				fmt.Fprintf(os.Stderr, "[running-man] Error reading %s stream: %v\n", w.name, err)
+			}
+			return
 		}
 	}
 }
