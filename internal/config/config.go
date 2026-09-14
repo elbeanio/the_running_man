@@ -12,6 +12,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/elbeanio/the_running_man/internal/process"
@@ -139,19 +140,26 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("api_port must be between %d and %d, got %d", MinPort, MaxPort, c.APIPort)
 	}
 
-	// Validate shell if specified
+	// Validate shell if specified.
+	//
+	// This was a hardcoded allowlist of five absolute paths, which rejected most
+	// shells people actually have: Homebrew bash at /opt/homebrew/bin/bash or
+	// /usr/local/bin/bash, /bin/dash, fish, and anything under Nix. The README
+	// promised "any shell". Check that the path exists and is executable
+	// instead, which is the property that actually matters.
 	if c.Shell != "" {
-		validShells := []string{"/bin/sh", "/bin/bash", "/bin/zsh", "/usr/bin/bash", "/usr/bin/zsh"}
-		valid := false
-		for _, s := range validShells {
-			if c.Shell == s {
-				valid = true
-				break
-			}
+		if !filepath.IsAbs(c.Shell) {
+			return fmt.Errorf("shell must be an absolute path, got '%s'", c.Shell)
 		}
-		if !valid {
-			return fmt.Errorf("shell must be one of [%s, %s, %s, %s, %s], got '%s'",
-				"/bin/sh", "/bin/bash", "/bin/zsh", "/usr/bin/bash", "/usr/bin/zsh", c.Shell)
+		info, err := os.Stat(c.Shell)
+		if err != nil {
+			return fmt.Errorf("shell '%s' cannot be used: %w", c.Shell, err)
+		}
+		if info.IsDir() {
+			return fmt.Errorf("shell '%s' is a directory, not an executable", c.Shell)
+		}
+		if info.Mode()&0o111 == 0 {
+			return fmt.Errorf("shell '%s' is not executable", c.Shell)
 		}
 	}
 

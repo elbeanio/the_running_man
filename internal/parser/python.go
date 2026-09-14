@@ -21,8 +21,32 @@ var (
 	// Matches "  File "/path/to/file.py", line 123, in function_name"
 	tracebackFileRegex = regexp.MustCompile(`^\s+File ".*", line \d+`)
 
-	// Matches error lines like "ValueError: invalid literal"
-	errorLineRegex = regexp.MustCompile(`^(\w+Error|Exception|Warning):\s+(.*)`)
+	// Matches the exception line that terminates a traceback.
+	//
+	// The previous pattern was `^(\w+Error|Exception|Warning):\s+(.*)`, which
+	// missed a lot of real Python: exceptions not ending in "Error"
+	// (KeyboardInterrupt, SystemExit, StopIteration), dotted names
+	// (requests.exceptions.HTTPError), and — because of the `\s+` — any bare
+	// exception with no message at all ("ValueError:"). Those tracebacks never
+	// terminated cleanly.
+	//
+	// Now: an optional dotted module prefix, an exception-shaped CapitalisedName,
+	// and an OPTIONAL colon and message -- because Python prints a bare
+	// "KeyboardInterrupt" with no colon when the exception has no message, which
+	// is exactly what Ctrl-C during a hang produces.
+	//
+	// The name must end in a recognised exception suffix rather than being any
+	// capitalised word, so an ordinary log line like "Starting" or "Done" does
+	// not terminate a traceback and get mislabelled as its error.
+	//
+	// Known limitation: lowercase exception names such as socket.timeout are not
+	// matched.
+	errorLineRegex = regexp.MustCompile(`^([A-Za-z_][\w.]*\.)?([A-Z]\w*(?:Error|Exception|Warning|Interrupt|Exit|Iteration|Timeout|Overflow)|Exception|Warning)(:\s*.*)?$`)
+
+	// traceIDRegex extracts a trace id embedded in traceback text. Package-level
+	// so it is compiled once rather than on every traceback, matching its three
+	// neighbours above.
+	traceIDRegex = regexp.MustCompile(`(?i)(?:trace[_-]?id|trace)[=:]\s*([a-zA-Z0-9\-_.]+)`)
 )
 
 // NewPythonParser creates a new Python traceback parser
@@ -124,7 +148,6 @@ func (p *PythonParser) buildEntry(source string) *LogEntry {
 	}
 
 	// Try to extract trace_id from the traceback
-	traceIDRegex := regexp.MustCompile(`(?i)(?:trace[_-]?id|trace)[=:]\s*([a-zA-Z0-9\-_\.]+)`)
 	for _, line := range p.lines {
 		if matches := traceIDRegex.FindStringSubmatch(line); len(matches) > 1 {
 			entry.TraceID = matches[1]

@@ -164,6 +164,17 @@ func (m *Manager) runRecurringProcess(name string, cfg ProcessConfig) {
 		return
 	}
 
+	// Register the wrapper that is actually running, so the API reports this
+	// run rather than the never-started placeholder created by Start().
+	//
+	// Without this, /processes reported pid -1 and status "running" forever for
+	// every recurring process, regardless of whether its runs were succeeding,
+	// because ProcessState stays nil on a wrapper whose Start() was never
+	// called.
+	m.mu.Lock()
+	m.processes[name] = wrapper
+	m.mu.Unlock()
+
 	// Wait for the process to complete
 	err := wrapper.Wait()
 	if err != nil {
@@ -400,10 +411,29 @@ func (m *Manager) ListProcesses() []ProcessInfo {
 			info.Description = config.Description
 			info.URL = config.URL
 			info.Interval = config.Interval
+			info.Status = recurringStatus(info.Status, config.Interval, info.ExitCode)
 		}
 		infos = append(infos, info)
 	}
 	return infos
+}
+
+// recurringStatus adjusts a status for recurring processes.
+//
+// A recurring process spends most of its life between runs. Reporting that as
+// "stopped" is accurate for the last run but misleading about the process,
+// which is healthy and waiting for its next tick -- so a caller (or an agent)
+// would reasonably conclude the service was down. "waiting" says what is
+// actually true. A failed last run still reports "failed", which is the thing
+// worth noticing.
+func recurringStatus(status, interval string, exitCode int) string {
+	if interval == "" {
+		return status
+	}
+	if status == "stopped" && exitCode == 0 {
+		return "waiting"
+	}
+	return status
 }
 
 // ProcessNames returns a list of all managed process names.
@@ -445,6 +475,7 @@ func (m *Manager) GetProcess(name string) (*ProcessInfo, error) {
 		info.Description = config.Description
 		info.URL = config.URL
 		info.Interval = config.Interval
+		info.Status = recurringStatus(info.Status, config.Interval, info.ExitCode)
 	}
 	return info, nil
 }

@@ -2,6 +2,7 @@ package process
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -653,5 +654,113 @@ func TestProcessWrapper_LineLongerThanReadBufferIsIntact(t *testing.T) {
 	}
 	if sawTruncation {
 		t.Error("a line under MaxLineBytes must not be marked truncated")
+	}
+}
+
+// Review finding R14: the state accessors were documented "safe to call
+// concurrently" and took stateMu.RLock, but nothing took stateMu for WRITING
+// -- ProcessState is written inside (*exec.Cmd).Wait, which knows nothing
+// about that mutex. The lock only serialised readers against each other, so
+// the race against Wait remained and the comments gave false assurance.
+// StartTime() took no lock at all.
+//
+// Run with -race; this fails there, not here, if the wrapper goes back to
+// proxying cmd.ProcessState.
+func TestProcessWrapper_StateAccessorsAreRaceFree(t *testing.T) {
+	handler := func(source, line string, ts time.Time, isStderr bool) {}
+	wrapper := New("racy", "echo hello; echo world", []string{}, "", handler)
+	wrapper.silent = true
+
+	if err := wrapper.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	// Hammer every accessor while Wait() is reaping the process.
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					_ = wrapper.ExitCode()
+					_ = wrapper.PID()
+					_ = wrapper.IsRunning()
+					_ = wrapper.GetStatus()
+					_ = wrapper.StartTime()
+				}
+			}
+		}()
+	}
+
+	if err := wrapper.Wait(); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	close(stop)
+	wg.Wait()
+
+	// And the recorded state must be correct after Wait.
+	if wrapper.IsRunning() {
+		t.Error("IsRunning() should be false after Wait()")
+	}
+	if got := wrapper.ExitCode(); got != 0 {
+		t.Errorf("ExitCode() = %d, want 0", got)
+	}
+	if got := wrapper.GetStatus(); got != "stopped" {
+		t.Errorf("GetStatus() = %q, want \"stopped\"", got)
+	}
+	if wrapper.PID() <= 0 {
+		t.Errorf("PID() = %d, want a real pid", wrapper.PID())
+	}
+	if wrapper.StartTime().IsZero() {
+		t.Error("StartTime() should be set after Start()")
+	}
+}
+
+// Review finding R16: findAndKillChildProcesses snapshotted `ps` output and
+// then signalled from it, so a pid recycled in between would be killed. It now
+// re-reads each pid's start time immediately before signalling, since a
+// process's start time cannot change. This checks the plumbing that makes that
+// possible.
+func TestStartTimeOf(t *testing.T) {
+	// Our own pid has a start time, and it is stable across reads.
+	own := startTimeOf(os.Getpid())
+	if own == "" {
+		t.Fatal("startTimeOf returned nothing for our own pid; ps -o lstart= is not working as assumed")
+	}
+	if again := startTimeOf(os.Getpid()); again != own {
+		t.Errorf("start time is not stable: %q then %q", own, again)
+	}
+
+	// A pid that cannot exist yields no start time, so a kill would be skipped.
+	if got := startTimeOf(0x7FFFFFFF); got != "" {
+		t.Errorf("startTimeOf(impossible pid) = %q, want empty", got)
+	}
+}
+
+func TestListProcesses_IncludesStartTimes(t *testing.T) {
+	entries, err := listProcesses()
+	if err != nil {
+		t.Fatalf("listProcesses: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("no processes listed")
+	}
+
+	var foundSelf bool
+	for _, e := range entries {
+		if e.lstart == "" {
+			t.Errorf("pid %d has no start time; it would be skipped rather than verified", e.pid)
+		}
+		if e.pid == os.Getpid() {
+			foundSelf = true
+		}
+	}
+	if !foundSelf {
+		t.Error("our own process was not in the listing")
 	}
 }

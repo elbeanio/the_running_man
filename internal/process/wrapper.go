@@ -100,9 +100,26 @@ type ProcessWrapper struct {
 	wg        sync.WaitGroup
 	killTimer *time.Timer
 	timerMu   sync.Mutex
+	silent    bool // When true, don't print to stdout/stderr (for TUI mode)
+
+	// State below is owned by the wrapper and guarded by stateMu.
+	//
+	// It used to proxy cmd.Process and cmd.ProcessState instead. Readers took
+	// stateMu.RLock and were documented "safe to call concurrently", but nothing
+	// took stateMu for WRITING -- ProcessState is written inside
+	// (*exec.Cmd).Wait, which knows nothing about this mutex. The lock only
+	// serialised readers against each other, so the race against Wait remained
+	// and the comments gave false assurance. os/exec documents ProcessState as
+	// safe to read only after Wait returns.
+	//
+	// Now the wrapper records what it needs under the lock, and readers never
+	// touch cmd.
+	stateMu   sync.RWMutex
+	started   bool
+	pid       int
+	exited    bool
+	exitCode  int
 	startTime time.Time
-	stateMu   sync.RWMutex // Protects ProcessState reads
-	silent    bool         // When true, don't print to stdout/stderr (for TUI mode)
 }
 
 // New creates a new ProcessWrapper for the given command.
@@ -228,8 +245,15 @@ func (w *ProcessWrapper) Start() error {
 		return fmt.Errorf("failed to start process: %w", err)
 	}
 
-	// Record start time
+	// Record start state under the lock, so concurrent readers of PID/StartTime
+	// see a consistent view.
+	w.stateMu.Lock()
+	w.started = true
 	w.startTime = time.Now()
+	if w.cmd.Process != nil {
+		w.pid = w.cmd.Process.Pid
+	}
+	w.stateMu.Unlock()
 
 	// Start goroutines to read stdout and stderr
 	w.wg.Add(2)
@@ -330,6 +354,9 @@ func (w *ProcessWrapper) Wait() error {
 	// on them), so closing the pipes cannot discard buffered output.
 	err := w.cmd.Wait()
 
+	// Capture the exit state under stateMu before anything can read it.
+	w.recordExit()
+
 	// Cancel kill timer if process exited gracefully
 	w.timerMu.Lock()
 	if w.killTimer != nil {
@@ -399,83 +426,146 @@ func (w *ProcessWrapper) Stop() error {
 	return nil
 }
 
-// findAndKillChildProcesses finds and kills all child processes of the given PID
+// procEntry is one row of `ps` output: a pid, its parent, and its start time.
+//
+// The start time is the point of this type. A pid alone cannot be killed
+// safely: between listing processes and sending the signal, the pid may have
+// been recycled onto something unrelated. A process's start time never
+// changes, so re-reading it immediately before the kill and comparing detects
+// reuse. This tool exists because something killed the developer's dev server,
+// so killing the wrong process is its worst available failure.
+type procEntry struct {
+	pid    int
+	ppid   int
+	lstart string
+}
+
+// psFormat lists pid, ppid and start time. lstart MUST stay last: it contains
+// spaces ("Mon 14 Sep 19:04:51 2026"), so it can only be parsed as the
+// remainder of the line.
+const psFormat = "pid=,ppid=,lstart="
+
+// listProcesses snapshots the process table.
+func listProcesses() ([]procEntry, error) {
+	output, err := exec.Command("ps", "-o", psFormat, "-A").Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var entries []procEntry
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			// No start time available: skip rather than record a process we
+			// cannot verify later. Failing safe matters more than completeness.
+			continue
+		}
+		pid, err1 := strconv.Atoi(fields[0])
+		ppid, err2 := strconv.Atoi(fields[1])
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		entries = append(entries, procEntry{
+			pid:    pid,
+			ppid:   ppid,
+			lstart: strings.Join(fields[2:], " "),
+		})
+	}
+	return entries, nil
+}
+
+// startTimeOf returns a pid's current start time, or "" if it is gone.
+func startTimeOf(pid int) string {
+	output, err := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.Join(strings.Fields(string(output)), " ")
+}
+
+// findAndKillChildProcesses kills the descendants of parentPid.
+//
+// Verifies each pid's start time immediately before signalling it, so a pid
+// recycled since the snapshot is skipped rather than killed.
 func findAndKillChildProcesses(parentPid int) {
-	// Use ps to find all processes with PPID = parentPid
-	cmd := exec.Command("ps", "-o", "pid=", "-o", "ppid=", "-A")
-	output, err := cmd.Output()
+	entries, err := listProcesses()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[running-man] Warning: failed to list processes: %v\n", err)
 		return
 	}
 
-	// Parse output to build parent-child relationships
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	childPids := make(map[int]bool)
-
-	// First pass: find direct children
-	for _, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) >= 2 {
-			pid, _ := strconv.Atoi(fields[0])
-			ppid, _ := strconv.Atoi(fields[1])
-			if ppid == parentPid {
-				childPids[pid] = true
-			}
-		}
-	}
-
-	// Second pass: find grandchildren (children of children)
-	// Keep looping until no new children are found
-	changed := true
-	for changed {
+	// Build the descendant set, remembering each one's start time.
+	descendants := make(map[int]string)
+	for changed := true; changed; {
 		changed = false
-		for _, line := range lines {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				pid, _ := strconv.Atoi(fields[0])
-				ppid, _ := strconv.Atoi(fields[1])
-				if childPids[ppid] && !childPids[pid] {
-					childPids[pid] = true
-					changed = true
-				}
+		for _, e := range entries {
+			if _, known := descendants[e.pid]; known {
+				continue
+			}
+			_, parentIsDescendant := descendants[e.ppid]
+			if e.ppid == parentPid || parentIsDescendant {
+				descendants[e.pid] = e.lstart
+				changed = true
 			}
 		}
 	}
 
-	// Kill all child processes
-	for childPid := range childPids {
-		// Try SIGTERM first, then SIGKILL
-		_ = syscall.Kill(childPid, syscall.SIGTERM)
-		time.Sleep(50 * time.Millisecond)
-		_ = syscall.Kill(childPid, syscall.SIGKILL)
-	}
+	for pid, snapshotStart := range descendants {
+		// Re-check just before signalling. An identical start time means this
+		// is still the same process; anything else means the pid was recycled
+		// or the process is already gone.
+		if current := startTimeOf(pid); current != snapshotStart {
+			continue
+		}
 
+		_ = syscall.Kill(pid, syscall.SIGTERM)
+		time.Sleep(50 * time.Millisecond)
+
+		// Verify again before escalating: SIGTERM may have worked, and the pid
+		// could have been reused in the interval.
+		if current := startTimeOf(pid); current != snapshotStart {
+			continue
+		}
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
 }
 
-// ExitCode returns the exit code of the process, or -1 if still running
+// recordExit captures the process's final state under the lock, so readers
+// never have to touch cmd.ProcessState concurrently with cmd.Wait().
+func (w *ProcessWrapper) recordExit() {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+
+	w.exited = true
+	if w.cmd.ProcessState != nil {
+		w.exitCode = w.cmd.ProcessState.ExitCode()
+	} else {
+		w.exitCode = -1
+	}
+}
+
+// ExitCode returns the exit code of the process, or -1 if still running.
+// This method is safe to call concurrently.
 func (w *ProcessWrapper) ExitCode() int {
 	w.stateMu.RLock()
-	state := w.cmd.ProcessState
-	w.stateMu.RUnlock()
+	defer w.stateMu.RUnlock()
 
-	if state == nil {
+	if !w.exited {
 		return -1
 	}
-	return state.ExitCode()
+	return w.exitCode
 }
 
 // PID returns the process ID, or -1 if not started.
 // This method is safe to call concurrently.
 func (w *ProcessWrapper) PID() int {
 	w.stateMu.RLock()
-	proc := w.cmd.Process
-	w.stateMu.RUnlock()
+	defer w.stateMu.RUnlock()
 
-	if proc == nil {
+	if !w.started {
 		return -1
 	}
-	return proc.Pid
+	return w.pid
 }
 
 // IsRunning returns true if the process is still running.
@@ -483,10 +573,9 @@ func (w *ProcessWrapper) PID() int {
 // This method is safe to call concurrently.
 func (w *ProcessWrapper) IsRunning() bool {
 	w.stateMu.RLock()
-	state := w.cmd.ProcessState
-	w.stateMu.RUnlock()
+	defer w.stateMu.RUnlock()
 
-	return state == nil
+	return !w.exited
 }
 
 // GetStatus returns the process status: "running", "stopped", or "failed".
@@ -494,13 +583,12 @@ func (w *ProcessWrapper) IsRunning() bool {
 // This method is safe to call concurrently.
 func (w *ProcessWrapper) GetStatus() string {
 	w.stateMu.RLock()
-	state := w.cmd.ProcessState
-	w.stateMu.RUnlock()
+	defer w.stateMu.RUnlock()
 
-	if state == nil {
+	if !w.exited {
 		return "running"
 	}
-	if state.ExitCode() == 0 {
+	if w.exitCode == 0 {
 		return "stopped"
 	}
 	return "failed"
@@ -508,7 +596,11 @@ func (w *ProcessWrapper) GetStatus() string {
 
 // StartTime returns when the process was started.
 // Returns zero time if the process hasn't been started yet.
+// This method is safe to call concurrently.
 func (w *ProcessWrapper) StartTime() time.Time {
+	w.stateMu.RLock()
+	defer w.stateMu.RUnlock()
+
 	return w.startTime
 }
 

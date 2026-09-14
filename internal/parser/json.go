@@ -77,11 +77,13 @@ func (p *JSONParser) Parse(source string, line string, timestamp time.Time) (*Lo
 		entry.TraceID = traceID
 	} else if traceID, ok := data["trace"].(string); ok && traceID != "" {
 		entry.TraceID = traceID
-	} else if spanID, ok := data["span_id"].(string); ok && spanID != "" {
-		// Some logs might have span_id but not trace_id
-		// We'll extract trace_id from span context if available
-		entry.TraceID = spanID
 	}
+	// Deliberately NOT falling back to span_id. It used to be stored in
+	// TraceID when no trace_id was present, with a comment conceding that
+	// deriving the real trace id "if available" was unimplemented. The effect
+	// was that span ids became keys in the ring buffer's trace index, so
+	// /traces/{id}/logs silently returned wrong or empty results. A missing
+	// trace id is better than a wrong one.
 
 	// Extract timestamp if present
 	if ts, ok := data["timestamp"].(string); ok {

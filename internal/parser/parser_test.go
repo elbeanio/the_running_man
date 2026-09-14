@@ -481,3 +481,68 @@ func TestMultiParser_JSONLineEndsTraceback(t *testing.T) {
 		t.Error("traceback was still open; the later line was absorbed into it")
 	}
 }
+
+// Review finding R22: errorLineRegex was `^(\w+Error|Exception|Warning):\s+(.*)`,
+// which missed a lot of real Python. Those tracebacks never terminated
+// cleanly and fell through to the "any other line ends it" path, losing their
+// exception line as the message.
+func TestPythonParser_RecognisesRealExceptionLines(t *testing.T) {
+	shouldTerminate := []string{
+		"ValueError: invalid literal",
+		"ValueError:",                        // no message: \s+ used to require one
+		"KeyboardInterrupt",                  // bare, no colon -- what Ctrl-C prints
+		"KeyboardInterrupt: ",                //
+		"SystemExit: 1",                      // not an *Error
+		"StopIteration",                      // not an *Error, bare
+		"requests.exceptions.HTTPError: 404", // dotted module path
+		"AssertionError: failed",
+		"RecursionError: maximum recursion depth exceeded",
+		"GeneratorExit",
+	}
+	for _, line := range shouldTerminate {
+		p := NewPythonParser()
+		ts := time.Now()
+		p.Parse("app", "Traceback (most recent call last):", ts)
+		p.Parse("app", `  File "app.py", line 1, in <module>`, ts)
+
+		entry, consumed := p.Parse("app", line, ts)
+		if entry == nil {
+			t.Errorf("%q did not terminate the traceback", line)
+			continue
+		}
+		if !consumed {
+			t.Errorf("%q should belong to the traceback it terminates", line)
+		}
+		if entry.Message != line {
+			t.Errorf("message = %q, want %q", entry.Message, line)
+		}
+	}
+}
+
+// And ordinary log lines must NOT be mistaken for exception lines, or a
+// traceback would end early with the wrong message attached.
+func TestPythonParser_OrdinaryLinesAreNotExceptions(t *testing.T) {
+	notExceptions := []string{
+		"Starting",
+		"Done",
+		"Listening on port 8000",
+		"INFO all good",
+		"lowercase: thing",
+	}
+	for _, line := range notExceptions {
+		p := NewPythonParser()
+		ts := time.Now()
+		p.Parse("app", "Traceback (most recent call last):", ts)
+		p.Parse("app", `  File "app.py", line 1, in <module>`, ts)
+
+		entry, consumed := p.Parse("app", line, ts)
+		// These still END the traceback (any other line does), but must not be
+		// absorbed into it as the exception line.
+		if consumed {
+			t.Errorf("%q was treated as part of the traceback; it is an ordinary log line", line)
+		}
+		if entry != nil && entry.Message == line {
+			t.Errorf("%q was used as the traceback's error message", line)
+		}
+	}
+}

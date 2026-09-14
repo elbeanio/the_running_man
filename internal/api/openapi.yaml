@@ -561,8 +561,12 @@ components:
           description: Process ID (-1 if not started)
         status:
           type: string
-          enum: [running, stopped, failed]
-          description: Current process status
+          enum: [running, stopped, failed, waiting]
+          description: |
+            Current process status. `waiting` applies only to recurring processes
+            (those with an `interval`): the last run finished successfully and the
+            next is scheduled. Reporting that as `stopped` would read as "down",
+            and as `running` would be untrue. A failed last run reports `failed`.
         exit_code:
           type: integer
           description: Exit code of the process (-1 for running processes)
