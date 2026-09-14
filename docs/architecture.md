@@ -201,7 +201,7 @@ YAML configuration with validation and defaults.
 The REST API is the agent-facing interface. It is self-describing: `GET /` lists every
 endpoint and `/docs` serves interactive OpenAPI documentation.
 
-**Logs:** `/logs` (filters: `since`, `level`, `source`, `contains`, `exclude`, `limit`),
+**Logs:** `/logs` (filters: `since`, `level`, `source`, `contains`, `exclude`),
 `/errors`
 
 **Processes:** `/processes`, `/processes/{name}`, `/processes/{name}/restart`,

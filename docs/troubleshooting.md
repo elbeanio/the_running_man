@@ -285,6 +285,45 @@ running-man run --api-port 9001
 
 ## 🔍 API Issues
 
+### 403 when restarting or stopping a process
+
+**Problem:** `POST /processes/{name}/restart` or `POST /processes/stop-all` returns HTTP
+403 with `"process control is restricted to local requests"`, even though `GET` endpoints
+on the same port work fine.
+
+**Cause:** this is deliberate, not a bug. Running Man binds all interfaces so containers
+and browsers can reach it, but the two endpoints that *change process state* are served
+only to loopback callers — nothing legitimate needs to stop another machine's dev
+processes.
+
+**Solutions:**
+```bash
+# Check what address the server saw you as -- this is the usual surprise
+curl -s -X POST http://localhost:9000/processes/stop-all | jq .remote_addr
+
+# Call it from the machine running running-man, over loopback
+curl -X POST http://127.0.0.1:9000/processes/stop-all
+
+# Or open the endpoints deliberately
+running-man run --allow-remote-control
+```
+
+If you thought you *were* local, check the `remote_addr` field in the response. Common
+causes:
+
+- You used the machine's LAN IP (`http://192.168.x.x:9000`) instead of `localhost`.
+- The request came from inside a Docker container, so it arrived from the bridge address.
+- A VPN or proxy rewrote the source address.
+
+`GET /` marks the restricted endpoints with `"local_only": true`, so you can check before
+calling:
+
+```bash
+curl -s http://localhost:9000/ | jq '.endpoints[] | select(.local_only)'
+```
+
+See [api-reference.md → Network exposure](api-reference.md#network-exposure).
+
 ### API Not Responding
 
 **Problem:** `curl http://localhost:9000/health` fails.

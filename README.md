@@ -127,9 +127,25 @@ open http://localhost:9000/docs
 curl -s http://localhost:9000/processes
 ```
 
-**Endpoints:** `/logs` (with `since`, `level`, `source`, `contains`, `exclude`, `limit`),
+**Endpoints:** `/logs` (with `since`, `level`, `source`, `contains`, `exclude`),
 `/errors`, `/processes`, `/processes/{name}`, `/processes/{name}/restart`,
 `/processes/stop-all`, `/health`, `/traces`, `/traces/{id}`, `/traces/{id}/logs`
+
+### ⚠️ Network exposure
+
+Running Man binds **all interfaces** by default, so containers and browsers can export to
+it. There is no authentication, which means **anyone on your network can read your
+captured logs** — and dev servers routinely print tokens and connection strings.
+
+Process control is the exception: `/processes/{name}/restart` and `/processes/stop-all`
+are served to this machine only and return 403 otherwise.
+
+```bash
+running-man run --listen 127.0.0.1       # restrict everything to this machine
+running-man run --allow-remote-control   # open process control (think first)
+```
+
+See [Network exposure](docs/api-reference.md#network-exposure) for the full picture.
 
 Running Man previously shipped an MCP server. It was removed: its scope was wrong for a
 per-project process runner, and the REST API already covers the same ground in a form

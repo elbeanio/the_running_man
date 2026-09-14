@@ -960,7 +960,10 @@ func sortSourcesWithTypes(sources []string, sourceTypes map[string]string) []str
 			runningMan = append(runningMan, source)
 		case "docker":
 			docker = append(docker, source)
-		case "process":
+		case "process", "otlp":
+			// otlp sources are log records POSTed to the OTLP receiver (e.g. from a
+			// browser, which has no stdout). They are application output like any
+			// process, so group them alongside processes rather than as unknown.
 			processes = append(processes, source)
 		default:
 			unknown = append(unknown, source)
