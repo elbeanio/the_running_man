@@ -77,6 +77,9 @@ See [running-man.yml](running-man.yml) for all configuration options.
 
 ## 📖 Documentation
 
+- **[Project document](PROJECT.md)** - What this is for, its constraints and non-goals
+- **[Glossary](GLOSSARY.md)** - Locked vocabulary: **instance**, **source**, **managed
+  process**, **ring buffer**, **retention limits**
 - **[Getting Started](docs/getting-started.md)** - Comprehensive guide for new users
 - **[Configuration Guide](docs/configuration.md)** - All YAML options and CLI flags
 - **[OpenTelemetry Tracing](docs/tracing.md)** - Complete OTEL setup and usage

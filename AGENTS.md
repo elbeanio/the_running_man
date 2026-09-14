@@ -2,6 +2,21 @@
 
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
+## Project Context
+
+Read [`PROJECT.md`](PROJECT.md) for what this project is for, its constraints and its
+non-goals. Ordered work lives in `plans/` (untracked).
+
+### Vocabulary
+
+Follow the locked terms in [`GLOSSARY.md`](GLOSSARY.md) for anything user-facing — config
+keys, API fields, TUI labels, docs and commit messages. **Challenge any new term against
+it** before introducing one: if a word for the concept already exists, use it; if it
+doesn't, add an entry in the same change that ships the name.
+
+Note in particular that **instance** (not "session") means one Running Man run, and
+**retention limits** covers the whole eviction policy.
+
 ## Development
 
 ### Tests
