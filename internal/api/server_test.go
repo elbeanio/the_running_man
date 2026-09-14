@@ -453,82 +453,6 @@ func TestCheckPatternComplexity(t *testing.T) {
 	}
 }
 
-func TestMCP_ToolRegistration(t *testing.T) {
-	server, _ := setupTestServer()
-
-	// This test validates that all MCP tools can be registered without panicking.
-	// It catches issues with malformed jsonschema tags or incorrect handler signatures.
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("MCP tool registration panicked: %v", r)
-		}
-	}()
-
-	// Create MCP handler - this registers all tools
-	_ = server.createMCPHandler()
-}
-
-func TestMCP_ToolSchemas(t *testing.T) {
-	server, _ := setupTestServer()
-
-	// Create MCP handler to register tools
-	handler := server.createMCPHandler()
-
-	// This test verifies that MCP tools can be created without schema errors
-	// The actual schema validation happens in the MCP SDK when tools are registered
-	// We're mainly checking that registration doesn't panic
-	t.Run("tool_registration_no_panic", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r != nil {
-				t.Errorf("MCP tool registration panicked: %v", r)
-			}
-		}()
-
-		// Handler creation should succeed
-		if handler == nil {
-			t.Error("MCP handler should not be nil")
-		}
-	})
-}
-
-func TestMCP_ErrorHandling(t *testing.T) {
-	server, _ := setupTestServer()
-
-	// Test that server can be created without manager (some tools will return errors)
-	// This validates error handling paths in tool implementations
-	t.Run("server_creation_without_manager", func(t *testing.T) {
-		// Server should be created successfully even without manager
-		if server == nil {
-			t.Error("Server should be created successfully")
-		}
-	})
-
-	// Note: More detailed error handling tests would require mocking the MCP SDK
-	// or testing individual tool handlers directly, which is more complex.
-	// These basic tests ensure the system doesn't crash on initialization.
-}
-
-func TestMCP_ResponseFormats(t *testing.T) {
-	// Test that server setup produces valid response structures
-	// This is a basic sanity check - full response format testing
-	// would require integration with the MCP SDK
-	t.Run("server_initialization", func(t *testing.T) {
-		server, _ := setupTestServer()
-
-		// Get the MCP handler
-		handler := server.createMCPHandler()
-
-		// Handler should be valid
-		if handler == nil {
-			t.Error("MCP handler should not be nil")
-		}
-
-		// Note: We can't easily test the actual MCP protocol responses
-		// without the MCP SDK test utilities. This test ensures the
-		// handler can be created and doesn't crash.
-	})
-}
-
 func TestPatternWarnings_Integration(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
 
@@ -924,6 +848,7 @@ func TestHandleProcessRestart_Success(t *testing.T) {
 
 	// Restart the process
 	req := httptest.NewRequest("POST", "/processes/test-echo/restart", nil)
+	req.RemoteAddr = "127.0.0.1:12345" // process control is loopback-only
 	w := httptest.NewRecorder()
 
 	server.handleProcessOrRestart(w, req)
@@ -979,6 +904,7 @@ func TestHandleProcessRestart_NotFound(t *testing.T) {
 	server := NewServer(buffer, 9000, nil, manager, nil)
 
 	req := httptest.NewRequest("POST", "/processes/nonexistent/restart", nil)
+	req.RemoteAddr = "127.0.0.1:12345" // process control is loopback-only
 	w := httptest.NewRecorder()
 
 	server.handleProcessOrRestart(w, req)
@@ -1028,6 +954,7 @@ func TestHandleProcessRestart_NoManager(t *testing.T) {
 	server := NewServer(buffer, 9000, nil, nil, nil) // nil manager
 
 	req := httptest.NewRequest("POST", "/processes/any-proc/restart", nil)
+	req.RemoteAddr = "127.0.0.1:12345" // process control is loopback-only
 	w := httptest.NewRecorder()
 
 	server.handleProcessOrRestart(w, req)
@@ -1074,6 +1001,7 @@ func TestHandleStopAll_Success(t *testing.T) {
 
 	// Stop all processes
 	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
+	req.RemoteAddr = "127.0.0.1:12345" // process control is loopback-only
 	w := httptest.NewRecorder()
 
 	server.handleStopAll(w, req)
@@ -1125,6 +1053,7 @@ func TestHandleStopAll_NoProcesses(t *testing.T) {
 	server := NewServer(buffer, 9000, nil, manager, nil)
 
 	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
+	req.RemoteAddr = "127.0.0.1:12345" // process control is loopback-only
 	w := httptest.NewRecorder()
 
 	server.handleStopAll(w, req)
@@ -1170,6 +1099,7 @@ func TestHandleStopAll_MixedStates(t *testing.T) {
 
 	// Stop-all when some processes are stopped and some running
 	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
+	req.RemoteAddr = "127.0.0.1:12345" // process control is loopback-only
 	w := httptest.NewRecorder()
 
 	server.handleStopAll(w, req)
@@ -1232,6 +1162,7 @@ func TestHandleStopAll_NoManager(t *testing.T) {
 	server := NewServer(buffer, 9000, nil, nil, nil) // nil manager
 
 	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
+	req.RemoteAddr = "127.0.0.1:12345" // process control is loopback-only
 	w := httptest.NewRecorder()
 
 	server.handleStopAll(w, req)
@@ -1321,5 +1252,152 @@ func TestHandleRoot_NotFound(t *testing.T) {
 
 	if errMsg, ok := response["error"].(string); !ok || !strings.Contains(errMsg, "not found") {
 		t.Errorf("Expected 'not found' error, got: %v", response["error"])
+	}
+}
+
+// --- Process control is restricted to loopback callers (review finding R1) ---
+//
+// Both servers bind all interfaces by default so containers, browsers and other
+// devices can export telemetry. That also exposed POST /processes/stop-all and
+// POST /processes/{name}/restart to anyone on the network, unauthenticated --
+// verified exploitable from a LAN address before this guard existed.
+
+func TestIsLoopbackRequest(t *testing.T) {
+	tests := []struct {
+		remoteAddr string
+		want       bool
+	}{
+		{"127.0.0.1:12345", true},
+		{"127.0.0.53:9999", true}, // all of 127.0.0.0/8 is loopback
+		{"[::1]:12345", true},     // IPv6 loopback: an agent curling localhost may use either
+		{"192.168.1.42:54321", false},
+		{"10.0.0.5:1", false},
+		{"[2001:db8::1]:443", false},
+		{"", false},         // malformed: fail closed
+		{"garbage", false},  // unparseable: fail closed
+		{"127.0.0.1", true}, // no port at all
+		{"not-an-ip:80", false},
+	}
+	for _, tt := range tests {
+		req := httptest.NewRequest("POST", "/processes/stop-all", nil)
+		req.RemoteAddr = tt.remoteAddr
+		if got := isLoopbackRequest(req); got != tt.want {
+			t.Errorf("isLoopbackRequest(%q) = %v, want %v", tt.remoteAddr, got, tt.want)
+		}
+	}
+}
+
+func TestStopAll_DeniedFromRemoteAddr(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	server := NewServer(buffer, 9000, nil, nil, nil)
+
+	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
+	req.RemoteAddr = "192.168.1.42:54321"
+	w := httptest.NewRecorder()
+
+	server.handleStopAll(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for a remote caller, got %d", w.Code)
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("403 body is not JSON: %v", err)
+	}
+	// The denial must explain itself: these endpoints are documented and listed
+	// by GET /, so a bare 403 would look like a bug.
+	if body["remote_addr"] != "192.168.1.42" {
+		t.Errorf("403 should name the caller's address, got %v", body["remote_addr"])
+	}
+	for _, k := range []string{"error", "detail", "allow", "docs"} {
+		if v, ok := body[k].(string); !ok || v == "" {
+			t.Errorf("403 body missing explanatory field %q", k)
+		}
+	}
+	if !strings.Contains(body["allow"].(string), "--allow-remote-control") {
+		t.Errorf("403 should say how to allow it, got %q", body["allow"])
+	}
+}
+
+func TestProcessRestart_DeniedFromRemoteAddr(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	server := NewServer(buffer, 9000, nil, nil, nil)
+
+	req := httptest.NewRequest("POST", "/processes/whatever/restart", nil)
+	req.RemoteAddr = "10.1.2.3:4567"
+	w := httptest.NewRecorder()
+
+	server.handleProcessRestart(w, req, "whatever/restart")
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for a remote caller, got %d", w.Code)
+	}
+	// Denial must happen before the manager is consulted: a nil manager would
+	// otherwise return 503 and leak that the endpoint was reachable.
+	if got := w.Body.String(); !strings.Contains(got, "restricted to local requests") {
+		t.Errorf("unexpected 403 body: %s", got)
+	}
+}
+
+func TestAllowRemoteControl_OpensStateChangingEndpoints(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	server := NewServer(buffer, 9000, nil, nil, nil)
+	server.SetAllowRemoteControl(true)
+
+	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
+	req.RemoteAddr = "192.168.1.42:54321"
+	w := httptest.NewRecorder()
+
+	server.handleStopAll(w, req)
+
+	// With the escape hatch set, the guard must not fire. A nil manager means
+	// 503 here, which is fine -- it proves we got past the 403.
+	if w.Code == http.StatusForbidden {
+		t.Fatalf("--allow-remote-control should bypass the loopback guard, got 403")
+	}
+}
+
+func TestRoot_MarksLocalOnlyEndpoints(t *testing.T) {
+	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
+	server := NewServer(buffer, 9000, nil, nil, nil)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	server.handleRoot(w, req)
+
+	var body struct {
+		Endpoints []struct {
+			Path      string `json:"path"`
+			LocalOnly bool   `json:"local_only"`
+			Note      string `json:"note"`
+		} `json:"endpoints"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("root response is not JSON: %v", err)
+	}
+
+	// GET / is how an agent discovers the surface, so the restriction has to be
+	// visible there rather than only on refusal.
+	want := map[string]bool{
+		"/processes/{name}/restart": true,
+		"/processes/stop-all":       true,
+	}
+	seen := map[string]bool{}
+	for _, e := range body.Endpoints {
+		if want[e.Path] {
+			seen[e.Path] = true
+			if !e.LocalOnly {
+				t.Errorf("%s should be marked local_only", e.Path)
+			}
+			if e.Note == "" {
+				t.Errorf("%s should carry an explanatory note", e.Path)
+			}
+		}
+	}
+	for p := range want {
+		if !seen[p] {
+			t.Errorf("root listing is missing %s", p)
+		}
 	}
 }

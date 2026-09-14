@@ -248,80 +248,81 @@ tracing:
   max_span_age: 10m
 ```
 
-## 🤖 MCP/AI Agent Issues
+## 🤖 AI Agent Issues
 
-### MCP Tools Not Appearing
+### An agent isn't using Running Man
 
-**Problem:** AI agent doesn't see Running Man tools.
+**Problem:** the agent starts its own processes instead of using the ones already running.
 
 **Solutions:**
 ```bash
-# Verify Running Man is running
+# Verify Running Man is running and reachable
 curl http://localhost:9000/health
 
-# Check MCP endpoint
-curl http://localhost:9000/mcp
+# Confirm it can see what's running
+curl http://localhost:9000/processes
 
-# Restart AI agent (OpenCode/Claude Desktop)
-# MCP discovery happens on startup
-
-# Check OpenCode config
-cat ~/.config/opencode/opencode.json
-
-# Check Claude Desktop config
-cat ~/Library/Application\ Support/Claude/claude_desktop_config.json
+# Confirm the endpoint list is discoverable
+curl http://localhost:9000/
 ```
 
-### Permission Denied in OpenCode
+If the API responds but the agent still ignores it, the problem is discovery rather than
+connectivity — the agent has no cheap signal that Running Man exists. Check that the
+skill is installed (`.opencode/skills/`) and that `AGENTS.md` points at it.
 
-**Problem:** OpenCode shows permission errors.
+### An agent can't reach the API
 
-**Solutions:**
-```json
-// OpenCode config
-{
-  "permission": {
-    "running-man_*": "allow"
-  }
-}
-
-// Or allow specific tools
-{
-  "permission": {
-    "running-man_search_logs": "allow",
-    "running-man_get_recent_errors": "allow"
-  }
-}
-```
-
-### Claude Desktop Proxy Issues
-
-**Problem:** Claude Desktop can't connect to MCP server.
+**Problem:** connection refused on port 9000.
 
 **Solutions:**
 ```bash
-# Install HTTP proxy server
-npm install -g @modelcontextprotocol/server-http
+# Is something else on the port?
+lsof -i :9000
 
-# Test proxy manually
-npx @modelcontextprotocol/server-http http://localhost:9000/mcp
-
-# Check Claude Desktop config
-{
-  "mcpServers": {
-    "running-man": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-http",
-        "http://localhost:9000/mcp"
-      ]
-    }
-  }
-}
+# Run on a different port
+running-man run --api-port 9001
 ```
 
 ## 🔍 API Issues
+
+### 403 when restarting or stopping a process
+
+**Problem:** `POST /processes/{name}/restart` or `POST /processes/stop-all` returns HTTP
+403 with `"process control is restricted to local requests"`, even though `GET` endpoints
+on the same port work fine.
+
+**Cause:** this is deliberate, not a bug. Running Man binds all interfaces so containers
+and browsers can reach it, but the two endpoints that *change process state* are served
+only to loopback callers — nothing legitimate needs to stop another machine's dev
+processes.
+
+**Solutions:**
+```bash
+# Check what address the server saw you as -- this is the usual surprise
+curl -s -X POST http://localhost:9000/processes/stop-all | jq .remote_addr
+
+# Call it from the machine running running-man, over loopback
+curl -X POST http://127.0.0.1:9000/processes/stop-all
+
+# Or open the endpoints deliberately
+running-man run --allow-remote-control
+```
+
+If you thought you *were* local, check the `remote_addr` field in the response. Common
+causes:
+
+- You used the machine's LAN IP (`http://192.168.x.x:9000`) instead of `localhost`.
+- The request came from inside a Docker container, so it arrived from the bridge address.
+- A VPN or proxy rewrote the source address.
+
+`GET /` marks the restricted endpoints with `"local_only": true`, so you can check before
+calling:
+
+```bash
+curl -s http://localhost:9000/ | jq '.endpoints[] | select(.local_only)'
+```
+
+See [api-reference.md → Network exposure](api-reference.md#network-exposure).
 
 ### API Not Responding
 
@@ -507,7 +508,6 @@ RUNNING_MAN_DEBUG=1 running-man run --process "python app.py"
 # - Configuration loading
 # - Process startup
 # - API initialization
-# - MCP registration
 # - Trace ingestion
 ```
 

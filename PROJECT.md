@@ -96,7 +96,7 @@ The REST API and the TUI are both readers of that buffer.
 
 **The REST API is the agent-facing interface.** It is self-describing: `/` lists the
 endpoints and `/docs` serves OpenAPI. `/logs` takes `since`, `level`, `source`,
-`contains`, `exclude`, `limit`; there are also `/errors`, `/health`, `/processes`,
+`contains`, `exclude`; there are also `/errors`, `/health`, `/processes`,
 `/processes/{name}`, `/processes/{name}/restart`, `/processes/stop-all`, `/traces` with
 filters, and `/traces/{id}/logs`. Default port 9000; OTLP on 4318.
 
@@ -123,6 +123,11 @@ One term belongs to planning rather than the product, so it is not in the glossa
    `go test ./...` passing in seconds. First, because there is currently no working
    verification command for this repo.
 2. **Remove MCP** — delete `internal/api/mcp.go` and its tests, config and docs.
+2.5. **Clear-cut bug fixes** — inserted after a breadth-first code review. Closes an
+   unauthenticated network-exposure hole, two config-triggered panics, several data-loss
+   paths in capture, and the API's misdescription of itself. Before phase 3 because two
+   findings (the OpenAPI spec getting every `/logs` field name wrong, and `/logs` silently
+   ignoring `limit`) would make the phase 3 soak unattributable.
 3. **Instance marker and skill** — `.running-man/instance.json` plus a skill built around
    the REST API. This is the actual bet; phases 1 and 2 are groundwork.
 4. **Honest docs and repo hygiene** — rewrite the README, fix dead links, strip beads

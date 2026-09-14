@@ -12,10 +12,10 @@ Welcome to The Running Man documentation! This guide will help you navigate the 
 ### Usage Guides
 - **[configuration.md](configuration.md)** - Complete configuration reference
 - **[tracing.md](tracing.md)** - OpenTelemetry setup and usage
-- **[agent-integration.md](agent-integration.md)** - AI agent (MCP) integration
+- **[agent-integration.md](agent-integration.md)** - AI agent integration via the REST API
 
 ### Reference
-- **[api-reference.md](api-reference.md)** - REST API and MCP tools documentation
+- **[api-reference.md](api-reference.md)** - REST API documentation
 - **[architecture.md](architecture.md)** - System design and components
 
 ### Development
@@ -34,7 +34,7 @@ If you're new to The Running Man, follow this path:
 3. **Configure your project** using [configuration.md](configuration.md)
 4. **Explore advanced features:**
    - [OpenTelemetry Tracing](tracing.md) for distributed tracing
-   - [AI Agent Integration](agent-integration.md) for MCP tools
+   - [AI Agent Integration](agent-integration.md) for the agent-facing API
 5. **Refer to the [API Reference](api-reference.md)** for programmatic access
 
 ## 🎯 Key Documentation by Use Case
@@ -50,9 +50,9 @@ If you're new to The Running Man, follow this path:
 - Configuration options for tracing
 
 ### For AI Agent Integration
-- [agent-integration.md](agent-integration.md) - MCP setup guide
+- [agent-integration.md](agent-integration.md) - agent setup guide
 - OpenCode and Claude Desktop configuration
-- Available MCP tools and usage examples
+- Endpoints and usage examples
 
 ### For API Integration
 - [api-reference.md](api-reference.md) - Complete API documentation
@@ -78,28 +78,28 @@ See the [configuration.md](configuration.md) guide for:
 - OpenTelemetry tracing configuration
 - Environment variable usage
 
-## 🤖 AI Agent (MCP) Tools
+## 🤖 AI Agent Integration
 
-The Running Man provides 11 MCP tools for AI agent integration:
+Agents use the REST API, which is self-describing: `GET /` lists every endpoint and
+`/docs` serves interactive OpenAPI documentation.
 
-### Log Tools
-- `search_logs` - Search logs with filters
-- `get_recent_errors` - Get errors with context
-- `get_startup_logs` - View logs from process startup
+### Logs
+- `GET /logs` - search with `since`, `level`, `source`, `contains`, `exclude`
+- `GET /errors` - recent errors
 
-### Process Tools
-- `get_process_status` - Check status of managed processes
-- `get_process_detail` - Detailed process information
-- `restart_process` - Restart a managed process
-- `stop_all_processes` - Stop all processes
+### Processes
+- `GET /processes` - status of all managed processes
+- `GET /processes/{name}` - detail for one process
+- `POST /processes/{name}/restart` - restart a managed process
+- `POST /processes/stop-all` - stop all processes
 
-### System Tools
-- `get_health_status` - System health and buffer stats
+### System
+- `GET /health` - system health and buffer stats
 
-### Trace Tools
-- `get_traces` - List recent traces with filters
-- `get_trace` - Get detailed trace information
-- `get_slow_traces` - Find traces exceeding duration thresholds
+### Traces
+- `GET /traces` - list with `service`, `span_name`, `status`, `trace_id` filters
+- `GET /traces/{id}` - one trace, including all spans
+- `GET /traces/{id}/logs` - logs correlated to a trace
 
 See [agent-integration.md](agent-integration.md) for complete details.
 
@@ -117,8 +117,7 @@ See [agent-integration.md](agent-integration.md) for complete details.
 - [Django applications](tracing.md#django-application)
 
 ### Querying Traces
-- **REST API**: `/traces`, `/traces/{id}`, `/traces/slow`
-- **MCP tools**: `get_traces`, `get_trace`, `get_slow_traces`
+- **Trace endpoints**: `/traces`, `/traces/{id}`, `/traces/{id}/logs`
 - **Filters**: by service, status, duration, trace ID
 
 ## 🐳 Docker Integration
@@ -147,7 +146,6 @@ http://localhost:9000
 - `GET /traces` - Query distributed traces
 - `GET /health` - System status and statistics
 - `GET /processes` - Status of managed processes
-- `GET /mcp` - MCP server for AI agents
 
 See [api-reference.md](api-reference.md) for complete documentation.
 
@@ -158,7 +156,7 @@ See [api-reference.md](api-reference.md) for complete documentation.
 - **Docker Streamer** - Streams logs from Docker containers
 - **Log Parser** - Detects Python tracebacks, JSON logs, plain text
 - **Ring Buffer** - In-memory storage with time/size limits
-- **API Server** - REST endpoints and MCP server
+- **API Server** - REST endpoints
 - **TUI Viewer** - Interactive terminal interface
 - **OTEL Receiver** - OpenTelemetry trace ingestion
 
@@ -167,7 +165,7 @@ See [api-reference.md](api-reference.md) for complete documentation.
 2. Running Man captures and parses logs
 3. Logs stored in ring buffer (30min/50MB retention)
 4. API serves queries, TUI shows real-time view
-5. AI agents connect via MCP protocol
+5. AI agents query the REST API
 
 See [architecture.md](architecture.md) for detailed architecture.
 

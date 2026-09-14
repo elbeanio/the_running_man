@@ -14,6 +14,21 @@ This is a **weekend project** for building dev observability tooling focused on 
 - 📋 **Phase 5:** Browser Integration & Web UI
 - 📋 **Phase 6:** Advanced Visualization & Analytics
 
+### Since then
+
+The project went dormant after March 2026 and was revived in September 2026. Two things
+changed that affect the history above:
+
+- **The MCP server built in Phase 3 has been removed.** Its scope was wrong: MCP wants a
+  central dispatch server that knows about many projects, and Running Man is a
+  per-project process runner. The REST API is now the only agent-facing interface. This
+  is not a verdict on MCP as a transport — see [`PROJECT.md`](../PROJECT.md) for the
+  reasoning and for the two diagnoses that were considered and rejected.
+- **The project has been repositioned** around keeping the developer in the loop on
+  agent-driven development, rather than around observability as such.
+
+Phase numbering above is left as a historical record and is not renumbered.
+
 ---
 
 ## Phase 1: Core Foundation ✅ COMPLETE
@@ -241,6 +256,10 @@ running-man run --process "python server.py"
 ### Key Learnings
 
 1. **MCP vs REST API:** MCP provides better integration than skills-based REST API
+   — **this turned out to be wrong.** Agents did not adopt the MCP server, and the
+   diagnosis was not the transport: the REST API is self-describing and agents handle it
+   well. What was missing was any cheap signal that Running Man existed and covered the
+   need. MCP was removed in September 2026.
 2. **Tool discovery:** OpenCode caches MCP tool discovery - requires restart after server changes
 3. **Safety first:** Destructive tools must have explicit confirmation mechanisms
 4. **Agent patterns:** 8 tools cover 90%+ of common debugging workflows

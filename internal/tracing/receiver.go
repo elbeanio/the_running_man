@@ -94,7 +94,8 @@ func (r *Receiver) Stop(ctx context.Context) error {
 // :9000 API server does this already (internal/api/server.go corsMiddleware);
 // the receiver, a separate http.Server, never got the same treatment, so a
 // browser preflight was rejected 405 with no CORS headers. Dev convenience —
-// wildcard origin, same as the API server (see its TODO on restricting origins).
+// wildcard origin, same as the API server. See docs/api-reference.md
+// ("Network exposure") for what is reachable from where.
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -436,8 +437,22 @@ func (r *Receiver) WaitForReady(timeout time.Duration) error {
 	return fmt.Errorf("receiver not ready after %v", timeout)
 }
 
-// readRequestBody reads and returns the request body
+// MaxRequestBodyBytes caps an OTLP export payload. Without a cap, io.ReadAll on
+// an unauthenticated endpoint reachable from the whole network lets a single
+// request exhaust memory. 32MB is far above any real OTLP batch.
+const MaxRequestBodyBytes = 32 << 20
+
+// readRequestBody reads and returns the request body, up to
+// MaxRequestBodyBytes. Exceeding the cap is an error, so an oversized payload
+// is rejected rather than silently truncated into unparseable protobuf.
 func readRequestBody(req *http.Request) ([]byte, error) {
 	defer req.Body.Close()
-	return io.ReadAll(req.Body)
+	data, err := io.ReadAll(io.LimitReader(req.Body, MaxRequestBodyBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > MaxRequestBodyBytes {
+		return nil, fmt.Errorf("request body exceeds %d bytes", MaxRequestBodyBytes)
+	}
+	return data, nil
 }
