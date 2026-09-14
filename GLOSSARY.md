@@ -42,8 +42,10 @@ so the developer and the agent are looking at the same run.
 - **Process type** — the `type:` field (`web`, `api`, `worker`, `database`, `cache`).
   **Descriptive metadata only** — it is exposed on the API for humans and agents to read
   and never changes behaviour. `type: recurring` is not a thing; see **recurring process**.
-- **Status** — a managed process's state: `running`, `stopped` or `failed`. Carries an
-  **exit code** (`-1` while running).
+- **Status** — a managed process's state: `running`, `stopped`, `failed` or `waiting`.
+  Carries an **exit code** (`-1` while running). **Waiting** applies only to a **recurring
+  process** between runs whose last run succeeded — distinct from `stopped`, which would
+  read as "down", and from `running`, which would be untrue.
 - **Restart on crash** — the `restart_on_crash` flag: respawn a managed process when it
   exits non-zero. Not used for **recurring processes**, which re-run on schedule anyway.
 - **Wrapper** — internal: the object owning one managed process's OS handle and output

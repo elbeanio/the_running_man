@@ -663,3 +663,78 @@ func TestManager_NoRestartWhenDisabled(t *testing.T) {
 		}
 	}
 }
+
+// Review finding R7: recurring processes reported permanently wrong status.
+//
+// Start() created a wrapper for a recurring process and registered it without
+// ever calling Start() on it, then launched a goroutine that created a
+// DIFFERENT wrapper per run and never registered it. So the registered wrapper
+// had no ProcessState forever: pid -1, status "running", exit code -1,
+// regardless of whether the runs were succeeding or failing.
+func TestManager_RecurringProcessReportsRealState(t *testing.T) {
+	handler := func(source, line string, ts time.Time, isStderr bool) {}
+	configs := []ProcessConfig{
+		{Name: "ticker", Command: "echo tick", Interval: "1h"},
+	}
+	m := NewManager(configs, handler)
+	if err := m.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer func() { _ = m.Stop() }()
+
+	// Give the immediate first run time to start, finish, and be recorded.
+	deadline := time.Now().Add(5 * time.Second)
+	var info ProcessInfo
+	for time.Now().Before(deadline) {
+		infos := m.ListProcesses()
+		if len(infos) == 1 && infos[0].PID != -1 {
+			info = infos[0]
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if info.PID == -1 || info.PID == 0 {
+		t.Fatalf("recurring process still reports pid %d; the running wrapper is not registered", info.PID)
+	}
+	// Between runs a healthy recurring process is "waiting", not "running"
+	// (which would be a lie) and not "stopped" (which reads as down).
+	if info.Status != "waiting" && info.Status != "running" {
+		t.Errorf("status = %q, want \"waiting\" or \"running\"", info.Status)
+	}
+	if info.Interval != "1h" {
+		t.Errorf("interval = %q, want \"1h\"", info.Interval)
+	}
+}
+
+// A recurring process whose last run failed must say so, not be smoothed over
+// into "waiting".
+func TestManager_RecurringProcessFailureIsVisible(t *testing.T) {
+	handler := func(source, line string, ts time.Time, isStderr bool) {}
+	configs := []ProcessConfig{
+		{Name: "broken", Command: "exit 4", Interval: "1h"},
+	}
+	m := NewManager(configs, handler)
+	if err := m.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer func() { _ = m.Stop() }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	var info ProcessInfo
+	for time.Now().Before(deadline) {
+		infos := m.ListProcesses()
+		if len(infos) == 1 && infos[0].ExitCode > 0 {
+			info = infos[0]
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if info.ExitCode != 4 {
+		t.Errorf("exit code = %d, want 4", info.ExitCode)
+	}
+	if info.Status != "failed" {
+		t.Errorf("status = %q, want \"failed\": a failing recurring process must not report as healthy", info.Status)
+	}
+}

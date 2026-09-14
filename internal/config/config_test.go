@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -548,5 +550,63 @@ func TestTracingConfig_Validate_RejectsNonPositiveMaxSpanAge(t *testing.T) {
 		if !strings.Contains(err.Error(), "max_span_age must be positive") {
 			t.Errorf("max_span_age %q: unhelpful error %q", age, err)
 		}
+	}
+}
+
+// Review finding R13: the shell was validated against a hardcoded allowlist of
+// five absolute paths, which rejected most shells people actually have --
+// Homebrew bash at /opt/homebrew/bin/bash or /usr/local/bin/bash, /bin/dash,
+// fish, anything under Nix -- while the README promised "any shell". It also
+// ACCEPTED /usr/bin/bash and /usr/bin/zsh, which do not exist on macOS, so it
+// permitted shells that could not run.
+//
+// Now validated on the property that matters: an absolute path to something
+// executable.
+func TestConfig_Validate_ShellMustBeExecutable(t *testing.T) {
+	base := []ProcessConfig{{Name: "x", Command: "echo hi"}}
+
+	// /bin/sh exists and is executable everywhere this runs.
+	cfg := &Config{Processes: base, Shell: "/bin/sh"}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("/bin/sh should be accepted: %v", err)
+	}
+
+	// A real executable outside the old allowlist.
+	tmp := filepath.Join(t.TempDir(), "myshell")
+	if err := os.WriteFile(tmp, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	cfg = &Config{Processes: base, Shell: tmp}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("an executable outside the old allowlist should be accepted: %v", err)
+	}
+
+	// Not executable.
+	notExec := filepath.Join(t.TempDir(), "notexec")
+	if err := os.WriteFile(notExec, []byte("x"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	cfg = &Config{Processes: base, Shell: notExec}
+	if err := cfg.Validate(); err == nil {
+		t.Error("a non-executable file should be rejected")
+	}
+
+	// Does not exist -- the old allowlist would have accepted /usr/bin/bash on
+	// macOS despite it being absent.
+	cfg = &Config{Processes: base, Shell: "/definitely/not/here/bash"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("a non-existent shell should be rejected")
+	}
+
+	// A directory.
+	cfg = &Config{Processes: base, Shell: t.TempDir()}
+	if err := cfg.Validate(); err == nil {
+		t.Error("a directory should be rejected")
+	}
+
+	// Relative path.
+	cfg = &Config{Processes: base, Shell: "bash"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("a relative path should be rejected")
 	}
 }
