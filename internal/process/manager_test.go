@@ -8,6 +8,94 @@ import (
 	"time"
 )
 
+// waitAsync runs manager.Wait() in a goroutine and reports whether it returned
+// within the timeout. Wait() blocking forever is a real failure mode (see
+// TestManager_WaitReturnsWhenNoRecurringProcesses), so tests must never call it
+// directly on the test goroutine without a deadline.
+func waitAsync(m *Manager, timeout time.Duration) (returned bool, err error) {
+	done := make(chan error, 1)
+	go func() { done <- m.Wait() }()
+
+	select {
+	case err := <-done:
+		return true, err
+	case <-time.After(timeout):
+		return false, nil
+	}
+}
+
+// Regression test for Wait() hanging forever.
+//
+// Wait() filters recurring processes out of its wait set, waits for the rest,
+// then blocks on <-m.ctx.Done() "for recurring processes" -- but originally did
+// so unconditionally, without checking that any recurring process existed. That
+// made Wait() never return for any configuration, hanging both this package's
+// tests and internal/api's until the Go test timeout panicked.
+func TestManager_WaitReturnsWhenNoRecurringProcesses(t *testing.T) {
+	handler := func(source string, line string, timestamp time.Time, isStderr bool) {}
+
+	configs := []ProcessConfig{
+		{Name: "echo1", Command: "echo", Args: []string{"hello"}},
+		{Name: "echo2", Command: "echo", Args: []string{"world"}},
+	}
+
+	manager := NewManager(configs, handler)
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start processes: %v", err)
+	}
+	defer func() { _ = manager.Stop() }()
+
+	returned, err := waitAsync(manager, 5*time.Second)
+	if !returned {
+		t.Fatal("Wait() did not return after all non-recurring processes exited; it must not block on ctx.Done() when there are no recurring processes")
+	}
+	if err != nil {
+		t.Fatalf("Wait() returned an error: %v", err)
+	}
+}
+
+// The other half of the contract: a recurring process runs until the manager is
+// stopped, so Wait() must keep blocking while one exists. Guards against
+// "fixing" the hang by deleting the ctx.Done() wait outright.
+func TestManager_WaitBlocksWhileRecurringProcessExists(t *testing.T) {
+	handler := func(source string, line string, timestamp time.Time, isStderr bool) {}
+
+	configs := []ProcessConfig{
+		{Name: "oneshot", Command: "echo", Args: []string{"hello"}},
+		// Long interval: runs once immediately, then not again during the test.
+		{Name: "ticker", Command: "echo", Args: []string{"tick"}, Interval: "1h"},
+	}
+
+	manager := NewManager(configs, handler)
+	if err := manager.Start(); err != nil {
+		t.Fatalf("Failed to start processes: %v", err)
+	}
+
+	// Exactly one Wait() call for the whole test. Concurrent calls each spawn a
+	// waiter per process, which race on os/exec.Cmd.Wait() -- see the doc comment
+	// on Manager.Wait.
+	done := make(chan error, 1)
+	go func() { done <- manager.Wait() }()
+
+	// Must still be blocked: the recurring process has not been stopped.
+	select {
+	case <-done:
+		t.Fatal("Wait() returned while a recurring process was still scheduled; it should block until the manager is stopped")
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	// Stopping the manager cancels the context, which should release Wait().
+	if err := manager.Stop(); err != nil {
+		t.Fatalf("Stop() failed: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Wait() did not return after Stop() cancelled the context")
+	}
+}
+
 func TestManager_MultipleProcesses(t *testing.T) {
 	var mu sync.Mutex
 	capturedLines := make(map[string][]string)
