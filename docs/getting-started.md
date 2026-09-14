@@ -183,53 +183,32 @@ curl "http://localhost:9000/logs?since=2024-01-15T10:00:00Z&until=2024-01-15T11:
 
 ## 🤖 AI Agent Integration
 
-### MCP Server
+### The REST API
 
-Running Man includes a Model Context Protocol (MCP) server for AI agent integration:
+Agents use Running Man's REST API. It is self-describing, so an agent needs no setup and
+no configuration file — one request discovers the whole surface:
 
 ```bash
-# MCP endpoint available at:
-http://localhost:9000/mcp
+# List every endpoint
+curl http://localhost:9000/
+
+# Interactive OpenAPI documentation
+open http://localhost:9000/docs
 ```
 
-### OpenCode Setup
+The most useful question an agent can ask is whether a service is *already running*
+before starting its own copy:
 
-Add to `~/.config/opencode/opencode.json`:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "running-man": {
-      "enabled": true,
-      "type": "remote",
-      "url": "http://localhost:9000/mcp"
-    }
-  },
-  "permission": {
-    "running-man_*": "allow"
-  }
-}
+```bash
+curl -s http://localhost:9000/processes
 ```
 
-### Claude Desktop Setup
+### Skills
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "running-man": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-http",
-        "http://localhost:9000/mcp"
-      ]
-    }
-  }
-}
-```
+Point your agent at Running Man with a skill — see
+[agent-integration.md](agent-integration.md). Running Man previously shipped an MCP
+server; it was removed because its scope was wrong for a per-project process runner
+(see `PROJECT.md`), and the REST API covers the same ground.
 
 ### Agent Commands Examples
 
@@ -290,9 +269,8 @@ with tracer.start_as_current_span("my_operation"):
 curl "http://localhost:9000/traces?since=5m"
 curl "http://localhost:9000/traces/abc123-def456"  # Specific trace
 
-# Via MCP (through AI agent)
+# Or ask an agent, which will query the same endpoints
 # "Show me traces with errors"
-# "Find slow traces from the backend service"
 ```
 
 ## 🐳 Docker Development
@@ -398,8 +376,8 @@ tracing:
 running-man run
 
 # Trace a request across services
-# Use MCP: "Show me traces for user ID 123"
-# Or API: curl "http://localhost:9000/traces?since=2m"
+# Ask an agent: "Show me traces for user ID 123"
+# Or directly: curl "http://localhost:9000/traces?since=2m"
 ```
 
 ## 🚨 Troubleshooting
@@ -441,7 +419,7 @@ Now that you're up and running, explore:
 
 1. **[Configuration Guide](configuration.md)** - All YAML options and CLI flags
 2. **[OpenTelemetry Tracing](tracing.md)** - Complete OTEL setup and examples
-3. **[AI Agent Integration](agent-integration.md)** - Advanced MCP usage
+3. **[AI Agent Integration](agent-integration.md)** - Using the agent-facing API
 4. **[API Reference](api-reference.md)** - Complete API documentation
 5. **[Architecture](architecture.md)** - Understand how it works internally
 

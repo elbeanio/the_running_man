@@ -19,8 +19,7 @@ graph TB
         PARSER[Log Parser]
         BUFFER[(Ring Buffer<br/>30min / 50MB)]
         TRACE_STORE[(Trace Storage<br/>30min / 10k spans)]
-        API[API Server]
-        MCP[MCP Server<br/>/mcp endpoint]
+        API[API Server<br/>REST, port 9000]
         TUI[TUI Viewer]
         
         P1 -->|stdout/stderr| PW
@@ -35,7 +34,6 @@ graph TB
         OTEL_REC --> TRACE_STORE
         BUFFER --> API
         TRACE_STORE --> API
-        API --> MCP
         BUFFER --> TUI
     end
     
@@ -43,7 +41,7 @@ graph TB
         AGENT[AI Agent<br/>Claude Code/OpenCode]
         USER[Developer]
         
-        MCP -->|MCP Protocol| AGENT
+        API -->|REST API| AGENT
         API -->|REST API| USER
         TUI --> USER
     end
@@ -142,7 +140,7 @@ OpenTelemetry tracing support for distributed tracing.
 **Integration:**
 - Processes can be automatically instrumented with OTEL when tracing is enabled
 - Logs and traces are correlated via `trace_id` field
-- MCP tools provide trace exploration capabilities
+- Trace endpoints provide trace exploration capabilities
 
 ### Config System (`internal/config`)
 
@@ -165,7 +163,7 @@ YAML configuration with validation and defaults.
    ↓
 4. Parsed entry → Ring Buffer stores
    ↓
-5. API serves queries ← Agent polls via MCP
+5. API serves queries ← Agent queries the REST API
    ↓
 6. TUI polls API ← Developer views
 ```
@@ -178,56 +176,45 @@ YAML configuration with validation and defaults.
    ↓
 3. Spans → Trace Storage stores
    ↓
-4. API serves trace queries ← Agent polls via MCP
+4. API serves trace queries ← Agent queries the REST API
    ↓
 5. Logs and traces correlated via trace_id
 ```
 
-### MCP Integration Flow
+### Agent Integration Flow
 ```
-1. AI Agent connects to /mcp endpoint
+1. Agent reads the instance marker or probes GET /health
    ↓
-2. MCP Server authenticates (localhost only)
+2. Agent discovers the surface via GET / or /docs (OpenAPI)
    ↓
-3. Agent calls tools (search_logs, get_traces, etc.)
+3. Agent queries /logs, /errors, /processes, /traces
    ↓
-4. MCP Server queries buffer/trace storage
+4. API reads the ring buffer / trace storage
    ↓
-5. Results formatted and returned to agent
+5. Results returned as JSON
 ```
 
 ## Extension Points (Phase 3 - Complete)
 
-### MCP Server Implementation (`internal/api/mcp.go`)
+### Agent-Facing API (`internal/api/server.go`)
 
-**Endpoint:** `GET /mcp` - Model Context Protocol server for AI agent integration
+The REST API is the agent-facing interface. It is self-describing: `GET /` lists every
+endpoint and `/docs` serves interactive OpenAPI documentation.
 
-**Available Tools:**
+**Logs:** `/logs` (filters: `since`, `level`, `source`, `contains`, `exclude`, `limit`),
+`/errors`
 
-**Log Tools:**
-- `search_logs` - Search logs with filters (source, time, level, content)
-- `get_recent_errors` - Get errors with surrounding context
-- `get_startup_logs` - View logs from process startup
+**Processes:** `/processes`, `/processes/{name}`, `/processes/{name}/restart`,
+`/processes/stop-all`
 
-**Process Management Tools:**
-- `get_process_status` - Check status of managed processes
-- `get_process_detail` - Detailed process information
-- `restart_process` - Restart a managed process (with safety checks)
-- `stop_all_processes` - Stop all processes (requires confirmation)
+**Traces (when OTEL enabled):** `/traces` (filters: `service`, `span_name`, `status`,
+`trace_id`), `/traces/{id}`, `/traces/{id}/logs`
 
-**System Tools:**
-- `get_health_status` - System health and buffer statistics
+**System:** `/health`
 
-**Trace Tools (when OTEL enabled):**
-- `get_traces` - List recent traces with filtering capabilities
-- `get_trace` - Get detailed trace information including all spans
-- `get_slow_traces` - Find traces exceeding duration thresholds
-
-**Integration:**
-- OpenCode: Direct remote MCP connection to `http://localhost:9000/mcp`
-- Claude Desktop: Requires HTTP proxy server (`@modelcontextprotocol/server-http`)
-- Permissions: `running-man_*` wildcard or individual tool permissions
-- Authentication: Local-only access (localhost:9000)
+**Integration:** no authentication (local development tool, bound to localhost).
+An MCP server previously sat alongside this API and was removed — its scope was wrong
+for a per-project process runner. See `PROJECT.md`.
 
 ### Agent Integration Patterns
 
@@ -252,7 +239,7 @@ the_running_man/
 │   └── tui.go               # Bubble Tea viewer
 │
 ├── internal/
-│   ├── api/                 # HTTP server, endpoints, MCP server
+│   ├── api/                 # HTTP server, REST endpoints
 │   ├── config/              # YAML schema, loading, validation
 │   ├── docker/              # Compose parsing, log streaming
 │   ├── parser/              # Format detection, extraction
@@ -273,7 +260,6 @@ the_running_man/
 - **Config:** gopkg.in/yaml.v3
 - **Storage:** In-memory (maps + sync.RWMutex)
 - **Tracing:** OpenTelemetry Go SDK (go.opentelemetry.io/proto/otlp)
-- **MCP:** Model Context Protocol Go SDK (github.com/modelcontextprotocol/go-sdk/mcp)
 - **Protocol Buffers:** google.golang.org/protobuf
 
 ---

@@ -123,7 +123,7 @@ the_running_man/
 │   └── tui.go               # Bubble Tea TUI viewer
 │
 ├── internal/                # Core packages
-│   ├── api/                # HTTP server, MCP server, endpoints
+│   ├── api/                # HTTP server, REST endpoints
 │   ├── config/             # YAML schema, loading, validation
 │   ├── docker/             # Compose parsing, log streaming
 │   ├── parser/             # Format detection, extraction
@@ -140,7 +140,6 @@ the_running_man/
 
 #### `internal/api`
 - **server.go** - HTTP server implementation
-- **mcp.go** - Model Context Protocol server
 - **handlers.go** - REST API handlers
 
 #### `internal/tracing`
@@ -158,50 +157,6 @@ the_running_man/
 - **formats/** - Specific format parsers (python, json, plain)
 
 ## 🔧 Adding New Features
-
-### Adding a New MCP Tool
-
-1. **Define tool parameters** in `internal/api/mcp.go`:
-```go
-type MyToolArgs struct {
-    Param1 string `json:"param1"`
-    Param2 int    `json:"param2,omitempty"`
-}
-```
-
-2. **Register the tool**:
-```go
-func (s *Server) registerMyToolTool(server *mcp.Server) {
-    mcp.AddTool(server, &mcp.Tool{
-        Name:        "my_tool",
-        Description: "Description of what this tool does",
-        InputSchema: &mcp.JSONSchema{
-            Type: "object",
-            Properties: map[string]*mcp.JSONSchema{
-                "param1": {Type: "string"},
-                "param2": {Type: "integer"},
-            },
-        },
-    })
-    s.log("Registered MCP tool: my_tool", false)
-}
-```
-
-3. **Implement handler**:
-```go
-func (s *Server) myToolHandler(ctx context.Context, req *mcp.CallToolRequest, args *MyToolArgs) (*mcp.CallToolResult, any, error) {
-    // Implementation
-    return &mcp.CallToolResult{
-        Content: []mcp.Content{
-            &mcp.TextContent{Text: "Result"},
-        },
-    }, map[string]interface{}{
-        "result": "data",
-    }, nil
-}
-```
-
-4. **Add to tool registration** in `createMCPHandler()`.
 
 ### Adding a New API Endpoint
 
@@ -292,7 +247,6 @@ go mod tidy
 
 ### Current Dependencies
 
-- **github.com/modelcontextprotocol/go-sdk/mcp** - MCP protocol
 - **go.opentelemetry.io/proto/otlp** - OpenTelemetry protobufs
 - **github.com/docker/docker** - Docker client
 - **github.com/charmbracelet/bubbletea** - TUI framework
@@ -334,7 +288,6 @@ Debug output includes:
 - Configuration loading
 - Process startup
 - API server initialization
-- MCP tool registration
 - Trace ingestion
 
 ## 🚀 Release Process
@@ -449,13 +402,13 @@ go tool pprof cpu.prof
 
 1. **No network exposure**: API only binds to localhost
 2. **Process isolation**: Each process runs with its environment
-3. **Input validation**: Validate all API and MCP inputs
+3. **Input validation**: Validate all API inputs
 4. **No secrets in logs**: Environment variables not logged
 5. **Dependency scanning**: Regular security updates
 
 ### Security Considerations
 
-- **MCP tools**: Some allow process restart (requires confirmation)
+- **Process endpoints**: `/processes/{name}/restart` and `/processes/stop-all` change state
 - **Docker integration**: Requires Docker socket access
 - **Environment variables**: May contain secrets (not logged)
 - **Configuration files**: May be in source control

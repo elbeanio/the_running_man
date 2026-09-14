@@ -123,7 +123,6 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/processes/stop-all", s.handleStopAll)  // Must come before /processes/
 	mux.HandleFunc("/processes/", s.handleProcessOrRestart) // Handles both GET /processes/{name} and POST /processes/{name}/restart
 	mux.HandleFunc("/processes", s.handleProcesses)
-	mux.Handle("/mcp", s.createMCPHandler()) // MCP endpoint for AI agent integration
 	mux.HandleFunc("/docs/openapi.yaml", s.handleOpenAPISpec)
 	mux.HandleFunc("/docs", s.handleSwaggerUI)
 	mux.HandleFunc("/docs/", s.handleSwaggerUI)
@@ -145,15 +144,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 
-		// MCP Protocol headers:
-		// - Mcp-Session-Id: Client sends to resume sessions
-		// - Mcp-Protocol-Version: Protocol version negotiation (e.g., "2025-11-25")
-		// - Last-Event-ID: SSE reconnection with event replay
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID")
-
-		// Expose Mcp-Session-Id so clients can read session IDs from responses
-		// (required for MCP session creation/resumption flow)
-		w.Header().Set("Access-Control-Expose-Headers", "Mcp-Session-Id")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
 		if r.Method == "OPTIONS" {
 			// Cache preflight response for 24 hours to reduce latency

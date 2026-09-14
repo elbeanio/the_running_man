@@ -16,7 +16,7 @@
 - **📱 Interactive TUI** - Real-time log viewer with tab switching between sources
 - **🔍 Smart Log Parsing** - Detects Python tracebacks, JSON logs, and plain text
 - **📡 OpenTelemetry Tracing** - Built-in OTLP receiver with automatic environment injection
-- **🤖 AI Agent Integration** - MCP server with 10+ debugging tools for Claude Code/OpenCode
+- **🤖 AI Agent Integration** - Self-describing REST API for Claude Code/OpenCode
 - **⚡ Ring Buffer Storage** - 30-minute retention survives app crashes
 - **🔧 YAML Configuration** - Auto-discovery with CLI override support
 
@@ -80,8 +80,8 @@ See [running-man.yml](running-man.yml) for all configuration options.
 - **[Getting Started](docs/getting-started.md)** - Comprehensive guide for new users
 - **[Configuration Guide](docs/configuration.md)** - All YAML options and CLI flags
 - **[OpenTelemetry Tracing](docs/tracing.md)** - Complete OTEL setup and usage
-- **[AI Agent Integration](docs/agent-integration.md)** - MCP setup for Claude Code/OpenCode
-- **[API Reference](docs/api-reference.md)** - REST API and MCP tools documentation
+- **[AI Agent Integration](docs/agent-integration.md)** - Agent setup for Claude Code/OpenCode
+- **[API Reference](docs/api-reference.md)** - REST API documentation
 - **[Architecture](docs/architecture.md)** - System design and components
 - **[Development Guide](docs/development.md)** - Building and contributing
 
@@ -98,39 +98,39 @@ See [running-man.yml](running-man.yml) for all configuration options.
 │  │          (30min retention, 50MB limit)             │   │
 │  └─────────────────────────────────────────────────────┘   │
 │                                                            │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌────────────┐ │
-│  │   REST API      │  │   MCP Server    │  │   TUI      │ │
-│  │   (Port 9000)   │  │   (/mcp)        │  │   Viewer   │ │
-│  └─────────────────┘  └─────────────────┘  └────────────┘ │
+│  ┌─────────────────┐                      ┌────────────┐ │
+│  │   REST API      │                      │   TUI      │ │
+│  │   (Port 9000)   │                      │   Viewer   │ │
+│  └─────────────────┘                      └────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## 🛠️ AI Agent Integration (MCP)
+## 🛠️ AI Agent Integration
 
-Running Man includes a built-in Model Context Protocol (MCP) server for seamless AI agent integration:
+Agents query Running Man over its REST API. There is nothing to configure: the API is
+self-describing, so one request discovers the whole surface.
 
-**Available MCP Tools:**
-- **Log Tools:** `search_logs`, `get_recent_errors`, `get_startup_logs`
-- **Process Tools:** `get_process_status`, `get_process_detail`, `restart_process`, `stop_all_processes`
-- **System Tools:** `get_health_status`
-- **Trace Tools:** `get_traces`, `get_trace`, `get_slow_traces`
+```bash
+# Every endpoint, listed
+curl http://localhost:9000/
 
-**Quick OpenCode Setup:**
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "running-man": {
-      "enabled": true,
-      "type": "remote",
-      "url": "http://localhost:9000/mcp"
-    }
-  },
-  "permission": {
-    "running-man_*": "allow"
-  }
-}
+# Interactive OpenAPI documentation
+open http://localhost:9000/docs
 ```
+
+**The question worth asking first** — is the service I'm about to start already running?
+
+```bash
+curl -s http://localhost:9000/processes
+```
+
+**Endpoints:** `/logs` (with `since`, `level`, `source`, `contains`, `exclude`, `limit`),
+`/errors`, `/processes`, `/processes/{name}`, `/processes/{name}/restart`,
+`/processes/stop-all`, `/health`, `/traces`, `/traces/{id}`, `/traces/{id}/logs`
+
+Running Man previously shipped an MCP server. It was removed: its scope was wrong for a
+per-project process runner, and the REST API already covers the same ground in a form
+agents handle well. See [PROJECT.md](PROJECT.md).
 
 See [Agent Integration Guide](docs/agent-integration.md) for complete setup.
 
@@ -142,7 +142,7 @@ Running Man includes built-in OpenTelemetry support:
 - **Automatic environment variable injection** for managed processes
 - **Trace-log correlation** via `trace_id`
 - **In-memory span storage** with configurable retention
-- **MCP tools for trace exploration**
+- **Trace endpoints for exploration by agents**
 
 **Example Python setup:**
 ```python
@@ -190,7 +190,7 @@ running-man run --process "python app.py"
 # View traces via API
 curl http://localhost:9000/traces?since=5m
 
-# Or use MCP tools via AI agent
+# Or ask an AI agent, which queries the same endpoints
 # "Show me traces with errors from the last 10 minutes"
 ```
 

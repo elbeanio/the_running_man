@@ -10,7 +10,7 @@ Running Man provides a complete OpenTelemetry solution for local development:
 - **Automatic environment variable injection** for managed processes
 - **In-memory span storage** with configurable retention
 - **Trace-log correlation** via `trace_id`
-- **MCP tools** for trace exploration via AI agents
+- **Trace endpoints** for exploration by AI agents
 - **REST API** for programmatic access to traces
 
 ## 🚀 Quick Start
@@ -319,24 +319,16 @@ curl "http://localhost:9000/traces?min_duration=1s&since=5m"
 curl "http://localhost:9000/traces?status=error&since=30m"
 ```
 
-### MCP Tools (AI Agent Integration)
+### Trace Endpoints (AI Agent Integration)
 
-Running Man provides MCP tools for trace exploration:
+Agents explore traces over the REST API:
 
-1. **`get_traces`** - List recent traces with filters
-   - "Show me traces from the last 10 minutes"
-   - "Find traces with errors from the backend service"
-   - "Show me slow traces (longer than 1 second)"
+1. **`GET /traces`** - list recent traces, filtered by `service`, `span_name`, `status`,
+   `trace_id`, `since`
+2. **`GET /traces/{id}`** - one trace in detail, including all its spans
+3. **`GET /traces/{id}/logs`** - log entries correlated to a trace by `trace_id`
 
-2. **`get_trace`** - Get detailed trace information
-   - "Show me details for trace abc123-def456"
-   - "Get all spans for workflow XYZ"
-
-3. **`get_slow_traces`** - Find traces exceeding duration thresholds
-   - "Find traces slower than 500ms"
-   - "Show me the slowest API endpoints"
-
-### Example MCP Usage
+### Example Agent Usage
 
 ```bash
 # Start Running Man with tracing
@@ -483,7 +475,7 @@ tracing:
 ```
 Instrumented App → OTLP HTTP → Running Man Receiver → Trace Storage
                                                           ↓
-                                                    REST API / MCP
+                                                       REST API
                                                           ↓
                                                   Developer / AI Agent
 ```

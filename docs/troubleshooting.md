@@ -248,77 +248,39 @@ tracing:
   max_span_age: 10m
 ```
 
-## 🤖 MCP/AI Agent Issues
+## 🤖 AI Agent Issues
 
-### MCP Tools Not Appearing
+### An agent isn't using Running Man
 
-**Problem:** AI agent doesn't see Running Man tools.
+**Problem:** the agent starts its own processes instead of using the ones already running.
 
 **Solutions:**
 ```bash
-# Verify Running Man is running
+# Verify Running Man is running and reachable
 curl http://localhost:9000/health
 
-# Check MCP endpoint
-curl http://localhost:9000/mcp
+# Confirm it can see what's running
+curl http://localhost:9000/processes
 
-# Restart AI agent (OpenCode/Claude Desktop)
-# MCP discovery happens on startup
-
-# Check OpenCode config
-cat ~/.config/opencode/opencode.json
-
-# Check Claude Desktop config
-cat ~/Library/Application\ Support/Claude/claude_desktop_config.json
+# Confirm the endpoint list is discoverable
+curl http://localhost:9000/
 ```
 
-### Permission Denied in OpenCode
+If the API responds but the agent still ignores it, the problem is discovery rather than
+connectivity — the agent has no cheap signal that Running Man exists. Check that the
+skill is installed (`.opencode/skills/`) and that `AGENTS.md` points at it.
 
-**Problem:** OpenCode shows permission errors.
+### An agent can't reach the API
 
-**Solutions:**
-```json
-// OpenCode config
-{
-  "permission": {
-    "running-man_*": "allow"
-  }
-}
-
-// Or allow specific tools
-{
-  "permission": {
-    "running-man_search_logs": "allow",
-    "running-man_get_recent_errors": "allow"
-  }
-}
-```
-
-### Claude Desktop Proxy Issues
-
-**Problem:** Claude Desktop can't connect to MCP server.
+**Problem:** connection refused on port 9000.
 
 **Solutions:**
 ```bash
-# Install HTTP proxy server
-npm install -g @modelcontextprotocol/server-http
+# Is something else on the port?
+lsof -i :9000
 
-# Test proxy manually
-npx @modelcontextprotocol/server-http http://localhost:9000/mcp
-
-# Check Claude Desktop config
-{
-  "mcpServers": {
-    "running-man": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-http",
-        "http://localhost:9000/mcp"
-      ]
-    }
-  }
-}
+# Run on a different port
+running-man run --api-port 9001
 ```
 
 ## 🔍 API Issues
@@ -507,7 +469,6 @@ RUNNING_MAN_DEBUG=1 running-man run --process "python app.py"
 # - Configuration loading
 # - Process startup
 # - API initialization
-# - MCP registration
 # - Trace ingestion
 ```
 
