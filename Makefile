@@ -11,15 +11,19 @@ build:
 	@go build -o running-man ./cmd/running-man
 	@echo "✓ Build successful"
 
+# Timeout for test runs. The suite completes in ~5s, so this only ever fires on a
+# genuine hang -- which is a far better signal than the Go default of 10m.
+TEST_TIMEOUT ?= 60s
+
 # Run all tests
 test:
 	@echo "Running tests..."
-	@go test ./...
+	@go test ./... -timeout $(TEST_TIMEOUT)
 
 # Run tests with coverage
 test-coverage:
 	@echo "Running tests with coverage..."
-	@go test ./... -cover
+	@go test ./... -cover -timeout $(TEST_TIMEOUT)
 
 # Run integration tests
 test-integration:
@@ -32,7 +36,7 @@ test-integration:
 # Run tests with race detector
 test-race:
 	@echo "Running race detector..."
-	@go test -race ./...
+	@go test -race ./... -timeout $(TEST_TIMEOUT)
 
 # Clean build artifacts
 clean:

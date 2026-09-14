@@ -175,14 +175,20 @@ func (m *Manager) runRecurringProcess(name string, cfg ProcessConfig) {
 // Returns an error if any process exits with an error
 // Automatically restarts crashed processes if restart_on_crash is enabled
 // Note: Recurring processes (with interval) run forever until context is cancelled
+//
+// Wait must not be called concurrently. Each call spawns one waiter goroutine per
+// managed process, and those waiters call (*os/exec.Cmd).Wait, which is not safe
+// for concurrent use.
 func (m *Manager) Wait() error {
 	m.mu.RLock()
 	// Filter out recurring processes
 	nonRecurringProcesses := make([]string, 0)
+	hasRecurring := false
 	for name := range m.processes {
 		cfg, hasCfg := m.configs[name]
 		if hasCfg && cfg.Interval != "" {
 			// This is a recurring process, skip it (runs forever)
+			hasRecurring = true
 			continue
 		}
 		nonRecurringProcesses = append(nonRecurringProcesses, name)
@@ -264,8 +270,16 @@ func (m *Manager) Wait() error {
 
 	wg.Wait()
 
-	// For recurring processes, wait for context cancellation
-	<-m.ctx.Done()
+	// Recurring processes are not in the wait group above -- they run on a timer
+	// until the manager is stopped -- so keep blocking while any exist.
+	//
+	// This must stay conditional. Waiting on ctx.Done() unconditionally makes
+	// Wait() never return for any configuration, which is what hung the test
+	// suites in this package and internal/api. See
+	// TestManager_WaitReturnsWhenNoRecurringProcesses.
+	if hasRecurring {
+		<-m.ctx.Done()
+	}
 
 	return firstErr
 }
