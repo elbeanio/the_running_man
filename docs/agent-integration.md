@@ -75,24 +75,35 @@ curl http://localhost:9000/processes
 curl -X POST http://localhost:9000/processes/{name}/restart
 ```
 
-### OpenCode Skill
-For OpenCode users, load the `debug-logs` skill for comprehensive debugging guidance:
+### The skill
+
+`.opencode/skills/running-man/SKILL.md` tells an agent **when** to reach for Running Man,
+not just how. Its first instruction is the one that matters: before starting a dev server,
+check whether one is already running.
+
+It is discovered automatically in this project. To install it globally:
 
 ```bash
-# The skill is automatically discovered when .opencode/skills/debug-logs/SKILL.md exists
-# Agents can load it with: skill({ name: "debug-logs" })
+make install-skills   # Claude Code (~/.claude/skills) and OpenCode (~/.config/opencode/skills)
+make install-skill    # Claude Code only
 ```
 
-**Installation:**
+### The instance marker
+
+While an instance is running, `.running-man/instance.json` exists in the project root:
+
 ```bash
-# Install skill globally for all projects
-make install-skills
-
-# Or install just to Claude skills location
-make install-skill
+cat .running-man/instance.json
 ```
 
-The skill provides guidance on using Running Man's REST API for debugging web applications.
+It holds the API URL, the instance's pid and start time, every configured process, and
+ready-to-run `curl` hints. It is the cheap signal that makes the rest discoverable — one
+file read, in a directory agents already inspect.
+
+The marker records only **stable** facts. Anything live — status, listening ports, exit
+codes — comes from `/processes`, so the file cannot drift out of date about them. It is
+written after the processes start and removed on exit; if it exists but `/health` does not
+respond, the instance died without cleaning up and the file can be ignored.
 
 ### API Features
 - **Glob pattern support**: Use `*` in source names (e.g., `app-*`)

@@ -74,25 +74,25 @@ lint:
 
 # Install OpenCode skill to ~/.claude/skills
 install-skill:
-	@echo "Installing OpenCode skill to ~/.claude/skills..."
-	@mkdir -p ~/.claude/skills/debug-logs
-	@if [ -d ".opencode/skills/debug-logs" ]; then \
-		cp -r .opencode/skills/debug-logs/* ~/.claude/skills/debug-logs/; \
-		echo "✓ Skill installed to ~/.claude/skills/debug-logs"; \
+	@echo "Installing the running-man skill to ~/.claude/skills..."
+	@mkdir -p ~/.claude/skills/running-man
+	@if [ -d ".opencode/skills/running-man" ]; then \
+		cp -r .opencode/skills/running-man/* ~/.claude/skills/running-man/; \
+		echo "✓ Skill installed to ~/.claude/skills/running-man"; \
 	else \
-		echo "❌ Error: .opencode/skills/debug-logs not found"; \
+		echo "❌ Error: .opencode/skills/running-man not found"; \
 		exit 1; \
 	fi
 
-# Install skill to both OpenCode and Claude locations
+# Install the skill for both Claude Code and OpenCode
 install-skills: install-skill
-	@echo "Installing skill to OpenCode location..."
-	@mkdir -p ~/.config/opencode/skills/debug-logs
-	@if [ -d ".opencode/skills/debug-logs" ]; then \
-		cp -r .opencode/skills/debug-logs/* ~/.config/opencode/skills/debug-logs/; \
-		echo "✓ Skill installed to ~/.config/opencode/skills/debug-logs"; \
+	@echo "Installing the running-man skill to ~/.config/opencode/skills..."
+	@mkdir -p ~/.config/opencode/skills/running-man
+	@if [ -d ".opencode/skills/running-man" ]; then \
+		cp -r .opencode/skills/running-man/* ~/.config/opencode/skills/running-man/; \
+		echo "✓ Skill installed to ~/.config/opencode/skills/running-man"; \
 	else \
-		echo "❌ Error: .opencode/skills/debug-logs not found"; \
+		echo "❌ Error: .opencode/skills/running-man not found"; \
 		exit 1; \
 	fi
 

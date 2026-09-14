@@ -29,8 +29,10 @@ so the developer and the agent are looking at the same run.
   (`Setsid` in `process/wrapper.go`, used to kill whole process trees). Use **instance**
   for a Running Man run.
 - **Instance marker** — `.running-man/instance.json`, written while an instance is live so
-  an agent can cheaply discover it and see what is already running. Removed on clean exit;
-  treat as a hint and confirm with `/health`.
+  an agent can cheaply discover it and see what is already running. Holds only **stable**
+  facts (API URL, pid, configured processes, curl hints); live state comes from
+  `/processes`, so the marker cannot drift out of date about status or ports. Removed on
+  clean exit; if it exists but `/health` does not answer, it is stale and can be ignored.
 
 ## Running things
 
@@ -42,6 +44,10 @@ so the developer and the agent are looking at the same run.
 - **Process type** — the `type:` field (`web`, `api`, `worker`, `database`, `cache`).
   **Descriptive metadata only** — it is exposed on the API for humans and agents to read
   and never changes behaviour. `type: recurring` is not a thing; see **recurring process**.
+- **Observed port** — a TCP port a **managed process** (or any of its descendants) is
+  listening on, reported in `/processes`. *Observed* because nothing in the config records
+  a port: it is read from the OS, so it is a strong hint rather than a guarantee — a
+  process that has just started may not have bound yet.
 - **Status** — a managed process's state: `running`, `stopped`, `failed` or `waiting`.
   Carries an **exit code** (`-1` while running). **Waiting** applies only to a **recurring
   process** between runs whose last run succeeded — distinct from `stopped`, which would
