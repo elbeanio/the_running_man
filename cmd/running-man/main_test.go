@@ -427,3 +427,43 @@ func TestProcessConfigCreation(t *testing.T) {
 		})
 	}
 }
+
+// --- Review finding R9: surviving the crash the logs would explain ---
+//
+// The README promises "Stay running when your apps crash", but the buffer is
+// in-memory and headless mode exited as soon as its processes did, destroying
+// exactly the logs someone wants. Holding the process open unconditionally
+// would instead hang CI on the failure CI exists to report, so the default is
+// to keep the logs only when a human is plausibly watching.
+func TestShouldKeepAlive(t *testing.T) {
+	tests := []struct {
+		mode string
+		want bool
+		why  string
+	}{
+		{keepAliveAlways, true, "always must keep the logs regardless of where stdout points"},
+		{keepAliveNever, false, "never must exit even on a terminal, so scripts can opt out"},
+		{"nonsense", stdoutIsTerminal(), "an unrecognised value must fall back to auto, not panic"},
+		{"", stdoutIsTerminal(), "empty must fall back to auto"},
+	}
+	for _, tt := range tests {
+		if got := shouldKeepAlive(tt.mode); got != tt.want {
+			t.Errorf("shouldKeepAlive(%q) = %v, want %v: %s", tt.mode, got, tt.want, tt.why)
+		}
+	}
+}
+
+// auto must resolve purely from whether stdout is a terminal. Under `go test`
+// stdout is a pipe, so auto must be false here -- which is the CI case, and
+// the one that must not hang.
+func TestShouldKeepAlive_AutoFollowsTerminal(t *testing.T) {
+	if stdoutIsTerminal() {
+		t.Skip("stdout is a terminal; this asserts the non-interactive case")
+	}
+	if shouldKeepAlive(keepAliveAuto) {
+		t.Error("auto must not keep the process alive when stdout is not a terminal (CI would hang)")
+	}
+	if !shouldKeepAlive(keepAliveAlways) {
+		t.Error("always must still keep it alive without a terminal")
+	}
+}
