@@ -2,13 +2,19 @@ package tracing
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/elbeanio/the_running_man/internal/parser"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	collectorlogsv1 "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectortracev1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
+	logsv1 "go.opentelemetry.io/proto/otlp/logs/v1"
 	resourcev1 "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -17,7 +23,7 @@ import (
 
 func TestReceiver_StartStop(t *testing.T) {
 	storage := NewSpanStorage(100, time.Hour)
-	receiver := NewReceiver(storage, 0) // Port 0 for random port
+	receiver := NewReceiver(storage, nil, 0) // Port 0 for random port
 
 	// Start receiver
 	err := receiver.Start()
@@ -30,7 +36,7 @@ func TestReceiver_StartStop(t *testing.T) {
 
 func TestReceiver_HealthEndpoint(t *testing.T) {
 	storage := NewSpanStorage(100, time.Hour)
-	receiver := NewReceiver(storage, 0)
+	receiver := NewReceiver(storage, nil, 0)
 
 	err := receiver.Start()
 	require.NoError(t, err)
@@ -44,7 +50,7 @@ func TestReceiver_HealthEndpoint(t *testing.T) {
 
 func TestReceiver_HandleTraces_Protobuf(t *testing.T) {
 	storage := NewSpanStorage(100, time.Hour)
-	receiver := NewReceiver(storage, 0)
+	receiver := NewReceiver(storage, nil, 0)
 
 	err := receiver.Start()
 	require.NoError(t, err)
@@ -97,7 +103,7 @@ func TestReceiver_HandleTraces_Protobuf(t *testing.T) {
 
 func TestReceiver_HandleTraces_JSON(t *testing.T) {
 	storage := NewSpanStorage(100, time.Hour)
-	receiver := NewReceiver(storage, 0)
+	receiver := NewReceiver(storage, nil, 0)
 
 	err := receiver.Start()
 	require.NoError(t, err)
@@ -153,7 +159,7 @@ func TestReceiver_HandleTraces_JSON(t *testing.T) {
 
 func TestReceiver_ProcessTraceRequest(t *testing.T) {
 	storage := NewSpanStorage(100, time.Hour)
-	receiver := NewReceiver(storage, 0)
+	receiver := NewReceiver(storage, nil, 0)
 
 	// Create a trace request with multiple spans
 	traceRequest := &collectortracev1.ExportTraceServiceRequest{
@@ -392,4 +398,133 @@ func TestAttributeValueToString(t *testing.T) {
 		},
 	}
 	assert.Equal(t, "{...}", attributeValueToString(kvlistVal))
+}
+
+// spansJSON builds a minimal OTLP/JSON body with the given trace/span id strings.
+func spansJSON(traceID, spanID string) string {
+	return fmt.Sprintf(
+		`{"resourceSpans":[{"scopeSpans":[{"spans":[`+
+			`{"traceId":%q,"spanId":%q,"name":"n","kind":1}]}]}]}`, traceID, spanID)
+}
+
+// TestFixHexTraceIDs_HexRoundTrips documents the OTLP/JSON hex-id bug and its fix:
+// a conformant exporter sends hex ids, protojson base64-decodes them into garbage,
+// and fixHexTraceIDs recovers the correct bytes. Uses the plan §10 reproducer ids.
+func TestFixHexTraceIDs_HexRoundTrips(t *testing.T) {
+	const hexTrace = "5b8aa5a2d2c872e8321cf37308d69df2" // 32 hex chars → 16 bytes
+	const hexSpan = "051581bf3cb55c13"                  // 16 hex chars → 8 bytes
+	wantTrace, err := hex.DecodeString(hexTrace)
+	require.NoError(t, err)
+	wantSpan, err := hex.DecodeString(hexSpan)
+	require.NoError(t, err)
+
+	var req collectortracev1.ExportTraceServiceRequest
+	require.NoError(t, protojson.Unmarshal([]byte(spansJSON(hexTrace, hexSpan)), &req))
+
+	// Bug: protojson decoded the hex as base64, so the ids are the wrong length.
+	got := req.ResourceSpans[0].ScopeSpans[0].Spans[0]
+	require.Len(t, got.TraceId, 24, "protojson mis-decodes 32 hex chars into 24 bytes")
+	require.NotEqual(t, wantTrace, got.TraceId)
+
+	fixHexTraceIDs(&req)
+
+	got = req.ResourceSpans[0].ScopeSpans[0].Spans[0]
+	assert.Equal(t, wantTrace, got.TraceId)
+	assert.Equal(t, wantSpan, got.SpanId)
+	assert.Equal(t, hexTrace, fmt.Sprintf("%x", got.TraceId))
+	assert.Equal(t, hexSpan, fmt.Sprintf("%x", got.SpanId))
+}
+
+// TestFixHexTraceIDs_Base64Unchanged proves backward compatibility: a client that
+// sends genuine base64 ids (already the right byte length) is left untouched.
+func TestFixHexTraceIDs_Base64Unchanged(t *testing.T) {
+	rawTrace := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	rawSpan := []byte{1, 2, 3, 4, 5, 6, 7, 8}
+	body := spansJSON(
+		base64.StdEncoding.EncodeToString(rawTrace),
+		base64.StdEncoding.EncodeToString(rawSpan),
+	)
+
+	var req collectortracev1.ExportTraceServiceRequest
+	require.NoError(t, protojson.Unmarshal([]byte(body), &req))
+	fixHexTraceIDs(&req)
+
+	got := req.ResourceSpans[0].ScopeSpans[0].Spans[0]
+	assert.Equal(t, rawTrace, got.TraceId)
+	assert.Equal(t, rawSpan, got.SpanId)
+}
+
+// TestHexDecodeID_Edges covers the empty (absent parent) and already-correct cases.
+func TestHexDecodeID_Edges(t *testing.T) {
+	assert.Empty(t, hexDecodeID(nil, 8))
+	assert.Empty(t, hexDecodeID([]byte{}, 8))
+	correct := []byte{1, 2, 3, 4, 5, 6, 7, 8}
+	assert.Equal(t, correct, hexDecodeID(correct, 8))
+}
+
+// captureSink records appended entries for assertions.
+type captureSink struct{ entries []*parser.LogEntry }
+
+func (c *captureSink) Append(e *parser.LogEntry) { c.entries = append(c.entries, e) }
+
+// TestReceiver_ProcessLogsRequest verifies OTLP log records become buffered
+// entries carrying service, level and the correlating trace id.
+func TestReceiver_ProcessLogsRequest(t *testing.T) {
+	sink := &captureSink{}
+	receiver := NewReceiver(NewSpanStorage(100, time.Hour), sink, 0)
+
+	req := &collectorlogsv1.ExportLogsServiceRequest{
+		ResourceLogs: []*logsv1.ResourceLogs{
+			{
+				Resource: &resourcev1.Resource{
+					Attributes: []*commonv1.KeyValue{
+						{Key: "service.name", Value: &commonv1.AnyValue{
+							Value: &commonv1.AnyValue_StringValue{StringValue: "web"}}},
+					},
+				},
+				ScopeLogs: []*logsv1.ScopeLogs{
+					{
+						LogRecords: []*logsv1.LogRecord{
+							{
+								TimeUnixNano:   uint64(time.Now().UnixNano()),
+								SeverityNumber: logsv1.SeverityNumber_SEVERITY_NUMBER_ERROR,
+								Body: &commonv1.AnyValue{
+									Value: &commonv1.AnyValue_StringValue{StringValue: "boom"}},
+								TraceId: []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	n := receiver.processLogsRequest(req)
+	require.Equal(t, 1, n)
+	require.Len(t, sink.entries, 1)
+
+	e := sink.entries[0]
+	assert.Equal(t, "web", e.Source)
+	assert.Equal(t, "boom", e.Message)
+	assert.Equal(t, parser.LevelError, e.Level)
+	assert.True(t, e.IsError)
+	assert.Equal(t, "0102030405060708090a0b0c0d0e0f10", e.TraceID)
+}
+
+// TestFixHexLogIDs_HexRoundTrips confirms the hex-id repair also applies to
+// OTLP/JSON log records (a browser posts hex, protojson mis-decodes to base64).
+func TestFixHexLogIDs_HexRoundTrips(t *testing.T) {
+	const hexTrace = "5b8aa5a2d2c872e8321cf37308d69df2"
+	body := fmt.Sprintf(
+		`{"resourceLogs":[{"scopeLogs":[{"logRecords":[`+
+			`{"traceId":%q,"body":{"stringValue":"hi"}}]}]}]}`, hexTrace)
+
+	var req collectorlogsv1.ExportLogsServiceRequest
+	require.NoError(t, protojson.Unmarshal([]byte(body), &req))
+	require.Len(t, req.ResourceLogs[0].ScopeLogs[0].LogRecords[0].TraceId, 24)
+
+	fixHexLogIDs(&req)
+	got := req.ResourceLogs[0].ScopeLogs[0].LogRecords[0]
+	assert.Equal(t, hexTrace, fmt.Sprintf("%x", got.TraceId))
+	assert.Len(t, got.TraceId, 16)
 }

@@ -274,7 +274,7 @@ func runCommand(args []string) {
 	if finalTracingEnabled {
 		fmt.Printf("Tracing: OTLP receiver on http://localhost:%d\n", finalTracingPort)
 		spanStorage = tracing.NewSpanStorage(finalMaxSpans, finalMaxSpanAge)
-		tracingReceiver = tracing.NewReceiver(spanStorage, finalTracingPort)
+		tracingReceiver = tracing.NewReceiver(spanStorage, buffer, finalTracingPort)
 	}
 
 	// Create parser
