@@ -17,7 +17,8 @@
 - **🔍 Smart Log Parsing** - Detects Python tracebacks, JSON logs, and plain text
 - **📡 OpenTelemetry Tracing** - Built-in OTLP receiver with automatic environment injection
 - **🤖 AI Agent Integration** - Self-describing REST API for Claude Code/OpenCode
-- **⚡ Ring Buffer Storage** - 30-minute retention survives app crashes
+- **⚡ Ring Buffer Storage** - 30-minute retention survives app crashes; after a crash in
+  headless mode the logs stay queryable until you quit (see `--keep-alive`)
 - **🔧 YAML Configuration** - Auto-discovery with CLI override support
 
 ## 🚀 Quick Start

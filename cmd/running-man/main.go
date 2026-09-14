@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/signal"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/elbeanio/the_running_man/internal/api"
@@ -120,6 +122,56 @@ func main() {
 	}
 }
 
+// keepAliveMode decides what happens in headless mode once every process has
+// exited.
+const (
+	keepAliveAuto   = "auto"
+	keepAliveAlways = "always"
+	keepAliveNever  = "never"
+)
+
+// stdoutIsTerminal reports whether stdout is a terminal, i.e. whether a human
+// is plausibly watching.
+func stdoutIsTerminal() bool {
+	info, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
+// shouldKeepAlive decides whether to hold the API and buffer open after a
+// process has failed.
+//
+// The README promises "stay running when your apps crash", and the buffer is
+// in-memory, so exiting immediately discards the logs explaining the crash --
+// exactly when they are wanted. But holding the process open unconditionally
+// would hang CI on the very failure CI exists to report.
+//
+// So the default is to keep the logs only when a human is plausibly watching:
+// stdout a terminal means interactive, a pipe or file means automation.
+func shouldKeepAlive(mode string) bool {
+	switch mode {
+	case keepAliveAlways:
+		return true
+	case keepAliveNever:
+		return false
+	default:
+		return stdoutIsTerminal()
+	}
+}
+
+// waitForInterrupt blocks until SIGINT or SIGTERM.
+//
+// Registers its own channel: the process manager also watches for signals, and
+// signal.Notify delivers to every registered channel, so both see it.
+func waitForInterrupt() {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+	<-sigChan
+}
+
 // networkPostureNote summarises who can reach the API, for the startup banner.
 // This is the one moment the user is guaranteed to be looking, and "reachable
 // from the network" is worth knowing before logs start flowing through it.
@@ -144,6 +196,9 @@ func runCommand(args []string) {
 		"Address to bind the API to (use 127.0.0.1 to restrict to this machine)")
 	allowRemoteControl := fs.Bool("allow-remote-control", false,
 		"Serve process restart/stop endpoints to remote callers (default: loopback only)")
+	keepAlive := fs.String("keep-alive", keepAliveAuto,
+		"After a process fails in headless mode, keep serving its logs: auto|always|never "+
+			"(auto = only when stdout is a terminal)")
 	tracingEnabled := fs.Bool("tracing", true, "Enable OTLP trace ingestion (default: true)")
 	tracingPort := fs.Int("tracing-port", 0, "OTLP HTTP receiver port (overrides config file, default: 4318)")
 
@@ -469,8 +524,19 @@ func runCommand(args []string) {
 		// Get exit codes
 		exitCodes := manager.ExitCodes()
 
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "\n[running-man] One or more processes exited with error: %v\n", err)
+		failed := err != nil
+		for _, code := range exitCodes {
+			if code != 0 {
+				failed = true
+			}
+		}
+
+		if failed {
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\n[running-man] One or more processes exited with error: %v\n", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "\n[running-man] One or more processes exited with a non-zero code\n")
+			}
 		} else {
 			fmt.Printf("\n[running-man] All processes completed successfully\n")
 		}
@@ -480,6 +546,25 @@ func runCommand(args []string) {
 			if code != 0 {
 				fmt.Fprintf(os.Stderr, "[running-man] Process %s exited with code %d\n", name, code)
 			}
+		}
+
+		// Hold the buffer open so the logs explaining a crash survive it. The
+		// buffer is in-memory, so exiting here destroys exactly the evidence
+		// someone wants. Gated so CI is not left hanging -- see shouldKeepAlive.
+		if failed && shouldKeepAlive(*keepAlive) {
+			fmt.Printf("\n[running-man] Processes have exited, but their logs are still available:\n")
+			fmt.Printf("[running-man]   http://localhost:%d/logs\n", finalAPIPort)
+			fmt.Printf("[running-man]   http://localhost:%d/errors\n", finalAPIPort)
+			fmt.Printf("[running-man] Press Ctrl+C to quit (--keep-alive=never to exit immediately).\n")
+			waitForInterrupt()
+			fmt.Printf("\n[running-man] Exiting.\n")
+		}
+
+		if failed {
+			// Report failure to the caller. Headless mode is the CI/automation
+			// path, and it previously exited 0 regardless, so a failing process
+			// looked like success.
+			os.Exit(1)
 		}
 	} else {
 		// TUI mode - launch interactive viewer immediately
@@ -554,6 +639,9 @@ Flags:
   --allow-remote-control   Serve process restart/stop endpoints to remote callers.
                            By default they are loopback-only and return 403.
   --no-tui                 Disable TUI and run in headless mode
+  --keep-alive MODE        After a process fails in headless mode, keep serving its
+                           logs: auto|always|never (default: auto, which keeps them
+                           only when stdout is a terminal, so CI is not left hanging)
 
 Examples:
   # Run a single process (TUI launches automatically)

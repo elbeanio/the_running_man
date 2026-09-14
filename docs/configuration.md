@@ -325,8 +325,31 @@ running-man run --max-spans 5000 --max-span-age 1h
 | `--max-spans` | Maximum spans to store | 10000 |
 | `--max-span-age` | Maximum span age | 30m |
 | `--no-tui` | Run in headless mode (no TUI) | false |
+| `--keep-alive MODE` | After a process fails in headless mode, keep serving its logs: `auto`, `always`, `never` | `auto` |
+| `--listen ADDR` | Address to bind the API to (`127.0.0.1` restricts to this machine) | `0.0.0.0` |
+| `--allow-remote-control` | Serve process restart/stop endpoints to remote callers | false |
 | `--help` | Show help | - |
 | `--version` | Show version | - |
+
+### Keeping logs after a crash
+
+The ring buffer is in memory, so when Running Man exits its logs are gone. In headless
+mode that used to happen the moment the last process exited — destroying exactly the
+logs that explain a crash.
+
+`--keep-alive` controls what happens after a process exits non-zero in headless mode:
+
+| Mode | Behaviour |
+|---|---|
+| `auto` (default) | Keep serving logs **only when stdout is a terminal**, i.e. when someone is plausibly watching. In a pipe or a CI job, exit immediately. |
+| `always` | Always keep serving. Requires Ctrl+C to quit. |
+| `never` | Always exit immediately, even interactively. |
+
+The `auto` default exists because the two needs conflict: interactively you want the logs
+to survive the crash, but in CI a process that never exits would hang the job on the very
+failure it is meant to report.
+
+Headless mode **exits non-zero** when any managed process fails, in every mode.
 
 ## 📋 Configuration Examples
 
