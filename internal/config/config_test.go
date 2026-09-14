@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -477,5 +478,75 @@ processes:
 	}
 	if processConfigs[0].Description != "React frontend with Vite" {
 		t.Errorf("Conversion failed: expected description 'React frontend with Vite', got %s", processConfigs[0].Description)
+	}
+}
+
+// Review findings R6 and R12, plus the same defect in max_span_age.
+//
+// Validate() checked only that these durations *parsed*. time.ParseDuration
+// accepts negatives, so each of these got through and failed later:
+//
+//   - interval: -1m   -> time.NewTicker panics ("non-positive interval for
+//     NewTicker"), crashing the tool after startup, once it was already
+//     supervising processes.
+//   - retention: -5m  -> eviction cutoff at or after "now", so every entry is
+//     discarded on arrival and the buffer is permanently empty, silently.
+//   - max_span_age: -5m -> the same, for spans.
+
+func TestConfig_Validate_RejectsNonPositiveInterval(t *testing.T) {
+	for _, interval := range []string{"-1m", "0s", "0", "-1ns"} {
+		cfg := &Config{
+			Processes: []ProcessConfig{{Name: "ticker", Command: "echo hi", Interval: interval}},
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Errorf("interval %q should be rejected: time.NewTicker panics on non-positive durations", interval)
+			continue
+		}
+		if !strings.Contains(err.Error(), "non-positive interval") {
+			t.Errorf("interval %q: unhelpful error %q", interval, err)
+		}
+	}
+}
+
+func TestConfig_Validate_AcceptsPositiveInterval(t *testing.T) {
+	for _, interval := range []string{"30s", "1m", "1h", "500ms"} {
+		cfg := &Config{
+			Processes: []ProcessConfig{{Name: "ticker", Command: "echo hi", Interval: interval}},
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("interval %q should be accepted, got: %v", interval, err)
+		}
+	}
+}
+
+func TestConfig_Validate_RejectsNonPositiveRetention(t *testing.T) {
+	for _, retention := range []string{"-5m", "0s", "0"} {
+		cfg := &Config{
+			Processes: []ProcessConfig{{Name: "x", Command: "echo hi"}},
+			Retention: retention,
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Errorf("retention %q should be rejected: it would discard every entry on arrival", retention)
+			continue
+		}
+		if !strings.Contains(err.Error(), "retention must be positive") {
+			t.Errorf("retention %q: unhelpful error %q", retention, err)
+		}
+	}
+}
+
+func TestTracingConfig_Validate_RejectsNonPositiveMaxSpanAge(t *testing.T) {
+	for _, age := range []string{"-5m", "0s"} {
+		tc := &TracingConfig{MaxSpanAge: age}
+		err := tc.Validate()
+		if err == nil {
+			t.Errorf("max_span_age %q should be rejected: it would discard every span on arrival", age)
+			continue
+		}
+		if !strings.Contains(err.Error(), "max_span_age must be positive") {
+			t.Errorf("max_span_age %q: unhelpful error %q", age, err)
+		}
 	}
 }

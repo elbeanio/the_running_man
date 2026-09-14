@@ -118,8 +118,17 @@ func (c *Config) Validate() error {
 		}
 		// Validate interval if specified
 		if proc.Interval != "" {
-			if _, err := time.ParseDuration(proc.Interval); err != nil {
+			d, err := time.ParseDuration(proc.Interval)
+			if err != nil {
 				return fmt.Errorf("process '%s' has invalid interval '%s': %w", proc.Name, proc.Interval, err)
+			}
+			// Must be positive: time.NewTicker panics on a non-positive duration,
+			// so "interval: -1m" would otherwise crash the tool after startup,
+			// once it was already supervising processes.
+			if d <= 0 {
+				return fmt.Errorf("process '%s' has a non-positive interval '%s': "+
+					"recurring processes need a positive interval such as \"30s\" or \"1m\"",
+					proc.Name, proc.Interval)
 			}
 		}
 		names[proc.Name] = true
@@ -148,8 +157,16 @@ func (c *Config) Validate() error {
 
 	// Validate retention duration if specified
 	if c.Retention != "" {
-		if _, err := time.ParseDuration(c.Retention); err != nil {
+		d, err := time.ParseDuration(c.Retention)
+		if err != nil {
 			return fmt.Errorf("invalid retention duration '%s': %w", c.Retention, err)
+		}
+		// Must be positive: a negative or zero retention puts the eviction cutoff
+		// at or after "now", so every entry is discarded as soon as it arrives and
+		// the buffer is permanently empty -- with no error to explain why.
+		if d <= 0 {
+			return fmt.Errorf("retention must be positive, got '%s': "+
+				"a non-positive retention would discard every log entry immediately", c.Retention)
 		}
 	}
 
@@ -253,8 +270,15 @@ func (tc *TracingConfig) Validate() error {
 
 	// Validate max_span_age duration if specified
 	if tc.MaxSpanAge != "" {
-		if _, err := time.ParseDuration(tc.MaxSpanAge); err != nil {
+		d, err := time.ParseDuration(tc.MaxSpanAge)
+		if err != nil {
 			return fmt.Errorf("invalid max_span_age duration '%s': %w", tc.MaxSpanAge, err)
+		}
+		// Same reasoning as retention: non-positive means every span is evicted
+		// the moment it is stored.
+		if d <= 0 {
+			return fmt.Errorf("max_span_age must be positive, got '%s': "+
+				"a non-positive value would discard every span immediately", tc.MaxSpanAge)
 		}
 	}
 

@@ -22,10 +22,20 @@ type RingBuffer struct {
 	traceIndex map[string][]*parser.LogEntry
 }
 
-// NewRingBuffer creates a new ring buffer
+// NewRingBuffer creates a new ring buffer.
+//
+// A non-positive maxSize is degenerate but must not crash: make() panics with
+// "makeslice: cap out of range" on a negative capacity, so the initial
+// allocation is clamped. Callers going through config never hit this
+// (max_entries 0 maps to a default and negatives are rejected), but this
+// constructor is exported.
 func NewRingBuffer(maxSize int, maxAge time.Duration, maxBytes int64) *RingBuffer {
+	initialCap := maxSize
+	if initialCap < 0 {
+		initialCap = 0
+	}
 	return &RingBuffer{
-		entries:    make([]*parser.LogEntry, 0, maxSize),
+		entries:    make([]*parser.LogEntry, 0, initialCap),
 		maxSize:    maxSize,
 		maxAge:     maxAge,
 		maxBytes:   maxBytes,
@@ -81,8 +91,14 @@ func (rb *RingBuffer) evictIfNeeded(newEntrySize int64) {
 		}
 	}
 
-	// Remove oldest entries if we're over count limit
-	for len(rb.entries) >= rb.maxSize {
+	// Remove oldest entries if we're over count limit.
+	//
+	// The len > 0 guard matters: without it, a maxSize of 0 or less makes the
+	// condition permanently true and rb.entries[0] panics on an empty slice.
+	// The two loops above already guard this way. Config maps max_entries 0 to
+	// a default so the normal path cannot reach it, but NewRingBuffer is
+	// exported and the guard is free.
+	for len(rb.entries) > 0 && len(rb.entries) >= rb.maxSize {
 		removed := rb.entries[0]
 		rb.entries = rb.entries[1:]
 		rb.currentSize -= int64(len(removed.Raw))
@@ -301,7 +317,13 @@ func (rb *RingBuffer) Clear() {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
-	rb.entries = make([]*parser.LogEntry, 0, rb.maxSize)
+	// Clamped for the same reason as in NewRingBuffer: a negative capacity
+	// panics in make().
+	initialCap := rb.maxSize
+	if initialCap < 0 {
+		initialCap = 0
+	}
+	rb.entries = make([]*parser.LogEntry, 0, initialCap)
 	rb.currentSize = 0
 	rb.traceIndex = make(map[string][]*parser.LogEntry)
 }
