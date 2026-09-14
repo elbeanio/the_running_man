@@ -465,3 +465,89 @@ func TestShellFeature_CommandStringDisplay(t *testing.T) {
 		t.Errorf("CommandString should not expose shell wrapper, got: %s", cmdStr)
 	}
 }
+
+// Regression test for output lost when a process exits.
+//
+// ProcessWrapper.Wait used to call cmd.Wait() (which closes the stdout/stderr
+// pipes) before waiting for the capture goroutines to drain. os/exec's docs say
+// that is incorrect, and in practice it discarded whatever had not been read
+// yet -- the output you most want when a process dies.
+//
+// It surfaced as intermittent CI failures: a scanner error ("read |0: file
+// already closed") alongside a test finding no captured output at all. An
+// earlier attempt to fix it suppressed the error message, which hid the data
+// loss rather than preventing it.
+//
+// Volume alone does not reproduce it reliably -- a few hundred short lines fit
+// in the pipe buffer and get drained before the close. What makes it
+// deterministic is a slow handler: while the handler is working, output stays
+// queued in the pipe, so reaping the process at that moment discards it.
+// Parsing and appending under a lock is real work, so this is not a contrived
+// scenario, just an exaggerated one.
+func TestProcessWrapper_CapturesAllOutputBeforeExit(t *testing.T) {
+	const wantLines = 50
+
+	var mu sync.Mutex
+	var lines []string
+	handler := func(source string, line string, timestamp time.Time, isStderr bool) {
+		// Hold up the reader so output is still in flight when the process exits.
+		time.Sleep(2 * time.Millisecond)
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, line)
+	}
+
+	// Emit a burst and exit immediately.
+	cmd := fmt.Sprintf("i=1; while [ $i -le %d ]; do echo line-$i; i=$((i+1)); done", wantLines)
+	wrapper := New("burst", cmd, []string{}, "", handler)
+
+	if err := wrapper.Start(); err != nil {
+		t.Fatalf("Failed to start process: %v", err)
+	}
+	if err := wrapper.Wait(); err != nil {
+		t.Fatalf("Process failed: %v", err)
+	}
+
+	// Wait() returning must mean all output has reached the handler. No sleeping
+	// or polling here: that guarantee is the thing under test.
+	mu.Lock()
+	got := len(lines)
+	mu.Unlock()
+
+	if got != wantLines {
+		t.Errorf("captured %d of %d lines; Wait() must not return until output is drained", got, wantLines)
+	}
+}
+
+// The drain in Wait() is bounded, because a grandchild that inherits the pipe
+// and outlives its parent never produces EOF -- common in dev, where a server
+// spawns workers. Without a bound, fixing the lost-output race would have
+// traded intermittent data loss for an indefinite hang, which is worse.
+func TestProcessWrapper_WaitDoesNotHangOnLingeringChild(t *testing.T) {
+	original := outputDrainTimeout
+	outputDrainTimeout = 250 * time.Millisecond
+	defer func() { outputDrainTimeout = original }()
+
+	handler := func(source string, line string, timestamp time.Time, isStderr bool) {}
+
+	// The backgrounded sleep inherits stdout and outlives the shell, so the
+	// read end never sees EOF even though the direct child has exited.
+	wrapper := New("lingering", "sleep 30 & echo started", []string{}, "", handler)
+	wrapper.silent = true
+
+	if err := wrapper.Start(); err != nil {
+		t.Fatalf("Failed to start process: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- wrapper.Wait() }()
+
+	select {
+	case <-done:
+		// Returned, as required -- via the drain timeout rather than EOF.
+	case <-time.After(10 * time.Second):
+		t.Fatal("Wait() hung waiting for output readers; the drain must be bounded")
+	}
+
+	_ = wrapper.Stop()
+}

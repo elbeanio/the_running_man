@@ -35,6 +35,15 @@ import (
 // LineHandler is called for each line of output
 type LineHandler func(source string, line string, timestamp time.Time, isStderr bool)
 
+// outputDrainTimeout bounds how long Wait blocks for the output readers before
+// reaping the process. Only reached when something other than the direct child
+// still holds the pipe open, since an exited process's pipes produce EOF
+// immediately.
+//
+// A var rather than a const so tests can shorten it; treat as read-only
+// otherwise.
+var outputDrainTimeout = 5 * time.Second
+
 // ProcessWrapper wraps a child process and captures its output
 type ProcessWrapper struct {
 	cmd       *exec.Cmd
@@ -224,7 +233,42 @@ func (w *ProcessWrapper) captureStream(stream io.ReadCloser, isStderr bool) {
 
 // Wait waits for the process to complete and all output to be captured
 func (w *ProcessWrapper) Wait() error {
-	// Wait for process to exit
+	// Drain the output readers BEFORE reaping the process.
+	//
+	// os/exec closes the stdout/stderr pipes inside cmd.Wait, and its docs are
+	// explicit: "it is thus incorrect to call Wait before all reading from the
+	// pipe has completed." Doing so discards whatever the readers had not yet
+	// consumed -- which is exactly the output you most want when a process dies.
+	//
+	// This was previously the other way round, and it lost output
+	// intermittently. It showed up as CI failures whose symptom was a scanner
+	// error ("read |0: file already closed") alongside a test finding no
+	// captured output at all. An earlier attempt to fix it suppressed the error
+	// message, which hid the data loss instead of preventing it.
+	//
+	// The wait is bounded. A grandchild that inherits the pipe and outlives its
+	// parent never produces EOF -- common in dev, where a dev server spawns
+	// workers -- so in that case accept possible truncation rather than
+	// blocking forever.
+	drained := make(chan struct{})
+	go func() {
+		w.wg.Wait()
+		close(drained)
+	}()
+
+	select {
+	case <-drained:
+	case <-time.After(outputDrainTimeout):
+		if !w.silent {
+			fmt.Fprintf(os.Stderr,
+				"[running-man] %s: output readers still active after %s, "+
+					"reaping anyway (a child process may still hold the pipe open)\n",
+				w.name, outputDrainTimeout)
+		}
+	}
+
+	// Reap the process. Safe now: the readers have finished (or we have given up
+	// on them), so closing the pipes cannot discard buffered output.
 	err := w.cmd.Wait()
 
 	// Cancel kill timer if process exited gracefully
@@ -234,9 +278,6 @@ func (w *ProcessWrapper) Wait() error {
 		w.killTimer = nil
 	}
 	w.timerMu.Unlock()
-
-	// Wait for output streams to finish
-	w.wg.Wait()
 
 	return err
 }
