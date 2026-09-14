@@ -298,26 +298,29 @@ func runCommand(args []string) {
 	// Create parser
 	multiParser := parser.NewMultiParser()
 
-	// Setup line handlers
-	processLineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {
-		entry := multiParser.ParseLineWithType(source, "process", line, timestamp)
-		if entry != nil {
-			buffer.Append(entry)
+	// Setup line handlers.
+	//
+	// A single line can yield more than one entry: a line that is not part of a
+	// Python traceback but arrives while one is open both completes the
+	// traceback and is a log line itself.
+	appendEntries := func(entries []*parser.LogEntry) {
+		for _, entry := range entries {
+			if entry != nil {
+				buffer.Append(entry)
+			}
 		}
+	}
+
+	processLineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {
+		appendEntries(multiParser.ParseLineWithType(source, "process", line, timestamp))
 	}
 
 	dockerLineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {
-		entry := multiParser.ParseLineWithType(source, "docker", line, timestamp)
-		if entry != nil {
-			buffer.Append(entry)
-		}
+		appendEntries(multiParser.ParseLineWithType(source, "docker", line, timestamp))
 	}
 
 	systemLineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {
-		entry := multiParser.ParseLineWithType(source, "system", line, timestamp)
-		if entry != nil {
-			buffer.Append(entry)
-		}
+		appendEntries(multiParser.ParseLineWithType(source, "system", line, timestamp))
 	}
 
 	// Docker Compose integration

@@ -551,3 +551,107 @@ func TestProcessWrapper_WaitDoesNotHangOnLingeringChild(t *testing.T) {
 
 	_ = wrapper.Stop()
 }
+
+// Review finding R15: a single over-long line used to end capture for that
+// stream permanently.
+//
+// captureStream used a bufio.Scanner with a 1MB limit. A longer line makes
+// Scan() return false with bufio.ErrTooLong, and a Scanner cannot continue --
+// so every line the process logged afterwards was lost. The error was only
+// printed when not silent, and TUI mode is silent, so it happened invisibly.
+func TestProcessWrapper_LongLineDoesNotEndCapture(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+	handler := func(source string, line string, timestamp time.Time, isStderr bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, line)
+	}
+
+	// A line well over MaxLineBytes, then ordinary lines that must survive it.
+	cmd := fmt.Sprintf(
+		"head -c %d /dev/zero | tr '\\0' 'x'; echo; echo after-one; echo after-two",
+		MaxLineBytes+5000)
+
+	wrapper := New("longline", cmd, []string{}, "", handler)
+	wrapper.silent = true
+
+	if err := wrapper.Start(); err != nil {
+		t.Fatalf("Failed to start process: %v", err)
+	}
+	if err := wrapper.Wait(); err != nil {
+		t.Fatalf("Process failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	var sawAfterOne, sawAfterTwo, sawTruncationNotice bool
+	for _, l := range lines {
+		switch {
+		case strings.Contains(l, "after-one"):
+			sawAfterOne = true
+		case strings.Contains(l, "after-two"):
+			sawAfterTwo = true
+		case strings.Contains(l, "line truncated at"):
+			sawTruncationNotice = true
+		}
+	}
+
+	if !sawAfterOne || !sawAfterTwo {
+		t.Errorf("capture stopped after an over-long line: after-one=%v after-two=%v (got %d lines)",
+			sawAfterOne, sawAfterTwo, len(lines))
+	}
+	if !sawTruncationNotice {
+		t.Error("an over-long line should be kept and marked as truncated, not dropped silently")
+	}
+
+	// The truncated line must be bounded, not unbounded.
+	for _, l := range lines {
+		if len(l) > MaxLineBytes+200 {
+			t.Errorf("a captured line was %d bytes; it should be truncated near %d", len(l), MaxLineBytes)
+		}
+	}
+}
+
+// Lines split across read-buffer boundaries must not be mangled: readLine
+// accumulates across reads, so a line longer than the 64KB read buffer but
+// under MaxLineBytes has to arrive intact.
+func TestProcessWrapper_LineLongerThanReadBufferIsIntact(t *testing.T) {
+	const lineLen = 200 * 1024 // > 64KB read buffer, < 1MB max
+
+	var mu sync.Mutex
+	var longest int
+	var sawTruncation bool
+	handler := func(source string, line string, timestamp time.Time, isStderr bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(line) > longest {
+			longest = len(line)
+		}
+		if strings.Contains(line, "line truncated at") {
+			sawTruncation = true
+		}
+	}
+
+	cmd := fmt.Sprintf("head -c %d /dev/zero | tr '\\0' 'y'; echo", lineLen)
+	wrapper := New("bigline", cmd, []string{}, "", handler)
+	wrapper.silent = true
+
+	if err := wrapper.Start(); err != nil {
+		t.Fatalf("Failed to start process: %v", err)
+	}
+	if err := wrapper.Wait(); err != nil {
+		t.Fatalf("Process failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if longest != lineLen {
+		t.Errorf("captured longest line of %d bytes, want %d intact", longest, lineLen)
+	}
+	if sawTruncation {
+		t.Error("a line under MaxLineBytes must not be marked truncated")
+	}
+}

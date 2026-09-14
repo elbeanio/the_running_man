@@ -30,7 +30,19 @@ func NewPythonParser() *PythonParser {
 	return &PythonParser{}
 }
 
-// Parse checks if this line starts a Python traceback
+// Parse offers a line to the traceback accumulator.
+//
+// It returns the completed entry, if this line finished one, and whether the
+// line was CONSUMED. Those are independent:
+//
+//	(nil, true)    line became part of a traceback; nothing to emit yet
+//	(entry, true)  line completed a traceback and belonged to it
+//	(entry, false) line completed a traceback but is a log line in its own
+//	               right, and the caller must parse it separately
+//	(nil, false)   nothing to do with this line
+//
+// The (entry, false) case is the one that used to lose data: the line was
+// reported as consumed, the caller moved on, and it never reached the buffer.
 func (p *PythonParser) Parse(source string, line string, timestamp time.Time) (*LogEntry, bool) {
 	// Check if this line starts a traceback
 	if tracebackStartRegex.MatchString(line) {
@@ -38,7 +50,7 @@ func (p *PythonParser) Parse(source string, line string, timestamp time.Time) (*
 		p.lines = []string{line}
 		p.firstLine = line
 		p.firstTime = timestamp
-		return nil, false // Continue accumulating
+		return nil, true // consumed: accumulating
 	}
 
 	// If we're in a traceback, check if this line continues it
@@ -46,10 +58,10 @@ func (p *PythonParser) Parse(source string, line string, timestamp time.Time) (*
 		// Lines starting with spaces are part of the traceback
 		if strings.HasPrefix(line, "  ") || tracebackFileRegex.MatchString(line) {
 			p.lines = append(p.lines, line)
-			return nil, false
+			return nil, true // consumed
 		}
 
-		// Error line ends the traceback
+		// Error line ends the traceback, and belongs to it
 		if errorLineRegex.MatchString(line) {
 			p.lines = append(p.lines, line)
 			entry := p.buildEntry(source)
@@ -57,18 +69,18 @@ func (p *PythonParser) Parse(source string, line string, timestamp time.Time) (*
 			return entry, true
 		}
 
-		// Empty line might end it (but could also be part of multi-line message)
+		// A blank line ends it. Nothing worth emitting for the blank itself.
 		if strings.TrimSpace(line) == "" && len(p.lines) > 2 {
 			entry := p.buildEntry(source)
 			p.reset()
 			return entry, true
 		}
 
-		// Non-traceback line ends it
+		// Any other line ends the traceback WITHOUT being part of it. Report it
+		// as not consumed so the caller parses it on its own merits.
 		entry := p.buildEntry(source)
 		p.reset()
-		// Return the entry, but this line should be parsed separately
-		return entry, true
+		return entry, false
 	}
 
 	return nil, false

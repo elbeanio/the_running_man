@@ -1,7 +1,9 @@
 package parser
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -99,16 +101,20 @@ func TestPythonParser(t *testing.T) {
 
 	var entry *LogEntry
 	for i, line := range lines {
-		e, ok := parser.Parse("test", line, ts)
+		e, consumed := parser.Parse("test", line, ts)
+
+		// Every line of a well-formed traceback belongs to it, so all of them
+		// are consumed. Only the last produces an entry.
+		if !consumed {
+			t.Errorf("Line %d: expected the line to be consumed by the traceback", i)
+		}
 		if i < len(lines)-1 {
-			// Should be accumulating
-			if ok {
-				t.Errorf("Line %d: Expected ok=false (accumulating), got true", i)
+			if e != nil {
+				t.Errorf("Line %d: expected no entry while accumulating, got one", i)
 			}
 		} else {
-			// Last line should complete the traceback
-			if !ok {
-				t.Error("Expected ok=true on last line")
+			if e == nil {
+				t.Error("Expected the last line to complete the traceback")
 			}
 			entry = e
 		}
@@ -265,18 +271,18 @@ func TestMultiParser(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entry := parser.ParseLine("test", tt.input, ts)
+			got := parser.ParseLine("test", tt.input, ts)
 
 			if tt.wantNil {
-				if entry != nil {
-					t.Error("Expected nil entry while accumulating")
+				if len(got) != 0 {
+					t.Errorf("Expected no entries while accumulating, got %d", len(got))
 				}
 			} else {
-				if entry == nil {
-					t.Fatal("Expected non-nil entry")
+				if len(got) != 1 {
+					t.Fatalf("Expected exactly 1 entry, got %d", len(got))
 				}
-				if entry.Level != tt.wantLevel {
-					t.Errorf("Level = %v, want %v", entry.Level, tt.wantLevel)
+				if got[0].Level != tt.wantLevel {
+					t.Errorf("Level = %v, want %v", got[0].Level, tt.wantLevel)
 				}
 			}
 		})
@@ -295,10 +301,7 @@ func TestMultiParser_PythonTracebackComplete(t *testing.T) {
 
 	var entries []*LogEntry
 	for _, line := range lines {
-		entry := parser.ParseLine("test", line, ts)
-		if entry != nil {
-			entries = append(entries, entry)
-		}
+		entries = append(entries, parser.ParseLine("test", line, ts)...)
 	}
 
 	// Should have exactly one entry (the completed traceback)
@@ -344,5 +347,137 @@ func TestParseLevel(t *testing.T) {
 				t.Errorf("parseLevel(%q) = %v, want %v", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+// --- Review findings R2 and R8 ---
+
+// R2(b): a traceback open on one source must not swallow another source's
+// lines. MultiParser previously shared one PythonParser across every source,
+// so an indented line from "frontend" was absorbed into "backend"'s traceback:
+// it vanished from the buffer entirely and reappeared inside an unrelated
+// stack trace.
+func TestMultiParser_TracebackDoesNotSwallowOtherSources(t *testing.T) {
+	p := NewMultiParser()
+	ts := time.Now()
+
+	p.ParseLineWithType("backend", "process", "Traceback (most recent call last):", ts)
+	p.ParseLineWithType("backend", "process", `  File "app.py", line 10, in handler`, ts)
+
+	// An indented line from a different source, while backend's traceback is open.
+	got := p.ParseLineWithType("frontend", "process", "  webpack: compiled successfully", ts)
+	if len(got) != 1 {
+		t.Fatalf("frontend's line produced %d entries, want 1 (it must not be absorbed)", len(got))
+	}
+	if got[0].Source != "frontend" {
+		t.Errorf("entry attributed to %q, want %q", got[0].Source, "frontend")
+	}
+	if !strings.Contains(got[0].Message, "webpack") {
+		t.Errorf("frontend's line was lost; got message %q", got[0].Message)
+	}
+
+	// backend's traceback must still complete correctly, without the intruder.
+	final := p.ParseLineWithType("backend", "process", "ValueError: boom", ts)
+	if len(final) != 1 {
+		t.Fatalf("backend traceback produced %d entries, want 1", len(final))
+	}
+	if final[0].Source != "backend" {
+		t.Errorf("traceback attributed to %q, want %q", final[0].Source, "backend")
+	}
+	if strings.Contains(final[0].Stacktrace, "webpack") {
+		t.Errorf("backend's stacktrace contains frontend's line:\n%s", final[0].Stacktrace)
+	}
+}
+
+// R2(a): MultiParser is used from one goroutine per stream per process, plus
+// one per container. It must be safe for concurrent use.
+func TestMultiParser_ConcurrentSourcesAreSafe(t *testing.T) {
+	p := NewMultiParser()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			source := fmt.Sprintf("src-%d", n)
+			ts := time.Now()
+			for j := 0; j < 100; j++ {
+				p.ParseLineWithType(source, "process", "Traceback (most recent call last):", ts)
+				p.ParseLineWithType(source, "process", `  File "x.py", line 1, in f`, ts)
+				p.ParseLineWithType(source, "process", "ValueError: x", ts)
+				p.ParseLineWithType(source, "process", "plain line", ts)
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+// Two readers share one source name (stdout and stderr of the same process),
+// so per-source state must be locked too, not just isolated.
+func TestMultiParser_ConcurrentSameSourceIsSafe(t *testing.T) {
+	p := NewMultiParser()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ts := time.Now()
+			for j := 0; j < 200; j++ {
+				p.ParseLineWithType("shared", "process", "Traceback (most recent call last):", ts)
+				p.ParseLineWithType("shared", "process", "ValueError: x", ts)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// R8: the line that terminates a traceback without belonging to it was
+// dropped. The parser reported it as consumed, the caller moved on, and it
+// never reached the buffer -- so the first ordinary log line after any
+// traceback disappeared.
+func TestMultiParser_TracebackTerminatingLineIsKept(t *testing.T) {
+	p := NewMultiParser()
+	ts := time.Now()
+
+	p.ParseLineWithType("app", "process", "Traceback (most recent call last):", ts)
+	p.ParseLineWithType("app", "process", `  File "app.py", line 1, in <module>`, ts)
+
+	// Neither indented nor an exception line: ends the traceback, and is a log
+	// line in its own right.
+	got := p.ParseLineWithType("app", "process", "INFO server still running", ts)
+
+	if len(got) != 2 {
+		t.Fatalf("got %d entries, want 2 (the traceback, and the line that ended it)", len(got))
+	}
+	if got[0].Stacktrace == "" {
+		t.Errorf("first entry should be the traceback, got %+v", got[0])
+	}
+	if !strings.Contains(got[1].Message, "server still running") {
+		t.Errorf("terminating line was lost; second entry message = %q", got[1].Message)
+	}
+}
+
+// A JSON line arriving mid-traceback must close the traceback rather than
+// being emitted alone and leaving it open to swallow later lines.
+func TestMultiParser_JSONLineEndsTraceback(t *testing.T) {
+	p := NewMultiParser()
+	ts := time.Now()
+
+	p.ParseLineWithType("app", "process", "Traceback (most recent call last):", ts)
+	p.ParseLineWithType("app", "process", `  File "app.py", line 1, in <module>`, ts)
+
+	got := p.ParseLineWithType("app", "process", `{"level":"info","message":"still here"}`, ts)
+	if len(got) != 2 {
+		t.Fatalf("got %d entries, want 2 (traceback + the JSON line)", len(got))
+	}
+
+	// And the traceback must be closed, so a later indented line is ordinary.
+	after := p.ParseLineWithType("app", "process", "  indented but unrelated", ts)
+	if len(after) != 1 {
+		t.Fatalf("got %d entries after the traceback closed, want 1", len(after))
+	}
+	if after[0].Stacktrace != "" {
+		t.Error("traceback was still open; the later line was absorbed into it")
 	}
 }
