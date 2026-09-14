@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"regexp"
 	"strings"
@@ -119,6 +120,19 @@ func main() {
 	}
 }
 
+// networkPostureNote summarises who can reach the API, for the startup banner.
+// This is the one moment the user is guaranteed to be looking, and "reachable
+// from the network" is worth knowing before logs start flowing through it.
+func networkPostureNote(listenAddr string, allowRemoteControl bool) string {
+	if ip := net.ParseIP(listenAddr); ip != nil && ip.IsLoopback() {
+		return " (this machine only)"
+	}
+	if allowRemoteControl {
+		return " (reachable on all interfaces; process control OPEN to remote callers)"
+	}
+	return " (reachable on all interfaces; process control local-only)"
+}
+
 func runCommand(args []string) {
 	// Setup flags
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
@@ -126,6 +140,10 @@ func runCommand(args []string) {
 	apiPort := fs.Int("api-port", 0, "API server port (overrides config file)")
 	dockerCompose := fs.String("docker-compose", "", "Path to docker-compose.yml file (overrides config file)")
 	noTUI := fs.Bool("no-tui", false, "Disable TUI and run in headless mode")
+	listenAddr := fs.String("listen", api.DefaultListenAddr,
+		"Address to bind the API to (use 127.0.0.1 to restrict to this machine)")
+	allowRemoteControl := fs.Bool("allow-remote-control", false,
+		"Serve process restart/stop endpoints to remote callers (default: loopback only)")
 	tracingEnabled := fs.Bool("tracing", true, "Enable OTLP trace ingestion (default: true)")
 	tracingPort := fs.Int("tracing-port", 0, "OTLP HTTP receiver port (overrides config file, default: 4318)")
 
@@ -263,7 +281,7 @@ func runCommand(args []string) {
 		fmt.Printf("Running [%s]: %s %v\n", proc.Name, proc.Command, proc.Args)
 	}
 
-	fmt.Printf("API: http://localhost:%d\n\n", finalAPIPort)
+	fmt.Printf("API: http://localhost:%d%s\n\n", finalAPIPort, networkPostureNote(*listenAddr, *allowRemoteControl))
 
 	// Create ring buffer
 	buffer := storage.NewRingBuffer(finalMaxEntries, finalRetention, finalMaxBytes)
@@ -388,6 +406,8 @@ func runCommand(args []string) {
 		traceStorage = spanStorage
 	}
 	apiServer := api.NewServer(buffer, finalAPIPort, systemLineHandler, manager, traceStorage)
+	apiServer.SetListenAddr(*listenAddr)
+	apiServer.SetAllowRemoteControl(*allowRemoteControl)
 	go func() {
 		if err := apiServer.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] API server error: %v\n", err)
@@ -526,6 +546,10 @@ Flags:
   --process "command"      Process to run (can be specified multiple times, overrides config)
   --docker-compose PATH    Path to docker-compose.yml file (overrides config)
   --api-port PORT          API server port (default: 9000, overrides config)
+  --listen ADDR            Address to bind the API to (default: 0.0.0.0, all
+                           interfaces). Use 127.0.0.1 to restrict to this machine.
+  --allow-remote-control   Serve process restart/stop endpoints to remote callers.
+                           By default they are loopback-only and return 403.
   --no-tui                 Disable TUI and run in headless mode
 
 Examples:

@@ -28,8 +28,11 @@ Query log entries with filters.
 - `source` - Filter by source name (e.g., `backend`, `postgres`, `docker-*`)
 - `level` - Filter by level (comma-separated: `error,warn`)
 - `contains` - Text search in message content
-- `limit` - Max entries to return (default: 100)
-- `offset` - Pagination offset (default: 0)
+- `exclude` - Exclude sources by name or glob (comma-separated)
+
+> **Note:** `/logs` currently returns every matching entry — there is no `limit` or
+> `offset`. Earlier versions of this document claimed both; neither was implemented.
+> A `limit` with a sensible default is planned.
 
 **Example:**
 ```bash
@@ -299,13 +302,74 @@ Currently no rate limiting (local development tool).
 
 ## CORS
 
-CORS is enabled for `localhost` and `127.0.0.1`.
+Wildcard origin (`Access-Control-Allow-Origin: *`) on both the API and the OTLP
+receiver. Browser-based OTLP export depends on it.
 
 ---
 
 ## Authentication
 
-None required (local development tool, not exposed to network).
+**None.** There are no credentials, tokens or sessions. Access control is by network
+location only — see below.
+
+---
+
+## Network exposure
+
+Running Man binds **all interfaces** (`0.0.0.0`) by default, on both the API port (9000)
+and the OTLP receiver port (4318). This is deliberate: Docker containers exporting to
+`host.docker.internal`, browsers exporting telemetry, and other devices on the network all
+need to reach it, and none of them can use a loopback-only listener.
+
+What that means in practice:
+
+| | Reachable from | Notes |
+|---|---|---|
+| All `GET` endpoints | anywhere on the network | No authentication |
+| `POST /v1/traces`, `POST /v1/logs` (:4318) | anywhere on the network | Accepts data into the buffer |
+| `POST /processes/{name}/restart` | **this machine only** | 403 otherwise |
+| `POST /processes/stop-all` | **this machine only** | 403 otherwise |
+
+### Read this if you run it on a shared network
+
+- **Captured logs are readable by anyone who can reach port 9000.** Dev servers routinely
+  print API keys, tokens, connection strings and request bodies. Those end up in the
+  buffer and are served without authentication.
+- **Anyone who can reach port 4318 can write into the buffer.** `/v1/logs` accepts log
+  records and takes both the source name and the timestamp from the sender, so an entry
+  attributed to `backend` is *not* evidence that it came from `backend`. Treat OTLP-sourced
+  entries (source type `otlp`) as unauthenticated input.
+- **Process control is the exception.** `restart` and `stop-all` are refused unless the
+  request comes from loopback (`127.0.0.0/8` or `::1`), because nothing legitimate needs to
+  stop another machine's dev processes.
+
+### Changing the defaults
+
+```bash
+# Restrict everything to this machine
+running-man run --listen 127.0.0.1
+
+# Allow process control from anywhere (think before using this)
+running-man run --allow-remote-control
+```
+
+### 403 from a state-changing endpoint
+
+The refusal explains itself and names the address it saw:
+
+```json
+{
+  "error": "process control is restricted to local requests",
+  "detail": "POST /processes/stop-all changes process state, so it is only served to loopback callers. This request arrived from 192.168.1.42.",
+  "remote_addr": "192.168.1.42",
+  "allow": "Call it from the machine running running-man, or restart running-man with --allow-remote-control.",
+  "docs": "/docs"
+}
+```
+
+If you believe you *are* local, check `remote_addr`. The usual causes are a Docker bridge
+address, a VPN, or connecting to the machine's LAN IP rather than `localhost`.
+`GET /` marks these endpoints with `"local_only": true`.
 
 ---
 

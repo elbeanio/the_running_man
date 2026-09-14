@@ -53,9 +53,13 @@ so the developer and the agent are looking at the same run.
 
 - **Source** — anything that feeds lines or spans into the **ring buffer**. Every entry
   has a source, identified by name. Sources are what the **TUI** tabs between.
-- **Source type** — what kind of producer a source is: `process`, `docker`, `system` or
-  `traces`. Distinct from **process type**, which is free-text metadata about a managed
-  process; source type is a closed set used by the buffer and the TUI.
+- **Source type** — what kind of producer a source is: `process`, `docker`, `system`,
+  `traces` or `otlp`. Distinct from **process type**, which is free-text metadata about a
+  managed process; source type is a closed set used by the buffer and the TUI.
+- **OTLP source** — log records POSTed to the OTLP receiver's `/v1/logs`, typically from a
+  browser, which has no stdout to capture. Distinct from a **managed process**: the source
+  name and timestamp come from the sender, so an `otlp` entry is *not* evidence of its own
+  origin. Grouped with processes in the **TUI**, being application output either way.
 - **System source** — the source named for Running Man's own output. Its own logs are
   captured alongside everything else, so a startup failure is visible in the same place.
 - **Traces source** — spans arriving over OTLP, treated as a data source for the ring

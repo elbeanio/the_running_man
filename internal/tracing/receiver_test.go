@@ -1,10 +1,12 @@
 package tracing
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -527,4 +529,29 @@ func TestFixHexLogIDs_HexRoundTrips(t *testing.T) {
 	got := req.ResourceLogs[0].ScopeLogs[0].LogRecords[0]
 	assert.Equal(t, hexTrace, fmt.Sprintf("%x", got.TraceId))
 	assert.Len(t, got.TraceId, 16)
+}
+
+// Review finding R17: readRequestBody used io.ReadAll with no cap, on an
+// unauthenticated endpoint reachable from the whole network. #14 added a second
+// such endpoint (/v1/logs), so both are affected.
+func TestReadRequestBody_RejectsOversizedPayload(t *testing.T) {
+	body := bytes.NewReader(make([]byte, MaxRequestBodyBytes+1))
+	req := httptest.NewRequest("POST", "/v1/traces", body)
+
+	if _, err := readRequestBody(req); err == nil {
+		t.Fatal("expected an oversized body to be rejected, got nil error")
+	}
+}
+
+func TestReadRequestBody_AcceptsBodyAtLimit(t *testing.T) {
+	payload := make([]byte, 1024)
+	req := httptest.NewRequest("POST", "/v1/traces", bytes.NewReader(payload))
+
+	data, err := readRequestBody(req)
+	if err != nil {
+		t.Fatalf("a normal body should be accepted: %v", err)
+	}
+	if len(data) != len(payload) {
+		t.Errorf("got %d bytes, want %d", len(data), len(payload))
+	}
 }

@@ -84,7 +84,7 @@ Agents use the REST API, which is self-describing: `GET /` lists every endpoint 
 `/docs` serves interactive OpenAPI documentation.
 
 ### Logs
-- `GET /logs` - search with `since`, `level`, `source`, `contains`, `exclude`, `limit`
+- `GET /logs` - search with `since`, `level`, `source`, `contains`, `exclude`
 - `GET /errors` - recent errors
 
 ### Processes

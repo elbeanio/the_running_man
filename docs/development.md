@@ -400,11 +400,20 @@ go tool pprof cpu.prof
 
 ### Best Practices
 
-1. **No network exposure**: API only binds to localhost
-2. **Process isolation**: Each process runs with its environment
-3. **Input validation**: Validate all API inputs
-4. **No secrets in logs**: Environment variables not logged
-5. **Dependency scanning**: Regular security updates
+1. **The API is bound to all interfaces by default** (`0.0.0.0`), so anyone on the network
+   can read captured logs — which often contain secrets printed by dev servers. Use
+   `--listen 127.0.0.1` to restrict it. See
+   [api-reference.md → Network exposure](api-reference.md#network-exposure).
+2. **State-changing endpoints are loopback-only.** `POST /processes/{name}/restart` and
+   `POST /processes/stop-all` return 403 for non-loopback callers unless
+   `--allow-remote-control` is set. New state-changing endpoints must call
+   `requireLocalControl` — do not add one without it.
+3. **OTLP ingestion is unauthenticated input.** `/v1/logs` takes the source name and
+   timestamp from the sender, so `otlp` entries cannot be trusted as to origin.
+4. **Process isolation**: Each process runs with its environment
+5. **Input validation**: Validate all API inputs
+6. **No secrets in logs**: Environment variables not logged
+7. **Dependency scanning**: Regular security updates
 
 ### Security Considerations
 

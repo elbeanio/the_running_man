@@ -207,6 +207,11 @@ const (
 	SourceTypeDocker  SourceType = "docker"
 	SourceTypeSystem  SourceType = "system" // running-man itself
 	SourceTypeTraces  SourceType = "traces"
+	// SourceTypeOTLP is a log record POSTed to the OTLP receiver's /v1/logs
+	// rather than captured from a process we started -- typically a browser,
+	// which has no stdout. Its name and timestamp come from the sender, so an
+	// otlp entry is not evidence of its own origin.
+	SourceTypeOTLP SourceType = "otlp"
 )
 
 type SourceInfo struct {
