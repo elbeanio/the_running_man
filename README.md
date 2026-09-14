@@ -127,7 +127,7 @@ open http://localhost:9000/docs
 curl -s http://localhost:9000/processes
 ```
 
-**Endpoints:** `/logs` (with `since`, `level`, `source`, `contains`, `exclude`),
+**Endpoints:** `/logs` (with `since`, `level`, `source`, `contains`, `exclude`, `limit`),
 `/errors`, `/processes`, `/processes/{name}`, `/processes/{name}/restart`,
 `/processes/stop-all`, `/health`, `/traces`, `/traces/{id}`, `/traces/{id}/logs`
 

@@ -135,6 +135,17 @@ paths:
           schema:
             type: string
             example: "error connecting"
+        - name: limit
+          in: query
+          description: |
+            Maximum number of entries to return, keeping the MOST RECENT matches.
+            Defaults to 1000. Use `limit=0` for no limit. Negative values are rejected.
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 1000
+            example: 100
       responses:
         '200':
           description: List of log entries matching the filters
@@ -182,6 +193,17 @@ paths:
           schema:
             type: string
             example: "1h"
+        - name: limit
+          in: query
+          description: |
+            Maximum number of entries to return, keeping the MOST RECENT matches.
+            Defaults to 1000. Use `limit=0` for no limit.
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 1000
+            example: 50
       responses:
         '200':
           description: List of error log entries
@@ -466,10 +488,25 @@ components:
           description: Original unparsed log line
         is_error:
           type: boolean
-          description: Whether this log came from stderr
+          description: |
+            Whether this entry represents an error condition. Set by the parsers from
+            the entry's content (level, or the presence of a stack trace) -- not from
+            whether it arrived on stderr.
         stacktrace:
           type: string
           description: Stack trace if this is an error with traceback (Python, etc.)
+        source_type:
+          type: string
+          enum: [process, docker, system, traces, otlp]
+          description: |
+            What kind of producer the source is. `otlp` entries were POSTed to the
+            OTLP receiver rather than captured from a process, so their source name
+            and timestamp come from the sender.
+        trace_id:
+          type: string
+          description: |
+            Trace correlation ID, when the application emitted one. Use
+            `GET /traces/{id}/logs` to fetch every entry for a trace.
       required:
         - timestamp
         - level
@@ -477,7 +514,6 @@ components:
         - message
         - raw
         - is_error
-        - stacktrace
 
     LogsResponse:
       type: object
@@ -489,6 +525,9 @@ components:
         count:
           type: integer
           description: Number of log entries returned
+        limit:
+          type: integer
+          description: The limit applied to this query (0 means no limit)
       required:
         - logs
         - count

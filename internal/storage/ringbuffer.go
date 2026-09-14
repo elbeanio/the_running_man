@@ -195,6 +195,13 @@ func (rb *RingBuffer) Query(filters QueryFilters) []*parser.LogEntry {
 		result = append(result, entry)
 	}
 
+	// Apply the limit last, keeping the most recent matches. Filtering first and
+	// trimming after is what makes "the last 50 errors" mean what a caller
+	// expects, rather than "errors among the last 50 entries".
+	if filters.Limit > 0 && len(result) > filters.Limit {
+		result = result[len(result)-filters.Limit:]
+	}
+
 	return result
 }
 
@@ -350,6 +357,13 @@ type QueryFilters struct {
 	Exclude    []string // Exclude patterns (supports glob)
 	Contains   string
 	ErrorsOnly bool
+
+	// Limit caps the number of entries returned, keeping the MOST RECENT ones.
+	// Zero or negative means no limit.
+	//
+	// Truncating to the oldest entries would be useless for debugging, which is
+	// why this takes from the end.
+	Limit int
 }
 
 // BufferStats contains statistics about the ring buffer

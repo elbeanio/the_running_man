@@ -29,14 +29,24 @@ Query log entries with filters.
 - `level` - Filter by level (comma-separated: `error,warn`)
 - `contains` - Text search in message content
 - `exclude` - Exclude sources by name or glob (comma-separated)
+- `limit` - Maximum entries to return, **most recent first excluded last** — that is, the
+  newest matches are kept (default: `1000`, `limit=0` for no limit)
 
-> **Note:** `/logs` currently returns every matching entry — there is no `limit` or
-> `offset`. Earlier versions of this document claimed both; neither was implemented.
-> A `limit` with a sensible default is planned.
+The limit is applied *after* filtering, so `?level=error&limit=50` means "the 50 most
+recent errors", not "errors among the 50 most recent entries".
+
+There is no `offset`/pagination. Earlier versions of this document described one; it was
+never implemented.
 
 **Example:**
 ```bash
 curl "http://localhost:9000/logs?since=30s&level=error&source=backend"
+
+# The 20 most recent entries
+curl "http://localhost:9000/logs?limit=20"
+
+# Everything in the buffer, deliberately
+curl "http://localhost:9000/logs?limit=0"
 ```
 
 **Response:**

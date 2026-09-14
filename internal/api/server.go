@@ -288,6 +288,14 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		filters.Contains = contains
 	}
 
+	// Parse 'limit' parameter
+	limit, err := parseLimit(r, DefaultLogLimit)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	filters.Limit = limit
+
 	// Query the buffer
 	entries := s.buffer.Query(filters)
 
@@ -295,6 +303,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, map[string]interface{}{
 		"logs":  entries,
 		"count": len(entries),
+		"limit": limit,
 	})
 }
 
@@ -312,6 +321,13 @@ func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
 		}
 		filters.Since = duration
 	}
+
+	limit, err := parseLimit(r, DefaultLogLimit)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	filters.Limit = limit
 
 	// Query for errors only
 	entries := s.buffer.Query(filters)
@@ -361,6 +377,37 @@ func (s *Server) writeError(w http.ResponseWriter, code int, message string) {
 }
 
 // parseDuration parses duration strings like "30s", "5m", "1h"
+// DefaultLogLimit caps /logs and /errors when the caller does not ask for a
+// specific limit.
+//
+// There was previously no limit at all: the parameter was documented but never
+// implemented, so a bare `curl /logs` returned the entire buffer -- up to
+// max_entries, 10,000 by default. That is a poor first request for an agent,
+// which is the main consumer. 1000 is large enough not to surprise someone
+// reading logs and small enough to stay manageable; limit=0 disables the cap.
+const DefaultLogLimit = 1000
+
+// parseLimit reads the 'limit' query parameter, falling back to def.
+//
+// limit=0 means "no limit", so it is possible to ask for everything
+// deliberately. Negative values are rejected rather than silently treated as
+// unlimited.
+func parseLimit(r *http.Request, def int) (int, error) {
+	raw := r.URL.Query().Get("limit")
+	if raw == "" {
+		return def, nil
+	}
+
+	limit, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid limit parameter %q: must be an integer", raw)
+	}
+	if limit < 0 {
+		return 0, fmt.Errorf("invalid limit parameter %d: must not be negative (use limit=0 for no limit)", limit)
+	}
+	return limit, nil
+}
+
 func parseDuration(s string) (time.Duration, error) {
 	// Try standard duration format first
 	d, err := time.ParseDuration(s)

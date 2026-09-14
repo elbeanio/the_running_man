@@ -15,17 +15,23 @@ const (
 	LevelError LogLevel = "error"
 )
 
-// LogEntry represents a parsed log entry
+// LogEntry represents a parsed log entry.
+//
+// The json tags are load-bearing. Without them these fields serialised under
+// their Go names ("Timestamp", "IsError"), while docs/openapi.yaml documented
+// snake_case and every other endpoint -- /processes, /health -- used
+// snake_case. An agent following /docs got every field name wrong on the
+// endpoint it uses most.
 type LogEntry struct {
-	Timestamp  time.Time
-	Level      LogLevel
-	Source     string
-	SourceType string // "process", "docker", "system", "traces"
-	Message    string
-	Raw        string
-	IsError    bool
-	Stacktrace string
-	TraceID    string
+	Timestamp  time.Time `json:"timestamp"`
+	Level      LogLevel  `json:"level"`
+	Source     string    `json:"source"`
+	SourceType string    `json:"source_type,omitempty"` // "process", "docker", "system", "traces", "otlp"
+	Message    string    `json:"message"`
+	Raw        string    `json:"raw"`
+	IsError    bool      `json:"is_error"`
+	Stacktrace string    `json:"stacktrace,omitempty"`
+	TraceID    string    `json:"trace_id,omitempty"`
 }
 
 // sourceState holds the per-source parsing state.
