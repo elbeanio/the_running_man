@@ -22,7 +22,7 @@ Running Man solves this by capturing everything automatically and exposing it vi
 - **Interactive TUI** - Tab switching between log sources, real-time updates
 - **REST API** - Query logs by time, source, level, or content
 - **OpenTelemetry Tracing** - Built-in OTLP receiver with automatic environment injection
-- **MCP Server** - AI agent integration with 11 debugging tools (Claude Code, OpenCode)
+- **REST API** - Agent integration via a self-describing HTTP API (Claude Code, OpenCode)
 - **Smart parsing** - Detects Python tracebacks, JSON logs, plain text
 - **Ring buffer** - 30-minute retention survives app crashes
 - **Trace storage** - In-memory span storage with configurable retention
@@ -34,7 +34,7 @@ Running Man solves this by capturing everything automatically and exposing it vi
 - **Phase 5:** Browser SDK for frontend observability
 - **Phase 6:** Advanced visualization and analytics
 
-**Current Status:** Complete AI agent integration via MCP protocol with 11 debugging tools, including OpenTelemetry trace exploration capabilities.
+**Current Status:** Agent integration via the REST API, including OpenTelemetry trace exploration. The MCP server that previously provided this was removed — see `PROJECT.md`.
 
 ## Quick Example
 

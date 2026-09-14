@@ -68,7 +68,7 @@ The script provides helpful error messages for common issues:
 
 This script is designed to be called by:
 1. **AI agents directly** for debugging web applications
-2. **The Running Man MCP tools** (future integration)
+2. **The Running Man REST API** (future integration)
 3. **Manual debugging** when visual context is needed
 
 ### Security Considerations

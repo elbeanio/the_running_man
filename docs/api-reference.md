@@ -264,46 +264,6 @@ curl "http://localhost:9000/traces/slow?threshold=500ms&limit=10"
 
 ---
 
-## MCP API
-
-### GET /mcp
-
-Model Context Protocol server for AI agent integration.
-
-**Protocol:** MCP over HTTP/SSE
-**Tools:** 11 debugging tools for AI agents
-**Authentication:** None (local development tool)
-
-**Available Tools via MCP:**
-
-**Log Tools:**
-1. `search_logs` - Search logs with filters
-2. `get_recent_errors` - Get errors with context
-3. `get_startup_logs` - View logs from process startup
-
-**Process Management Tools:**
-4. `get_process_status` - Check status of managed processes
-5. `get_process_detail` - Detailed process information
-6. `restart_process` - Restart a managed process (with safety checks)
-7. `stop_all_processes` - Stop all processes (requires confirmation)
-
-**System Tools:**
-8. `get_health_status` - System health and buffer statistics
-
-**Trace Tools:**
-9. `get_traces` - List recent traces with filtering capabilities
-10. `get_trace` - Get detailed trace information including all spans
-11. `get_slow_traces` - Find traces exceeding duration thresholds
-
-**Integration:**
-- OpenCode: Direct remote MCP connection to `http://localhost:9000/mcp`
-- Claude Desktop: Requires HTTP proxy server (`@modelcontextprotocol/server-http`)
-- Permissions: Add `running-man_*` to OpenCode permissions
-
-See [agent-integration.md](agent-integration.md) for complete setup and usage guide.
-
----
-
 ## Error Responses
 
 All endpoints return standard HTTP error codes:
