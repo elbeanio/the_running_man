@@ -31,13 +31,21 @@ go.work.sum
 # .idea/
 # .vscode/
 
-# Built binaries
-running-man
-the_running_man
+# Built binaries.
+#
+# Anchored with a leading slash. A bare "running-man" matches any path segment,
+# so it also matched the cmd/running-man/ DIRECTORY -- silently ignoring every
+# new source file added there. git add -A skipped them without a word and CI
+# failed on an undefined symbol.
+/running-man
+/the_running_man
+/cmd/running-man/running-man
+/bin/
 
-# Beads export state
-.beads/export-state/
-internal/api/openapi.yaml
+# internal/api/openapi.yaml is NOT ignored: it is the embedded copy of
+# docs/openapi.yaml served at /docs, is tracked, and TestEmbeddedOpenAPISpec_
+# MatchesDocs asserts the two stay identical. Regenerate with
+# `go generate ./internal/api`.
 
 # Dolt database files (added by bd init)
 .dolt/

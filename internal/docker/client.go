@@ -111,11 +111,20 @@ type Container struct {
 	State       string
 }
 
-// DiscoverContainers finds running containers for the given compose file
+// DiscoverContainers finds running containers for the given compose file,
+// deriving the project name from the file's directory.
+//
+// Prefer DiscoverContainersInProject when the project name is known: Compose
+// defaults it to the directory name, but `docker compose -p` and
+// COMPOSE_PROJECT_NAME override that, and discovery filters on the project
+// label -- so a wrong project name finds nothing at all.
 func (c *Client) DiscoverContainers(ctx context.Context, composePath string, serviceNames []string) ([]Container, error) {
-	// Extract project name from compose file path
-	projectName := GetProjectNameFromPath(composePath)
+	return c.DiscoverContainersInProject(ctx, GetProjectNameFromPath(composePath), serviceNames)
+}
 
+// DiscoverContainersInProject finds running containers for an explicit Compose
+// project name.
+func (c *Client) DiscoverContainersInProject(ctx context.Context, projectName string, serviceNames []string) ([]Container, error) {
 	var containers []Container
 
 	for _, serviceName := range serviceNames {

@@ -334,8 +334,8 @@ api_port: 9000
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	if cfg.DockerCompose != "docker-compose.yml" {
-		t.Errorf("expected docker_compose 'docker-compose.yml', got '%s'", cfg.DockerCompose)
+	if got := cfg.DockerCompose.PrimaryFile(); got != "docker-compose.yml" {
+		t.Errorf("expected docker_compose 'docker-compose.yml', got '%s'", got)
 	}
 }
 
@@ -384,8 +384,8 @@ shell: ${SHELL_PATH}
 		t.Errorf("expected command 'go run main.go --env development', got '%s'", cfg.Processes[1].Command)
 	}
 
-	if cfg.DockerCompose != "docker-compose.dev.yml" {
-		t.Errorf("expected docker_compose 'docker-compose.dev.yml', got '%s'", cfg.DockerCompose)
+	if got := cfg.DockerCompose.PrimaryFile(); got != "docker-compose.dev.yml" {
+		t.Errorf("expected docker_compose 'docker-compose.dev.yml', got '%s'", got)
 	}
 
 	if cfg.Shell != "/bin/bash" {

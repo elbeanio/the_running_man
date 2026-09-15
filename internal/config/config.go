@@ -42,8 +42,9 @@ type Config struct {
 	// Processes to run and manage
 	Processes []ProcessConfig `yaml:"processes,omitempty"`
 
-	// Path to docker-compose.yml file (optional)
-	DockerCompose string `yaml:"docker_compose,omitempty"`
+	// Docker Compose project to watch (optional). Accepts a plain path or a
+	// structured mapping; see DockerComposeConfig.
+	DockerCompose DockerComposeConfig `yaml:"docker_compose,omitempty"`
 
 	// API server port (default: 9000)
 	APIPort int `yaml:"api_port,omitempty"`
@@ -101,7 +102,7 @@ type ProcessConfig struct {
 // Validate checks the config for errors and returns validation errors.
 func (c *Config) Validate() error {
 	// Validate processes
-	if len(c.Processes) == 0 && c.DockerCompose == "" {
+	if len(c.Processes) == 0 && !c.DockerCompose.IsSet() {
 		return fmt.Errorf("config must specify at least one process or docker_compose file")
 	}
 
@@ -186,6 +187,11 @@ func (c *Config) Validate() error {
 	// Validate max_bytes
 	if c.MaxBytes < 0 {
 		return fmt.Errorf("max_bytes cannot be negative, got %d", c.MaxBytes)
+	}
+
+	// Validate docker_compose configuration
+	if err := c.DockerCompose.Validate(); err != nil {
+		return err
 	}
 
 	// Validate tracing configuration
@@ -351,8 +357,6 @@ func (c *Config) expandEnvVars() {
 		c.Shell = os.ExpandEnv(c.Shell)
 	}
 
-	// Expand in docker_compose path if specified
-	if c.DockerCompose != "" {
-		c.DockerCompose = os.ExpandEnv(c.DockerCompose)
-	}
+	// Expand in docker_compose paths and names
+	c.DockerCompose.ExpandEnv()
 }

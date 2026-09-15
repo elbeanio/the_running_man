@@ -63,6 +63,13 @@ Two readings that were considered and rejected:
   should get on with starting its own processes. It should never be blocked.
 - **Tests stay fast.** The core suite runs in a second or two. Anything slower is
   tagged and run only before review.
+- **Known-vulnerable dependencies are left visibly red, not suppressed.** The Security
+  workflow currently fails on `GO-2026-4887` and `GO-2026-4883` in
+  `github.com/docker/docker`, both reported `Fixed in: N/A` — no released version resolves
+  them. **Do not add an allowlist to make the check pass.** Decided 2026-09-15: a standing
+  red check is a reminder to go and look, whereas a suppression quietly outlives the
+  problem by months. Anything else that govulncheck reports *is* actionable, so fix it
+  rather than adding to this list. Revisit when the Docker SDK ships a fix.
 
 ## Non-goals
 

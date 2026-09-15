@@ -45,6 +45,22 @@ processes:
 # Docker Compose integration (optional)
 # Automatically streams logs from all services in your compose file
 # docker_compose: ./docker-compose.yml
+#
+# Or the structured form, for projects with profiles, multiple files or a
+# project name that is not the directory name:
+#
+# docker_compose:
+#   files:
+#     - docker-compose.yml
+#     - docker-compose.override.yml   # repeated -f, later files win
+#   profiles: [api, workers]          # only these services are expected
+#   project_name: myproject           # needed if you use `docker compose -p`
+#   env_file: .env
+#   start: ask                        # ask | never | always
+#
+# When nothing is running, Running Man offers to start the stack for you.
+# It does not manage it: whatever it starts is left running when you quit.
+# `ask` needs a terminal, so CI behaves as `never`.
 
 # API server configuration
 # The API provides endpoints for querying logs, errors, and health

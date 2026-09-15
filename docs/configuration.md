@@ -141,8 +141,66 @@ Path to Docker Compose file. Running Man will:
 **Example:**
 ```yaml
 docker_compose: ./docker-compose.yml
-docker_compose: ../docker/docker-compose.dev.yml
 ```
+
+#### Structured form
+
+For projects with profiles, several Compose files, or a project name that is not the
+directory name:
+
+```yaml
+docker_compose:
+  files:
+    - docker-compose.yml
+    - docker-compose.override.yml   # equivalent to repeated -f; later files win
+  profiles: [api, workers]
+  project_name: myproject
+  env_file: .env
+  start: ask                        # ask | never | always
+```
+
+| Key | Meaning |
+|---|---|
+| `files` | Compose files in order. Merged by service name, later files winning. |
+| `profiles` | Active Compose profiles. Services gated behind an inactive profile are not expected, and are reported as "not watched" rather than silently ignored. |
+| `project_name` | Overrides the project name. **Set this if you use `docker compose -p` or `COMPOSE_PROJECT_NAME`** — container discovery filters on the project label, so a mismatch finds nothing at all and Running Man will tell you to start a stack you already started. |
+| `env_file` | Passed to Compose as `--env-file`. |
+| `start` | What to do when nothing is running: `ask` (default), `never`, `always`. |
+
+The plain string form is still valid and equivalent to `files: [path]`.
+
+#### Offering to start the stack
+
+When no containers are running, Running Man offers to start them:
+
+```
+[running-man] No containers are running for Compose project "myproject".
+[running-man] Running Man can start it for you:
+
+    docker compose -f docker-compose.yml --profile api up -d
+
+[running-man] The stack is yours: it will be left running when running-man exits.
+[running-man] Start it now? [y/N]
+```
+
+**Running Man does not manage your stack.** It offers to start it and then monitors the
+logs. There is no teardown: whatever it starts is left running when you quit, exactly as
+if you had run `docker compose up -d` yourself. The exact command is always shown before
+anything happens.
+
+`ask` requires a terminal to answer, so in CI or when output is piped it behaves as
+`never` and reports that the stack is not running. Use `start: always` or
+`--compose-start=always` to start without asking.
+
+Only offered when **nothing** is running. If some expected services are up and others are
+not, the missing ones are listed and Running Man watches what exists — starting more
+services than you expected is worse than an honest warning.
+
+**Compose CLI:** prefers `docker compose` (v2), falling back to the standalone
+`docker-compose` binary.
+
+**Limitation:** `${VAR}` interpolation inside the Compose file is not performed. Only
+service names and their `profiles` are read, which are rarely interpolated.
 
 ### API Configuration
 
@@ -325,6 +383,9 @@ running-man run --max-spans 5000 --max-span-age 1h
 | `--max-spans` | Maximum spans to store | 10000 |
 | `--max-span-age` | Maximum span age | 30m |
 | `--no-tui` | Run in headless mode (no TUI) | false |
+| `--compose-profile NAME` | Active Compose profile (repeatable or comma-separated) | - |
+| `--compose-project NAME` | Compose project name | directory name |
+| `--compose-start MODE` | When the stack is down: `ask`, `never`, `always` | `ask` |
 | `--keep-alive MODE` | After a process fails in headless mode, keep serving its logs: `auto`, `always`, `never` | `auto` |
 | `--listen ADDR` | Address to bind the API to (`127.0.0.1` restricts to this machine) | `0.0.0.0` |
 | `--allow-remote-control` | Serve process restart/stop endpoints to remote callers | false |

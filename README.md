@@ -256,6 +256,12 @@ curl http://localhost:9000/traces?since=5m
 # Monitor your entire Docker Compose stack
 running-man run --docker-compose docker-compose.yml
 
+# Projects with profiles
+running-man run --docker-compose docker-compose.yml --compose-profile backend
+
+# If nothing is running, Running Man offers to start it -- and leaves it
+# running when you quit. It monitors the stack; it does not manage it.
+
 # All container logs in one TUI
 # Filter by service, search content, view errors
 ```

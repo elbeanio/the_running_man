@@ -122,6 +122,17 @@ so the developer and the agent are looking at the same run.
 - **Compose file** — the `docker-compose.yml` Running Man reads to discover what to watch.
 - **Compose service** — a service defined in the compose file. Used to *find* containers;
   it is not itself a **source**.
+- **Profile** — a Compose profile gating a service. A service with no profiles always runs;
+  one with profiles runs only when a listed profile is **active**. Running Man expects only
+  the services the active profiles would start, and reports the rest as "not watched".
+- **Project name** — the Compose project label containers are discovered by. Compose
+  defaults it to the compose file's directory name; `docker compose -p` and
+  `COMPOSE_PROJECT_NAME` override that, so `project_name` exists to match. A mismatch finds
+  no containers at all.
+- **Offering to start** — when no containers are running, Running Man offers to run
+  `docker compose up -d` with the configured options. It is an **offer**, not management:
+  the stack is the developer's, the exact command is shown first, and whatever is started
+  is **left running** when Running Man exits. There is deliberately no teardown.
 - **Container** — a running Docker container Running Man attaches to. A container is a
   **source**, named by its **container name** (not its compose service name). Running Man
   never starts or stops containers — contrast **managed process**.

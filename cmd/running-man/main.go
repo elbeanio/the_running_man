@@ -49,6 +49,22 @@ func (p *processFlags) Set(value string) error {
 	return nil
 }
 
+// stringListFlag collects a repeatable string flag, e.g. --compose-profile.
+type stringListFlag []string
+
+func (f *stringListFlag) String() string { return strings.Join(*f, ",") }
+
+func (f *stringListFlag) Set(value string) error {
+	// Accept both repetition and a comma-separated list, since both are natural
+	// and there is no reason to be fussy about it.
+	for _, part := range strings.Split(value, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			*f = append(*f, part)
+		}
+	}
+	return nil
+}
+
 // slugify converts a string to a URL-friendly slug
 func slugify(s string) string {
 	// Convert to lowercase
@@ -197,6 +213,13 @@ func runCommand(args []string) {
 		"Address to bind the API to (use 127.0.0.1 to restrict to this machine)")
 	allowRemoteControl := fs.Bool("allow-remote-control", false,
 		"Serve process restart/stop endpoints to remote callers (default: loopback only)")
+	composeProfiles := &stringListFlag{}
+	fs.Var(composeProfiles, "compose-profile",
+		"Active Docker Compose profile (repeatable; overrides config)")
+	composeProject := fs.String("compose-project", "",
+		"Docker Compose project name (overrides config and the directory-name default)")
+	composeStart := fs.String("compose-start", "",
+		"When the Compose stack is not running: ask|never|always (default: ask)")
 	keepAlive := fs.String("keep-alive", keepAliveAuto,
 		"After a process fails in headless mode, keep serving its logs: auto|always|never "+
 			"(auto = only when stdout is a terminal)")
@@ -220,11 +243,30 @@ func runCommand(args []string) {
 
 	// Merge config with CLI flags (CLI flags take precedence)
 
-	// Use config docker-compose if not provided via CLI
-	finalDockerCompose := *dockerCompose
-	if finalDockerCompose == "" && cfg != nil {
-		finalDockerCompose = cfg.DockerCompose
+	// Resolve the Compose configuration: config file first, then CLI overrides.
+	var finalCompose config.DockerComposeConfig
+	if cfg != nil {
+		finalCompose = cfg.DockerCompose
 	}
+	if *dockerCompose != "" {
+		// An explicit --docker-compose replaces the configured file list rather
+		// than adding to it, matching how the other overrides behave.
+		finalCompose.Files = []string{*dockerCompose}
+	}
+	if len(*composeProfiles) > 0 {
+		finalCompose.Profiles = *composeProfiles
+	}
+	if *composeProject != "" {
+		finalCompose.ProjectName = *composeProject
+	}
+	if *composeStart != "" {
+		finalCompose.Start = *composeStart
+	}
+	if err := finalCompose.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	finalDockerCompose := finalCompose.PrimaryFile()
 
 	// Use config API port if not provided via CLI
 	finalAPIPort := *apiPort
@@ -393,21 +435,35 @@ func runCommand(args []string) {
 	var dockerClient *docker.Client
 	ctx := context.Background()
 
-	if finalDockerCompose != "" {
-		// Parse compose file
-		compose, err := docker.ParseComposeFile(finalDockerCompose)
+	if finalCompose.IsSet() {
+		// Parse every configured Compose file, merging by service name.
+		compose, err := docker.ParseComposeFiles(finalCompose.Files)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[running-man] Failed to parse docker-compose.yml: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[running-man] Failed to parse compose file(s): %v\n", err)
 			os.Exit(1)
 		}
 
-		serviceNames := compose.GetServiceNames()
+		// Only expect services the active profiles would actually start.
+		serviceNames := compose.ServiceNamesForProfiles(finalCompose.Profiles)
 		if len(serviceNames) == 0 {
-			fmt.Fprintf(os.Stderr, "[running-man] No services found in docker-compose.yml\n")
+			fmt.Fprintf(os.Stderr,
+				"[running-man] No services to watch: every service in %s is gated behind a profile\n",
+				strings.Join(finalCompose.Files, ", "))
+			if len(finalCompose.Profiles) == 0 {
+				fmt.Fprintf(os.Stderr, "[running-man] Set docker_compose.profiles or --compose-profile to activate one\n")
+			}
 			os.Exit(1)
 		}
 
-		fmt.Printf("Docker Compose: %s (services: %s)\n", finalDockerCompose, strings.Join(serviceNames, ", "))
+		fmt.Printf("Docker Compose: %s\n", strings.Join(finalCompose.Files, ", "))
+		if len(finalCompose.Profiles) > 0 {
+			fmt.Printf("  profiles: %s\n", strings.Join(finalCompose.Profiles, ", "))
+		}
+		fmt.Printf("  services: %s\n", strings.Join(serviceNames, ", "))
+		// Say what is being left out, rather than silently ignoring it.
+		if gated := compose.ServicesGatedOut(finalCompose.Profiles); len(gated) > 0 {
+			fmt.Printf("  not watched (inactive profiles): %s\n", strings.Join(gated, ", "))
+		}
 
 		// Create Docker client
 		dockerClient, err = docker.NewClient()
@@ -424,22 +480,51 @@ func runCommand(args []string) {
 			os.Exit(1)
 		}
 
-		// Discover running containers
-		containers, err := dockerClient.DiscoverContainers(ctx, finalDockerCompose, serviceNames)
+		projectName := finalCompose.ProjectName
+		if projectName == "" {
+			projectName = docker.GetProjectNameFromPath(finalCompose.PrimaryFile())
+		}
+
+		discover := func() ([]docker.Container, error) {
+			return dockerClient.DiscoverContainersInProject(ctx, projectName, serviceNames)
+		}
+
+		containers, err := discover()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] Failed to discover containers: %v\n", err)
 			os.Exit(1)
 		}
 
 		if len(containers) == 0 {
-			fmt.Fprintf(os.Stderr, "[running-man] No running containers found for docker-compose project\n")
-			fmt.Fprintf(os.Stderr, "[running-man] Make sure to run 'docker-compose up' first\n")
-			os.Exit(1)
+			// Nothing is up. Offer to start it -- Running Man does not manage
+			// the stack, so this is an offer, and whatever it starts is left
+			// running when Running Man exits.
+			containers, err = offerToStartCompose(ctx, finalCompose, projectName, discover)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[running-man] %v\n", err)
+				os.Exit(1)
+			}
 		}
 
 		fmt.Printf("Found %d running container(s):\n", len(containers))
 		for _, container := range containers {
 			fmt.Printf("  - [%s] %s\n", container.Name, container.ID[:12])
+		}
+
+		// Report expected services that are not running, rather than quietly
+		// watching a partial stack.
+		running := make(map[string]bool, len(containers))
+		for _, c := range containers {
+			running[c.ServiceName] = true
+		}
+		var missing []string
+		for _, name := range serviceNames {
+			if !running[name] {
+				missing = append(missing, name)
+			}
+		}
+		if len(missing) > 0 {
+			fmt.Printf("  not running: %s\n", strings.Join(missing, ", "))
 		}
 
 		// Start log streamers for each container
@@ -561,6 +646,21 @@ func runCommand(args []string) {
 
 		// Wait for all processes to complete
 		err := manager.Wait()
+
+		// A Compose-only configuration has no managed processes, so Wait()
+		// returns immediately -- and streaming container logs is the entire job
+		// in that case, so exiting here would make `running-man run
+		// --docker-compose ...` useless.
+		//
+		// This was broken by the Wait() fix: beforehand, Wait() blocked on
+		// ctx.Done() forever, which accidentally kept Compose-only runs alive.
+		// Now it is deliberate.
+		if len(processes) == 0 && len(containerStreamers) > 0 {
+			fmt.Printf("\n[running-man] Streaming container logs. Press Ctrl+C to quit.\n")
+			fmt.Printf("[running-man] The Compose stack will be left running.\n")
+			waitForInterrupt()
+			fmt.Printf("\n[running-man] Exiting.\n")
+		}
 
 		// Stop all container streamers
 		for _, streamer := range containerStreamers {
@@ -691,6 +791,10 @@ Flags:
   --config PATH            Path to running-man.yml config file
   --process "command"      Process to run (can be specified multiple times, overrides config)
   --docker-compose PATH    Path to docker-compose.yml file (overrides config)
+  --compose-profile NAME   Active Compose profile (repeatable, or comma-separated)
+  --compose-project NAME   Compose project name (overrides the directory-name default)
+  --compose-start MODE     When the stack is not running: ask|never|always
+                           (default: ask; ask needs a terminal, so CI behaves as never)
   --api-port PORT          API server port (default: 9000, overrides config)
   --listen ADDR            Address to bind the API to (default: 0.0.0.0, all
                            interfaces). Use 127.0.0.1 to restrict to this machine.
