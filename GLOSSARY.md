@@ -79,7 +79,9 @@ so the developer and the agent are looking at the same run.
   type, **message**, **raw**, optional **stacktrace** and **trace ID**.
 - **Level** — `debug`, `info`, `warn` or `error`. **The single authority on whether an
   entry is an error**; `/errors` selects on it. A stack trace found at a lower level
-  promotes the entry to `error`.
+  promotes the entry to `error`. A line that arrived on **stderr** and matched nothing else
+  is recorded as `warn`, never `error` — stderr is weak evidence, since many tools write
+  progress there — so `warn` is worth checking when `/errors` looks thin.
   *(A legacy `IsError` flag on `LogEntry` duplicates this and is being retired.)*
 - **Message** — the human-readable content of an entry, after parsing. Distinct from
   **raw**, which is the unmodified line as captured; for a Python traceback the message is

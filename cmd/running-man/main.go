@@ -367,16 +367,25 @@ func runCommand(args []string) {
 		}
 	}
 
+	// isStderr is passed through rather than discarded: for a failure message
+	// that matches none of the level patterns, it is the only signal there is.
+	parse := func(source, sourceType, line string, timestamp time.Time, isStderr bool) []*parser.LogEntry {
+		if isStderr {
+			return multiParser.ParseStderrLine(source, sourceType, line, timestamp)
+		}
+		return multiParser.ParseLineWithType(source, sourceType, line, timestamp)
+	}
+
 	processLineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {
-		appendEntries(multiParser.ParseLineWithType(source, "process", line, timestamp))
+		appendEntries(parse(source, "process", line, timestamp, isStderr))
 	}
 
 	dockerLineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {
-		appendEntries(multiParser.ParseLineWithType(source, "docker", line, timestamp))
+		appendEntries(parse(source, "docker", line, timestamp, isStderr))
 	}
 
 	systemLineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {
-		appendEntries(multiParser.ParseLineWithType(source, "system", line, timestamp))
+		appendEntries(parse(source, "system", line, timestamp, isStderr))
 	}
 
 	// Docker Compose integration

@@ -72,6 +72,18 @@ Useful parameters on `/logs` and `/errors`: `since` (`30s`, `5m`, `1h`), `source
 (comma-separated, globs allowed), `level`, `contains`, `exclude`, `limit` (default 1000,
 `limit=0` for everything).
 
+**A process exiting non-zero is recorded by Running Man itself** — look for
+`Process "name" failed: exited with code N` in `/errors`. So `/errors` tells you something
+died even when the process's own output said nothing recognisable.
+
+**Check `warn` when `/errors` looks thin.** Anything written to stderr that matched no known
+error phrasing is recorded as `warn` rather than `info` — stderr is weak evidence on its
+own, since plenty of tools write progress there, but it is still worth a look:
+
+```bash
+curl -s 'http://localhost:9000/logs?level=warn,error&since=10m&limit=50'
+```
+
 Entries are snake_case: `timestamp`, `level`, `source`, `source_type`, `message`, `raw`,
 `is_error`, `stacktrace`, `trace_id`. Python tracebacks arrive as **one** entry with the
 whole trace in `stacktrace`, so you do not have to stitch lines together.

@@ -489,9 +489,13 @@ components:
         is_error:
           type: boolean
           description: |
-            Whether this entry represents an error condition. Set by the parsers from
-            the entry's content (level, or the presence of a stack trace) -- not from
-            whether it arrived on stderr.
+            Whether this entry represents an error condition. Set by the parsers from the
+            entry's content: an explicit level, an unambiguous failure phrase, or the
+            presence of a stack trace.
+
+            Arriving on stderr alone does NOT set this -- many tools write ordinary
+            progress to stderr, so such entries are recorded at level `warn` instead.
+            Check `level=warn` as well as `/errors` when hunting a failure.
         stacktrace:
           type: string
           description: Stack trace if this is an error with traceback (Python, etc.)

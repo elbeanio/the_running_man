@@ -738,3 +738,116 @@ func TestManager_RecurringProcessFailureIsVisible(t *testing.T) {
 		t.Errorf("status = %q, want \"failed\": a failing recurring process must not report as healthy", info.Status)
 	}
 }
+
+// A process that exits non-zero must leave a trace in the log buffer.
+//
+// Failures were previously only printed to running-man's own stdout, so
+// nothing reached the buffer: /logs had no record that a process had died, and
+// /errors could return zero while a process sat there failed. Verified during
+// phase 3 -- a process exited 1 having printed a clear message, and /errors
+// was empty.
+func TestManager_NonZeroExitIsReportedToTheBuffer(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+	handler := func(source, line string, ts time.Time, isStderr bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, line)
+	}
+
+	m := NewManager([]ProcessConfig{{Name: "doomed", Command: "exit 3"}}, handler)
+	if err := m.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer func() { _ = m.Stop() }()
+
+	if returned, _ := waitAsync(m, 5*time.Second); !returned {
+		t.Fatal("Wait() did not return")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	var found string
+	for _, l := range lines {
+		if strings.Contains(l, "doomed") && strings.Contains(l, "exited with code 3") {
+			found = l
+		}
+	}
+	if found == "" {
+		t.Fatalf("no exit report reached the handler; got %v", lines)
+	}
+	// Must contain a word the plain-text parser recognises as an error, or the
+	// entry lands as info and /errors stays empty -- the whole point of this.
+	if !strings.Contains(found, "failed") {
+		t.Errorf("exit report %q contains no word the parser treats as an error", found)
+	}
+}
+
+// A clean exit must not manufacture an error entry.
+func TestManager_ZeroExitIsNotReportedAsFailure(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+	handler := func(source, line string, ts time.Time, isStderr bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, line)
+	}
+
+	m := NewManager([]ProcessConfig{{Name: "fine", Command: "echo ok"}}, handler)
+	if err := m.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer func() { _ = m.Stop() }()
+
+	if returned, _ := waitAsync(m, 5*time.Second); !returned {
+		t.Fatal("Wait() did not return")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, l := range lines {
+		if strings.Contains(l, "failed") {
+			t.Errorf("a clean exit produced a failure line: %q", l)
+		}
+	}
+}
+
+// A recurring process failing every run would otherwise be invisible: each run
+// exits and is replaced by the next.
+func TestManager_RecurringFailureIsReportedToTheBuffer(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+	handler := func(source, line string, ts time.Time, isStderr bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, line)
+	}
+
+	m := NewManager([]ProcessConfig{
+		{Name: "brokenticker", Command: "exit 5", Interval: "1h"},
+	}, handler)
+	if err := m.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer func() { _ = m.Stop() }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		var found bool
+		for _, l := range lines {
+			if strings.Contains(l, "brokenticker") && strings.Contains(l, "exited with code 5") {
+				found = true
+			}
+		}
+		mu.Unlock()
+		if found {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	t.Errorf("recurring failure never reached the handler; got %v", lines)
+}
