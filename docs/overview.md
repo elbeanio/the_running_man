@@ -24,8 +24,8 @@ Running Man solves this by capturing everything automatically and exposing it vi
 - **OpenTelemetry Tracing** - Built-in OTLP receiver with automatic environment injection
 - **REST API** - Agent integration via a self-describing HTTP API
 - **Smart parsing** - Detects Python tracebacks, JSON logs, plain text
-- **Ring buffer** - 30-minute retention survives app crashes
-- **Trace storage** - In-memory span storage with configurable retention
+- **Ring buffer** - a 30-minute retention limit; the buffer survives app crashes
+- **Trace storage** - in-memory span storage with configurable retention limits
 - **Trace-log correlation** - Automatic correlation via `trace_id`
 - **Configurable shell** - Use bash, zsh, or any shell you prefer
 

@@ -339,58 +339,56 @@ running-man run --docker-compose ./docker-compose.yml
 running-man run --config my-config.yml
 ```
 
-### Override Configuration
+### Overriding config from the command line
+
+Only some settings have flags. Everything else is configuration-file only — there are no
+`--retention`, `--shell`, `--max-entries`, `--max-bytes`, `--max-spans` or `--max-span-age`
+flags, despite earlier versions of this page claiming otherwise.
+
 ```bash
-# Override API port
+# Override the API port
 running-man run --api-port 8080
 
-# Override retention
-running-man run --retention 1h
+# Restrict the API to this machine
+running-man run --listen 127.0.0.1
 
-# Disable TUI (headless mode)
+# Headless mode, for CI
 running-man run --no-tui
 
-# Override shell
-running-man run --shell /bin/bash
-```
-
-### Tracing Flags
-```bash
-# Disable tracing
-running-man run --tracing false
-
-# Change tracing port
+# Tracing
+running-man run --tracing=false
 running-man run --tracing-port 4321
-
-# Configure span limits
-running-man run --max-spans 5000 --max-span-age 1h
 ```
 
-### Complete Flag Reference
+### Complete flag reference
+
+Every flag `running-man run` accepts:
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--process` | Process to run (can be specified multiple times) | - |
-| `--docker-compose` | Path to Docker Compose file | - |
-| `--config` | Path to configuration file | auto-discover |
-| `--api-port` | API server port | 9000 |
-| `--retention` | Log retention duration | 30m |
-| `--max-entries` | Maximum log entries | 10000 |
-| `--max-bytes` | Maximum log bytes | 50MB |
-| `--shell` | Shell for process execution | /bin/sh |
-| `--tracing` | Enable/disable OpenTelemetry tracing | true |
-| `--tracing-port` | OTLP receiver port | 4318 |
-| `--max-spans` | Maximum spans to store | 10000 |
-| `--max-span-age` | Maximum span age | 30m |
-| `--no-tui` | Run in headless mode (no TUI) | false |
+| `--config PATH` | Path to configuration file | auto-discover |
+| `--process "CMD"` | Process to run (repeatable) | - |
+| `--docker-compose PATH` | Compose file (replaces the configured list) | - |
 | `--compose-profile NAME` | Active Compose profile (repeatable or comma-separated) | - |
 | `--compose-project NAME` | Compose project name | directory name |
 | `--compose-start MODE` | When the stack is down: `ask`, `never`, `always` | `ask` |
-| `--keep-alive MODE` | After a process fails in headless mode, keep serving its logs: `auto`, `always`, `never` | `auto` |
-| `--listen ADDR` | Address to bind the API to (`127.0.0.1` restricts to this machine) | `0.0.0.0` |
-| `--allow-remote-control` | Serve process restart/stop endpoints to remote callers | false |
-| `--help` | Show help | - |
-| `--version` | Show version | - |
+| `--api-port PORT` | API server port | 9000 |
+| `--listen ADDR` | Address to bind the API to | `0.0.0.0` |
+| `--allow-remote-control` | Serve process restart/stop to remote callers | false |
+| `--no-tui` | Run headless (no TUI) | false |
+| `--keep-alive MODE` | After a failure in headless mode: `auto`, `always`, `never` | `auto` |
+| `--tracing` | Enable OpenTelemetry tracing | true |
+| `--tracing-port PORT` | OTLP receiver port | 4318 |
+
+Settings with **no flag** — use `running-man.yml`: `retention`, `max_entries`,
+`max_bytes`, `shell`, and everything under `tracing:` except port and enablement.
+
+`version` and `help` are subcommands, not flags:
+
+```bash
+running-man version
+running-man help
+```
 
 ### Keeping logs after a crash
 
@@ -552,17 +550,21 @@ api_port: 80  # Requires root privileges
 docker_compose: ./nonexistent.yml
 ```
 
-### Debugging Configuration
-```bash
-# Dry run to validate config
-running-man run --dry-run
+### Checking your configuration
 
-# Show effective configuration
-running-man run --verbose
+There is no dry-run, no `validate` subcommand and no verbosity flag — earlier versions of
+this page described all three. Configuration is validated when Running Man starts, before
+any process is launched, and errors name the offending key:
 
-# Check config file syntax
-running-man validate --config my-config.yml
 ```
+Error loading config: invalid config in ./running-man.yml: process 'bad' has a
+non-positive interval '-1m': recurring processes need a positive interval such
+as "30s" or "1m"
+```
+
+To see what Running Man resolved, start it and read the banner and the startup lines: they
+report the API address and posture, the Compose files and profiles, the services being
+watched, and which are not.
 
 ## 📁 Multiple Configuration Files
 

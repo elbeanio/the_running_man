@@ -258,25 +258,6 @@ curl "http://localhost:9000/traces/abc123def456"
 
 ---
 
-### GET /traces/slow
-
-Find traces exceeding duration thresholds.
-
-**Query Parameters:**
-- `since` - Time window
-- `threshold` - Duration threshold (e.g., `1s`, `100ms`, `500ms`)
-- `limit` - Maximum traces to return (default: 20, max: 100)
-
-**Example:**
-```bash
-curl "http://localhost:9000/traces/slow?since=5m&threshold=1s"
-curl "http://localhost:9000/traces/slow?threshold=500ms&limit=10"
-```
-
-**Response:** Same format as `/traces`
-
----
-
 ## Error Responses
 
 All endpoints return standard HTTP error codes:

@@ -238,7 +238,7 @@ for a per-project process runner. See `PROJECT.md`.
 ### Agent Integration Patterns
 
 **Common Workflows:**
-1. **Error investigation:** `get_recent_errors` → `search_logs` for context
+1. **Error investigation:** `GET /errors?since=10m` → `GET /logs?source=NAME&since=5m` for context
 2. **Startup debugging:** `get_startup_logs` for failed process initialization
 3. **Process monitoring:** `get_process_status` → `get_process_detail` for specifics
 4. **System health:** `get_health_status` for buffer stats and uptime

@@ -8,7 +8,7 @@ Running Man provides a complete OpenTelemetry solution for local development:
 
 - **OTLP HTTP receiver** on port 4318 (configurable)
 - **Automatic environment variable injection** for managed processes
-- **In-memory span storage** with configurable retention
+- **In-memory span storage** with configurable retention limits
 - **Trace-log correlation** via `trace_id`
 - **Trace endpoints** for exploration by AI agents
 - **REST API** for programmatic access to traces

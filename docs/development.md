@@ -39,8 +39,9 @@ GOOS=linux GOARCH=amd64 go build -o running-man-linux ./cmd/running-man
 # Build for macOS (Apple Silicon)
 GOOS=darwin GOARCH=arm64 go build -o running-man-macos-arm64 ./cmd/running-man
 
-# Build for Windows
-GOOS=windows GOARCH=amd64 go build -o running-man.exe ./cmd/running-man
+# Windows is not supported. internal/process is //go:build !windows with no
+# Windows variant, because process supervision uses Setsid, syscall.Kill and
+# ps/lsof. A Windows port would need a separate implementation of that package.
 ```
 
 ## 🧪 Testing

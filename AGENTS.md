@@ -1,6 +1,7 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
+Read [`PROJECT.md`](PROJECT.md) first: what this project is for, its constraints and its
+non-goals. Then [`GLOSSARY.md`](GLOSSARY.md) for the locked vocabulary.
 
 ## Before starting any long-running process
 
@@ -43,14 +44,25 @@ Note in particular that **instance** (not "session") means one Running Man run, 
 ### Style
 - Format code properly (with go fmt or whatever) before committing
 
-## Quick Reference
+## Issue tracking
+
+**There is none, deliberately.** This project used beads (`bd`); it was removed in
+`5405295` and is not coming back. Do not reintroduce it, and do not create markdown TODO
+lists as a substitute.
+
+Work is planned in `plans/<date>-<slug>.md`, one file per phase or change, with progress
+appended as it lands. `plans/ideas.md` holds one-line notes for anything that is not the
+current work. `plans/` is **untracked** — the GitHub repo is public and the planning notes
+are not for publication. It is excluded via `.git/info/exclude`, not `.gitignore`.
+
+## Quick reference
 
 ```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd sync               # Sync with git
+make test          # unit tests (seconds; anything slower is a bug)
+make test-race     # race detector
+make lint          # golangci-lint
+make link-skill    # symlink the agent skill into ~/.claude/skills
+go generate ./internal/api   # re-sync the embedded OpenAPI spec after editing docs/openapi.yaml
 ```
 
 ## Branch Protection Workflow
@@ -59,20 +71,10 @@ bd sync               # Sync with git
 
 **MANDATORY WORKFLOW FOR ALL CHANGES:**
 
-1. **Check beads for related work:**
-   ```bash
-   bd ready              # Find available work
-   bd show <id>          # View issue details
-   bd update <id> --status in_progress  # Claim work
-   ```
+1. **Check `plans/` for related work** — the phase plans and `plans/ideas.md`.
 
-2. **Create feature branch (use bead ID when possible):**
+2. **Create a feature branch:**
    ```bash
-   # When working on a beads issue (preferred):
-   git checkout -b beads/<bead-id>-short-description
-   # Example: git checkout -b beads/the_running_man-yut-otel-tracing
-   
-   # When no beads issue:
    git checkout -b feature/descriptive-name
    # or
    git checkout -b fix/issue-description
@@ -91,9 +93,9 @@ bd sync               # Sync with git
    git push -u origin branch-name
    ```
 
-5. **Create pull request (reference beads issue in PR body):**
+5. **Create a pull request:**
    ```bash
-   gh pr create --title "PR Title" --body "Description of changes\n\nRelated to beads: <bead-id>"
+   gh pr create --title "PR Title" --body "What changed and why"
    ```
 
 6. **Wait for PR review/approval** before merging
@@ -104,14 +106,14 @@ bd sync               # Sync with git
 
 **MANDATORY WORKFLOW:**
 
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
+1. **Record remaining work** - add anything needing follow-up to `plans/ideas.md`
 2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
+3. **Update the plan** - append what landed, and any departures from what was planned, to the phase plan's Progress section
 4. **CREATE/UPDATE PR** - This is MANDATORY:
    ```bash
    # If new branch:
    git push -u origin branch-name
-   gh pr create --title "Title" --body "Description\n\nRelated to beads: <bead-id>"
+   gh pr create --title "Title" --body "What changed and why"
    
    # If existing branch:
    git push
@@ -129,117 +131,3 @@ bd sync               # Sync with git
 - **NEVER merge a PR without explicit permission from the user**
 - Work is NOT complete until changes are in a PR
 - If PR creation fails, resolve and retry until it succeeds
-
-
-<!-- BEGIN BEADS INTEGRATION v:1 profile:full hash:d4f96305 -->
-## Issue Tracking with bd (beads)
-
-**IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
-
-### Why bd?
-
-- Dependency-aware: Track blockers and relationships between issues
-- Git-friendly: Dolt-powered version control with native sync
-- Agent-optimized: JSON output, ready work detection, discovered-from links
-- Prevents duplicate tracking systems and confusion
-
-### Quick Start
-
-**Check for ready work:**
-
-```bash
-bd ready --json
-```
-
-**Create new issues:**
-
-```bash
-bd create "Issue title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
-bd create "Issue title" --description="What this issue is about" -p 1 --deps discovered-from:bd-123 --json
-```
-
-**Claim and update:**
-
-```bash
-bd update <id> --claim --json
-bd update bd-42 --priority 1 --json
-```
-
-**Complete work:**
-
-```bash
-bd close bd-42 --reason "Completed" --json
-```
-
-### Issue Types
-
-- `bug` - Something broken
-- `feature` - New functionality
-- `task` - Work item (tests, docs, refactoring)
-- `epic` - Large feature with subtasks
-- `chore` - Maintenance (dependencies, tooling)
-
-### Priorities
-
-- `0` - Critical (security, data loss, broken builds)
-- `1` - High (major features, important bugs)
-- `2` - Medium (default, nice-to-have)
-- `3` - Low (polish, optimization)
-- `4` - Backlog (future ideas)
-
-### Workflow for AI Agents
-
-1. **Check ready work**: `bd ready` shows unblocked issues
-2. **Claim your task atomically**: `bd update <id> --claim`
-3. **Work on it**: Implement, test, document
-4. **Discover new work?** Create linked issue:
-   - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
-5. **Complete**: `bd close <id> --reason "Done"`
-
-### Auto-Sync
-
-bd automatically syncs via Dolt:
-
-- Each write auto-commits to Dolt history
-- Use `bd dolt push`/`bd dolt pull` for remote sync
-- No manual export/import needed!
-
-### Important Rules
-
-- ✅ Use bd for ALL task tracking
-- ✅ Always use `--json` flag for programmatic use
-- ✅ Link discovered work with `discovered-from` dependencies
-- ✅ Check `bd ready` before asking "what should I work on?"
-- ❌ Do NOT create markdown TODO lists
-- ❌ Do NOT use external issue trackers
-- ❌ Do NOT duplicate tracking systems
-
-For more details, see README.md and docs/QUICKSTART.md.
-
-## Landing the Plane (Session Completion)
-
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   bd dolt push
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-
-<!-- END BEADS INTEGRATION -->

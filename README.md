@@ -349,7 +349,7 @@ The Running Man uses GitHub Actions for continuous integration and security scan
 - ✅ All tests must pass
 - ✅ No security vulnerabilities
 - ✅ Code passes linting checks
-- ✅ Builds successfully on Linux, macOS, and Windows
+- ✅ Builds on Linux and macOS (Windows is not supported: the process layer is Unix-only)
 
 ### Development
 

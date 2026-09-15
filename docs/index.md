@@ -109,7 +109,7 @@ See [agent-integration.md](agent-integration.md) for complete details.
 - **OTLP HTTP receiver** on port 4318
 - **Automatic environment injection** for managed processes
 - **Trace-log correlation** via `trace_id`
-- **In-memory span storage** with configurable retention
+- **In-memory span storage** with configurable retention limits
 
 ### Setup Guides
 - [Python applications](tracing.md#python-setup-examples)
@@ -163,7 +163,7 @@ See [api-reference.md](api-reference.md) for complete documentation.
 ### Data Flow
 1. Processes/Docker containers output logs
 2. Running Man captures and parses logs
-3. Logs stored in ring buffer (30min/50MB retention)
+3. Logs stored in the ring buffer (30min / 50MB retention limits)
 4. API serves queries, TUI shows real-time view
 5. AI agents query the REST API
 
