@@ -30,7 +30,7 @@ func TestConfig_Validate_ValidConfig(t *testing.T) {
 
 func TestConfig_Validate_WithDockerCompose(t *testing.T) {
 	cfg := &Config{
-		DockerCompose: "docker-compose.yml",
+		DockerCompose: DockerComposeConfig{Files: []string{"docker-compose.yml"}},
 		APIPort:       9000,
 	}
 
@@ -332,8 +332,8 @@ shell: /bin/bash
 		t.Errorf("Expected 2 args, got %d", len(cfg.Processes[1].Args))
 	}
 
-	if cfg.DockerCompose != "docker-compose.yml" {
-		t.Errorf("Expected docker_compose 'docker-compose.yml', got '%s'", cfg.DockerCompose)
+	if got := cfg.DockerCompose.PrimaryFile(); got != "docker-compose.yml" {
+		t.Errorf("Expected docker_compose 'docker-compose.yml', got '%s'", got)
 	}
 
 	if cfg.APIPort != 8080 {
