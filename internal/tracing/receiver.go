@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -65,14 +66,27 @@ func (r *Receiver) Start() error {
 		Handler: withCORS(mux),
 	}
 
+	// Bind synchronously so a port conflict is returned to the caller.
+	//
+	// This previously called ListenAndServe inside the goroutine, printed any
+	// error, and returned nil -- so binding failures were invisible. With
+	// something else already on the port (Arize Phoenix also defaults to 4318
+	// for OTLP/HTTP) Running Man reported the receiver ready and carried on
+	// with tracing silently dead: the application's spans went to the other
+	// process, /traces stayed permanently empty, and nothing said why.
+	ln, err := net.Listen("tcp", r.server.Addr)
+	if err != nil {
+		return fmt.Errorf("cannot listen on %s: %w", r.server.Addr, err)
+	}
+
 	go func() {
-		if err := r.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			fmt.Printf("[tracing] Failed to start OTLP receiver: %v\n", err)
+		if err := r.server.Serve(ln); err != nil && err != http.ErrServerClosed {
+			fmt.Printf("[tracing] OTLP receiver stopped: %v\n", err)
 		}
 	}()
 
 	r.started = true
-	fmt.Printf("[tracing] OTLP receiver starting on http://localhost:%d\n", r.port)
+	fmt.Printf("[tracing] OTLP receiver listening on http://localhost:%d\n", r.port)
 	return nil
 }
 
@@ -414,26 +428,51 @@ func (r *Receiver) handleHealth(w http.ResponseWriter, req *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status": "ok", "service": "otlp-receiver"}`)
+	fmt.Fprintf(w, `{"status": "ok", "service": %q}`, healthServiceName)
 }
 
-// WaitForReady waits for the receiver to be ready by polling the health endpoint
+// healthServiceName identifies this receiver in its own /health response, so
+// readiness checks can tell it apart from another process on the same port.
+const healthServiceName = "otlp-receiver"
+
+// WaitForReady waits for the receiver to answer its own health endpoint.
+//
+// Requires the response to identify itself, not merely to return 200. A bare
+// status check could be satisfied by any server on the port -- which is the
+// case worth detecting, since the usual reason the port is occupied is that
+// another OTLP collector is already there.
 func (r *Receiver) WaitForReady(timeout time.Duration) error {
 	start := time.Now()
 	url := fmt.Sprintf("http://localhost:%d/health", r.port)
 
+	var lastErr error
 	for time.Since(start) < timeout {
 		resp, err := http.Get(url)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK && readErr == nil &&
+			strings.Contains(string(body), healthServiceName) {
 			return nil
 		}
-		if resp != nil {
-			resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK {
+			lastErr = fmt.Errorf("something else is serving %s: it answered /health but is not a running-man OTLP receiver", url)
+		} else {
+			lastErr = fmt.Errorf("%s returned HTTP %d", url, resp.StatusCode)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
+	if lastErr != nil {
+		return fmt.Errorf("receiver not ready after %v: %w", timeout, lastErr)
+	}
 	return fmt.Errorf("receiver not ready after %v", timeout)
 }
 

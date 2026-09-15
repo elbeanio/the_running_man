@@ -199,6 +199,48 @@ processes:
 
 ## OpenTelemetry Issues
 
+### Port 4318 is already in use
+
+**Symptom:** Running Man exits at startup with:
+
+```
+[running-man] Could not start the OTLP receiver: cannot listen on :4318:
+              bind: address already in use
+```
+
+**Cause:** something else holds the OTLP/HTTP port. 4318 is the OTLP standard, so every
+other collector defaults to it too — **Arize Phoenix**, the OpenTelemetry Collector,
+Jaeger, Grafana Alloy, SigNoz. If you are running one of those, it has the port.
+
+**Solutions:**
+
+```bash
+# Find out what has it
+lsof -i :4318 -sTCP:LISTEN
+
+# Move Running Man's receiver
+running-man run --tracing-port 4319
+
+# Or run without tracing
+running-man run --tracing=false
+```
+
+Or in `running-man.yml`:
+
+```yaml
+tracing:
+  port: 4319
+```
+
+Moving the receiver means instrumented processes export to the new port: Running Man
+injects `OTEL_EXPORTER_OTLP_ENDPOINT` into the processes it starts, so anything it
+launches follows automatically. Anything started outside Running Man needs the new
+endpoint configured itself.
+
+> Running Man used to report the receiver as ready in this situation and carry on with
+> tracing silently dead — spans went to the other collector and `/traces` stayed empty
+> with no explanation. It now fails at startup instead.
+
 ### Tracing Not Enabled
 
 **Problem:** No tracing output or "Tracing: OTLP receiver" message.

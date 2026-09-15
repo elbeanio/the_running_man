@@ -6,7 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"net"
+	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -554,4 +558,92 @@ func TestReadRequestBody_AcceptsBodyAtLimit(t *testing.T) {
 	if len(data) != len(payload) {
 		t.Errorf("got %d bytes, want %d", len(data), len(payload))
 	}
+}
+
+// Receiver.Start used to call ListenAndServe inside a goroutine, print any
+// error and return nil, so a port conflict was invisible to the caller.
+// Running Man then reported the receiver ready and carried on with tracing
+// silently dead: the application's spans went to whatever else held the port,
+// /traces stayed permanently empty, and nothing explained why.
+//
+// Arize Phoenix, the OpenTelemetry Collector and Jaeger all default to 4318
+// for OTLP/HTTP, so this is the common case rather than an edge one.
+func TestReceiver_StartFailsWhenPortIsTaken(t *testing.T) {
+	// Bind the wildcard address, not 127.0.0.1: the receiver listens on all
+	// interfaces, and with SO_REUSEADDR (which Go sets by default) macOS
+	// permits 0.0.0.0:P alongside a 127.0.0.1:P listener, so a loopback-only
+	// blocker would not actually conflict.
+	blocker, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Skipf("cannot listen: %v", err)
+	}
+	defer blocker.Close()
+
+	port := blocker.Addr().(*net.TCPAddr).Port
+
+	r := NewReceiver(NewSpanStorage(10, time.Minute), nil, port)
+	err = r.Start()
+
+	if err == nil {
+		_ = r.Stop(context.Background())
+		t.Fatal("Start() returned nil with the port already in use; the conflict must be reported")
+	}
+	if !strings.Contains(err.Error(), "cannot listen") {
+		t.Errorf("error should say it could not listen, got: %v", err)
+	}
+	// The port number matters: it is what the operator has to act on.
+	if !strings.Contains(err.Error(), fmt.Sprint(port)) {
+		t.Errorf("error should name the port %d, got: %v", port, err)
+	}
+}
+
+func TestReceiver_StartSucceedsOnAFreePort(t *testing.T) {
+	r := NewReceiver(NewSpanStorage(10, time.Minute), nil, freePort(t))
+	if err := r.Start(); err != nil {
+		t.Fatalf("Start() on a free port: %v", err)
+	}
+	defer func() { _ = r.Stop(context.Background()) }()
+
+	if err := r.WaitForReady(5 * time.Second); err != nil {
+		t.Errorf("WaitForReady: %v", err)
+	}
+}
+
+// WaitForReady used to accept any HTTP 200 on /health, so it could be
+// satisfied by an unrelated server on the port -- exactly the situation worth
+// detecting, since the usual reason the port is busy is another OTLP
+// collector.
+func TestReceiver_WaitForReadyRejectsAForeignServer(t *testing.T) {
+	impostor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok","service":"something-else"}`))
+	}))
+	defer impostor.Close()
+
+	port, err := strconv.Atoi(strings.Split(impostor.URL, ":")[2])
+	if err != nil {
+		t.Fatalf("parsing test server port: %v", err)
+	}
+
+	// A receiver that was never started, pointed at the impostor's port.
+	r := NewReceiver(NewSpanStorage(10, time.Minute), nil, port)
+
+	err = r.WaitForReady(600 * time.Millisecond)
+	if err == nil {
+		t.Fatal("WaitForReady accepted a foreign server answering /health with 200")
+	}
+	if !strings.Contains(err.Error(), "not a running-man OTLP receiver") {
+		t.Errorf("error should identify the cause, got: %v", err)
+	}
+}
+
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("cannot listen: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	return port
 }

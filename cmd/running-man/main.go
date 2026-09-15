@@ -570,7 +570,12 @@ func runCommand(args []string) {
 	// Start tracing receiver and wait for it to be ready if enabled
 	if tracingReceiver != nil {
 		if err := tracingReceiver.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "[running-man] Tracing receiver error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "\n[running-man] Could not start the OTLP receiver: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[running-man] Something else is probably already on port %d. "+
+				"Other OTLP collectors default to it too -- Arize Phoenix, the OTel Collector, Jaeger.\n",
+				finalTracingPort)
+			fmt.Fprintf(os.Stderr, "[running-man]   running-man run --tracing-port PORT   use a different port\n")
+			fmt.Fprintf(os.Stderr, "[running-man]   running-man run --tracing=false        run without tracing\n")
 			os.Exit(1)
 		}
 

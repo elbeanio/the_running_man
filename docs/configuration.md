@@ -278,7 +278,10 @@ OpenTelemetry tracing configuration.
 
 **Sub-fields:**
 - `enabled` (boolean): Enable/disable tracing (default: `true`)
-- `port` (integer): OTLP HTTP receiver port (default: `4318`)
+- `port` (integer): OTLP HTTP receiver port (default: `4318`). Other collectors default to
+  4318 as well — Arize Phoenix, the OpenTelemetry Collector, Jaeger — so change this if one
+  of them is already running. A conflict fails at startup rather than silently disabling
+  tracing.
 - `max_spans` (integer): Maximum spans to store (default: `10000`)
 - `max_span_age` (duration): How long to keep spans (default: `30m`). Must be **positive**.
 
