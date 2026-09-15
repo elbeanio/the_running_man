@@ -1,218 +1,78 @@
-# The Running Man Documentation
+# The Running Man
 
-Welcome to The Running Man documentation! This guide will help you navigate the available resources.
+**Run your project's processes, capture everything they emit, and make it equally available
+to you and to your coding agent.**
 
-## 📚 Documentation Structure
+When a coding agent starts its own dev server and reads its own output, it works fine — and
+you are blind. You cannot see the stack trace it is about to spend five minutes on, so you
+cannot tell it that you recognise the problem.
 
-### Getting Started
-- **[README.md](https://github.com/elbeanio/the_running_man/blob/main/README.md)** - Project overview and quick start
-- **[getting-started.md](getting-started.md)** - Comprehensive guide for new users
-- **[overview.md](overview.md)** - What is The Running Man and why it exists
+Running Man keeps one copy of your stack running, captures everything it emits, and serves
+that to both of you over the same API.
 
-### Usage Guides
-- **[configuration.md](configuration.md)** - Complete configuration reference
-- **[tracing.md](tracing.md)** - OpenTelemetry setup and usage
-- **[agent-integration.md](agent-integration.md)** - AI agent integration via the REST API
+## Start here
 
-### Reference
-- **[api-reference.md](api-reference.md)** - REST API documentation
-- **[architecture.md](architecture.md)** - System design and components
+| | |
+|---|---|
+| **[Overview](overview.md)** | What it is, what problem it solves, what it deliberately is not |
+| **[Getting started](getting-started.md)** | Install, first run, first queries |
+| **[Configuration](configuration.md)** | Every `running-man.yml` key and every CLI flag |
 
-### Development
-- **[development.md](development.md)** - Building and contributing
-- **[implementation-history.md](implementation-history.md)** - Historical development phases
+## Reference
 
-### Troubleshooting
-- **[troubleshooting.md](troubleshooting.md)** - Common issues and solutions
+| | |
+|---|---|
+| **[API reference](api-reference.md)** | Endpoints, query parameters, response shapes, and **[network exposure](api-reference.md#network-exposure)** |
+| **[Agent integration](agent-integration.md)** | The instance marker and the skill |
+| **[Tracing](tracing.md)** | OpenTelemetry setup and trace/log correlation |
+| **[Architecture](architecture.md)** | Components and how data flows between them |
 
-## 🚀 Quick Start Path
+## When things go wrong
 
-If you're new to The Running Man, follow this path:
+| | |
+|---|---|
+| **[Troubleshooting](troubleshooting.md)** | Symptoms, causes, fixes |
+| **[Development](development.md)** | Building, testing, contributing |
 
-1. **Start with the [README.md](https://github.com/elbeanio/the_running_man/blob/main/README.md)** for a quick overview
-2. **Follow the [getting-started.md](getting-started.md)** for installation and basic usage
-3. **Configure your project** using [configuration.md](configuration.md)
-4. **Explore advanced features:**
-   - [OpenTelemetry Tracing](tracing.md) for distributed tracing
-   - [AI Agent Integration](agent-integration.md) for the agent-facing API
-5. **Refer to the [API Reference](api-reference.md)** for programmatic access
+## In 60 seconds
 
-## 🎯 Key Documentation by Use Case
-
-### For New Users
-- [getting-started.md](getting-started.md) - Complete beginner's guide
-- [overview.md](overview.md) - Understanding the project vision
-- [configuration.md](configuration.md) - Setting up your first project
-
-### For Developers Adding Tracing
-- [tracing.md](tracing.md) - OpenTelemetry setup guide
-- Python, Flask, Django examples
-- Configuration options for tracing
-
-### For AI Agent Integration
-- [agent-integration.md](agent-integration.md) - agent setup guide
-- Installing the agent skill
-- Endpoints and usage examples
-
-### For API Integration
-- [api-reference.md](api-reference.md) - Complete API documentation
-- REST endpoints for logs, traces, and system info
-- Query parameters and response formats
-
-### For Contributors
-- [development.md](development.md) - Building from source
-- [architecture.md](architecture.md) - Understanding the codebase
-- [implementation-history.md](implementation-history.md) - Project evolution
-
-## 🔧 Configuration Files
-
-### Primary Configuration
-- **[running-man.yml](https://github.com/elbeanio/the_running_man/blob/main/running-man.yml)** - Example configuration file
-- **Environment variables** - Supported in all configuration fields
-- **CLI flags** - Override configuration file values
-
-### Example Configurations
-See the [configuration.md](configuration.md) guide for:
-- Basic multi-process setup
-- Docker Compose integration
-- OpenTelemetry tracing configuration
-- Environment variable usage
-
-## 🤖 AI Agent Integration
-
-Agents use the REST API, which is self-describing: `GET /` lists every endpoint and
-`/docs` serves interactive OpenAPI documentation.
-
-### Logs
-- `GET /logs` - search with `since`, `level`, `source`, `contains`, `exclude`, `limit`
-- `GET /errors` - recent errors
-
-### Processes
-- `GET /processes` - status of all managed processes
-- `GET /processes/{name}` - detail for one process
-- `POST /processes/{name}/restart` - restart a managed process
-- `POST /processes/stop-all` - stop all processes
-
-### System
-- `GET /health` - system health and buffer stats
-
-### Traces
-- `GET /traces` - list with `service`, `span_name`, `status`, `trace_id` filters
-- `GET /traces/{id}` - one trace, including all spans
-- `GET /traces/{id}/logs` - logs correlated to a trace
-
-See [agent-integration.md](agent-integration.md) for complete details.
-
-## 📊 OpenTelemetry Tracing
-
-### Key Features
-- **OTLP HTTP receiver** on port 4318
-- **Automatic environment injection** for managed processes
-- **Trace-log correlation** via `trace_id`
-- **In-memory span storage** with configurable retention
-
-### Setup Guides
-- [Python applications](tracing.md#python-setup-examples)
-- [Flask web applications](tracing.md#flask-web-application)
-- [Django applications](tracing.md#django-application)
-
-### Querying Traces
-- **Trace endpoints**: `/traces`, `/traces/{id}`, `/traces/{id}/logs`
-- **Filters**: by service, status, duration, trace ID
-
-## 🐳 Docker Integration
-
-### Features
-- Automatic discovery of Docker Compose services
-- Real-time log streaming from all containers
-- Service filtering in TUI and API
-- Handles container restarts automatically
-
-### Usage
 ```bash
-running-man run --docker-compose ./docker-compose.yml
+go install github.com/elbeanio/the_running_man/cmd/running-man@latest
+
+# One process — the TUI launches automatically
+running-man run --process "python server.py"
+
+# Several — Tab between them
+running-man run --process "python server.py" --process "npm run dev"
 ```
 
-## 🔍 API Reference
+Then ask it what happened:
 
-### Base URL
+```bash
+curl -s 'http://localhost:9000/errors?since=10m'
+curl -s 'http://localhost:9000/logs?source=backend&since=5m&limit=50'
+curl -s http://localhost:9000/processes
 ```
-http://localhost:9000
-```
 
-### Key Endpoints
-- `GET /logs` - Query log entries with filters
-- `GET /errors` - Recent error entries
-- `GET /traces` - Query distributed traces
-- `GET /health` - System status and statistics
-- `GET /processes` - Status of managed processes
+`GET /` lists every endpoint; `/docs` serves interactive OpenAPI documentation.
 
-See [api-reference.md](api-reference.md) for complete documentation.
+## ⚠️ Read this before running it on a shared network
 
-## 🏗️ Architecture
+Running Man binds **all interfaces** by default and has **no authentication**, so anyone
+who can reach port 9000 can read your captured logs — and dev servers routinely print
+tokens and connection strings. Process control is restricted to this machine.
 
-### Core Components
-- **Process Wrapper** - Spawns and monitors child processes
-- **Docker Streamer** - Streams logs from Docker containers
-- **Log Parser** - Detects Python tracebacks, JSON logs, plain text
-- **Ring Buffer** - In-memory storage with time/size limits
-- **API Server** - REST endpoints
-- **TUI Viewer** - Interactive terminal interface
-- **OTEL Receiver** - OpenTelemetry trace ingestion
-
-### Data Flow
-1. Processes/Docker containers output logs
-2. Running Man captures and parses logs
-3. Logs stored in ring buffer (30min/50MB retention)
-4. API serves queries, TUI shows real-time view
-5. AI agents query the REST API
-
-See [architecture.md](architecture.md) for detailed architecture.
-
-## 🚨 Troubleshooting
-
-Common issues and solutions:
-
-### Installation Issues
-- "Command not found: running-man"
-- Port conflicts (9000, 4318)
-- Docker daemon not running
-
-### Configuration Issues
-- Config file not found
-- Environment variable substitution
-- YAML syntax errors
-
-### Runtime Issues
-- TUI rendering problems
-- Logs not appearing
-- Tracing not working
-
-See [troubleshooting.md](troubleshooting.md) for complete troubleshooting guide.
-
-## 📖 Additional Resources
-
-### Project Links
-- **GitHub Repository**: https://github.com/elbeanio/the_running_man
-- **Issue Tracker**: https://github.com/elbeanio/the_running_man/issues
-- **Example Configuration**: [running-man.yml](https://github.com/elbeanio/the_running_man/blob/main/running-man.yml)
-
-### External Resources
-- [OpenTelemetry Documentation](https://opentelemetry.io/docs/)
-- [Model Context Protocol](https://spec.modelcontextprotocol.io/)
-- [Bubble Tea TUI Framework](https://github.com/charmbracelet/bubbletea)
-
-## 🤝 Contributing
-
-Interested in contributing? See:
-- [development.md](development.md) for build instructions
-- [architecture.md](architecture.md) for codebase understanding
-- GitHub issues for current work items
-
-## 📄 License
-
-MIT License - see [LICENSE](https://github.com/elbeanio/the_running_man/blob/main/LICENSE) for details.
+`running-man run --listen 127.0.0.1` restricts everything to the local machine. Full
+detail in [network exposure](api-reference.md#network-exposure).
 
 ---
 
-*Documentation last updated: March 2026*# Test update to trigger GitHub Pages rebuild
+*Also in the repository, for people and agents working **on** Running Man rather than with
+it: [PROJECT.md](https://github.com/elbeanio/the_running_man/blob/main/PROJECT.md) (purpose,
+constraints, non-goals),
+[GLOSSARY.md](https://github.com/elbeanio/the_running_man/blob/main/GLOSSARY.md) (locked
+vocabulary) and
+[AGENTS.md](https://github.com/elbeanio/the_running_man/blob/main/AGENTS.md).*
+
+*[Project history](implementation-history.md) records the development phases, including the
+MCP server that was built and then removed.*

@@ -1,6 +1,7 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
+Read [`PROJECT.md`](PROJECT.md) first: what this project is for, its constraints and its
+non-goals. Then [`GLOSSARY.md`](GLOSSARY.md) for the locked vocabulary.
 
 ## Before starting any long-running process
 
@@ -18,228 +19,144 @@ to the developer watching the project.
 The file lists the API URL, every configured process, and ready-to-run `curl` hints.
 Full guidance is in `skills/running-man/SKILL.md`.
 
-## Project Context
-
-Read [`PROJECT.md`](PROJECT.md) for what this project is for, its constraints and its
-non-goals. Ordered work lives in `plans/` (untracked).
-
 ### Vocabulary
 
 Follow the locked terms in [`GLOSSARY.md`](GLOSSARY.md) for anything user-facing — config
-keys, API fields, TUI labels, docs and commit messages. **Challenge any new term against
-it** before introducing one: if a word for the concept already exists, use it; if it
-doesn't, add an entry in the same change that ships the name.
+keys, API fields, TUI labels, documentation and commit messages. **Challenge any new term
+against it** before introducing one: if a word for the concept already exists, use it; if
+it does not, add an entry in the same change that ships the name.
 
 Note in particular that **instance** (not "session") means one Running Man run, and
-**retention limits** covers the whole eviction policy.
+**retention limits** covers the whole eviction policy, not just the time window.
 
 ## Development
 
 ### Tests
-- Keep a comprehensive but focussed set of test for the core functionality. It shouldn't take more than a second or two to run
-- Any longer or more integrated tests should be tagged as such and only run at key stages such as before code review / commit
-- When fixing bugs write a failing test first if possible
 
-### Style
-- Format code properly (with go fmt or whatever) before committing
+- The core suite runs in a second or two. Anything slower is a bug in the test, not a fact
+  about the suite.
+- Tag longer or more integrated tests and run them only before review.
+- **When fixing a bug, write the failing test first**, and confirm it fails for the right
+  reason before fixing. A regression test that passes against the unfixed code is worthless
+  — this has happened here: a volume-based test for lost output passed on the broken code,
+  because a few hundred short lines fit in the pipe buffer.
+- Prove a fix by reverting it in place and watching the test fail, rather than by reasoning
+  that it must work.
 
-## Quick Reference
+### Style
 
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd sync               # Sync with git
-```
+- `gofmt` before committing. `make lint` must pass.
+- Comment the *why*, not the *what* — particularly where a choice is not obvious, or where
+  the obvious alternative is wrong. A comment explaining why a wait is bounded is worth
+  more than one explaining that it waits.
+- Do not delete the evidence of a bug to make a symptom go away. A scanner error was once
+  silenced here on the reasoning that it was "expected behavior, not an error"; it was in
+  fact a symptom of real data loss, which then went unnoticed.
 
-## Branch Protection Workflow
+## Issue tracking
 
-**MAIN BRANCH IS PROTECTED:** All changes must be made in feature branches and merged via pull requests.
+**There is none, deliberately.** This project used beads (`bd`); it was removed in
+`5405295` and is not coming back. Do not reintroduce it, and do not create markdown TODO
+lists as a substitute.
 
-**MANDATORY WORKFLOW FOR ALL CHANGES:**
+Work is planned in `plans/<date>-<slug>.md`, one file per phase or change, with progress
+appended as it lands. `plans/ideas.md` holds one-line notes for anything that is not the
+current work. `plans/` is **untracked** — the GitHub repo is public and the planning notes
+are not for publication. It is excluded via `.git/info/exclude`, not `.gitignore`.
 
-1. **Check beads for related work:**
-   ```bash
-   bd ready              # Find available work
-   bd show <id>          # View issue details
-   bd update <id> --status in_progress  # Claim work
-   ```
-
-2. **Create feature branch (use bead ID when possible):**
-   ```bash
-   # When working on a beads issue (preferred):
-   git checkout -b beads/<bead-id>-short-description
-   # Example: git checkout -b beads/the_running_man-yut-otel-tracing
-   
-   # When no beads issue:
-   git checkout -b feature/descriptive-name
-   # or
-   git checkout -b fix/issue-description
-   # or  
-   git checkout -b docs/topic-update
-   ```
-
-3. **Make changes and commit:**
-   ```bash
-   git add .
-   git commit -m "Descriptive commit message"
-   ```
-
-4. **Push branch to remote:**
-   ```bash
-   git push -u origin branch-name
-   ```
-
-5. **Create pull request (reference beads issue in PR body):**
-   ```bash
-   gh pr create --title "PR Title" --body "Description of changes\n\nRelated to beads: <bead-id>"
-   ```
-
-6. **Wait for PR review/approval** before merging
-
-## Landing the Plane (Session Completion)
-
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until changes are in a PR.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **CREATE/UPDATE PR** - This is MANDATORY:
-   ```bash
-   # If new branch:
-   git push -u origin branch-name
-   gh pr create --title "Title" --body "Description\n\nRelated to beads: <bead-id>"
-   
-   # If existing branch:
-   git push
-   # PR will auto-update
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes are in a PR (not necessarily merged)
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- ALWAYS check current branch with `git status` or `git branch --show-current` before making changes
-- NEVER push directly to main branch
-- ALWAYS create a feature branch for changes
-- ALWAYS create a PR before ending session
-- **NEVER merge a PR without explicit permission from the user**
-- Work is NOT complete until changes are in a PR
-- If PR creation fails, resolve and retry until it succeeds
-
-
-<!-- BEGIN BEADS INTEGRATION v:1 profile:full hash:d4f96305 -->
-## Issue Tracking with bd (beads)
-
-**IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
-
-### Why bd?
-
-- Dependency-aware: Track blockers and relationships between issues
-- Git-friendly: Dolt-powered version control with native sync
-- Agent-optimized: JSON output, ready work detection, discovered-from links
-- Prevents duplicate tracking systems and confusion
-
-### Quick Start
-
-**Check for ready work:**
+## Quick reference
 
 ```bash
-bd ready --json
+make test          # unit tests (seconds; anything slower is a bug)
+make test-race     # race detector
+make lint          # golangci-lint
+make skill:link    # symlink the agent skill into ~/.claude/skills
+go generate ./internal/api   # re-sync the embedded OpenAPI spec after editing docs/openapi.yaml
 ```
 
-**Create new issues:**
+## Branching and pull requests
 
-```bash
-bd create "Issue title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
-bd create "Issue title" --description="What this issue is about" -p 1 --deps discovered-from:bd-123 --json
-```
+`main` is protected. All changes go through a feature branch and a pull request.
 
-**Claim and update:**
+This holds even for small changes and even when working alone. The repository is public,
+so the review mechanism is kept oiled for any external contribution that arrives — a
+project where every change has always gone straight to `main` is a project nobody can
+contribute to.
 
-```bash
-bd update <id> --claim --json
-bd update bd-42 --priority 1 --json
-```
+1. **Check `plans/`** for related work — the phase plans and `plans/ideas.md`.
+2. **Branch** — `feature/`, `fix/`, `docs/` or `refactor/` plus a short description.
+3. **Commit as you go.** Several small commits that each do one thing are easier to review
+   than one large one, and the history is the record of why the code looks like this.
+4. **Push and open a PR.**
+5. **Wait for review.** Never merge without explicit permission.
 
-**Complete work:**
+### Stacked branches
 
-```bash
-bd close bd-42 --reason "Completed" --json
-```
+Avoid them. If a branch must be based on another unmerged branch, say so in the PR body,
+and **retarget it to `main` the moment its base merges** — squash-merging a base severs the
+stack, and GitHub only auto-retargets when the base branch is deleted on merge.
 
-### Issue Types
+## Writing commit messages and pull request descriptions
 
-- `bug` - Something broken
-- `feature` - New functionality
-- `task` - Work item (tests, docs, refactoring)
-- `epic` - Large feature with subtasks
-- `chore` - Maintenance (dependencies, tooling)
+**Write about the change, not to the reader.** These are public, permanent, and read by
+people with no memory of the conversation that produced them — including the author, later.
 
-### Priorities
+Take the tone from [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
+declarative, impersonal, present tense. The standard itself is not required here, but its
+register is.
 
-- `0` - Critical (security, data loss, broken builds)
-- `1` - High (major features, important bugs)
-- `2` - Medium (default, nice-to-have)
-- `3` - Low (polish, optimization)
-- `4` - Backlog (future ideas)
+**Do not:**
 
-### Workflow for AI Agents
+- address the reader — "you asked for", "as you noted", "per your instruction"
+- narrate the author — "I found", "I tried X then Y", "I should have caught this"
+- apologise, thank, or editorialise — "apologies for", "unfortunately", "nice catch"
+- describe the process of arriving at the change, unless the process *is* the finding
 
-1. **Check ready work**: `bd ready` shows unblocked issues
-2. **Claim your task atomically**: `bd update <id> --claim`
-3. **Work on it**: Implement, test, document
-4. **Discover new work?** Create linked issue:
-   - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
-5. **Complete**: `bd close <id> --reason "Done"`
+**Do:**
 
-### Auto-Sync
+- state what changed and why it needed changing
+- give the evidence: the failing output, the wrong value, the false claim, verbatim
+- name the consequence of the bug, not just its mechanism
+- record decisions taken and alternatives rejected, with the reason
+- flag anything a reviewer would want to argue with
 
-bd automatically syncs via Dolt:
+**Instead of:**
 
-- Each write auto-commits to Dolt history
-- Use `bd dolt push`/`bd dolt pull` for remote sync
-- No manual export/import needed!
+> You were right that the docs were wrong. I found six flags that don't exist and fixed
+> them — sorry about the earlier confusion. Let me know if the README is now too slim!
 
-### Important Rules
+**Write:**
 
-- ✅ Use bd for ALL task tracking
-- ✅ Always use `--json` flag for programmatic use
-- ✅ Link discovered work with `discovered-from` dependencies
-- ✅ Check `bd ready` before asking "what should I work on?"
-- ❌ Do NOT create markdown TODO lists
-- ❌ Do NOT use external issue trackers
-- ❌ Do NOT duplicate tracking systems
+> `docs/configuration.md` documented six flags that do not exist: `--retention`,
+> `--shell`, `--max-entries`, `--max-bytes`, `--max-spans`, `--max-span-age`. All six
+> appeared in a reference table and in copy-pasteable examples; following any of them
+> fails with `flag provided but not defined`. They are configuration-file keys only. The
+> table is now exactly the 13 real flags, with an explicit note naming the six, because
+> the incorrect version has been published.
 
-For more details, see README.md and docs/QUICKSTART.md.
+Facts, consequences and decisions survive; pleasantries and narration do not. Conversation
+belongs in the conversation, and anything worth keeping from it belongs in `plans/`.
 
-## Landing the Plane (Session Completion)
+## Ending a session
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+Work is not complete until it is in a pull request.
 
-**MANDATORY WORKFLOW:**
+1. **Record remaining work** in `plans/ideas.md`.
+2. **Run the quality gates** if code changed: `make test`, `make test-race`, `make lint`,
+   `gofmt -l`.
+3. **Update the plan** — append what landed to the Progress section, including anything
+   done differently from what was planned, and why.
+4. **Push and open or update the PR.**
+5. **Clean up** — clear stashes, prune merged branches.
+6. **Hand off** — leave enough context for the next session to resume.
 
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   bd dolt push
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
+### Rules
 
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-
-<!-- END BEADS INTEGRATION -->
+- Check the current branch before making changes.
+- Never commit or push directly to `main`.
+- Never merge a pull request without explicit permission.
+- If a `git add -A` appears to have missed a file, check `.gitignore` before assuming it
+  worked: an unanchored pattern can silently ignore a whole directory, and `git status`
+  will not mention it.
+- If a tool or approach has already failed once in a session, do not reach for it again
+  without a reason to expect a different outcome.

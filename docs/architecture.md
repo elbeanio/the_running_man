@@ -56,7 +56,7 @@ Spawns and monitors child processes, capturing their output.
 - Executes via shell (`/bin/sh -c` or configured shell)
 - Captures stdout/stderr without blocking
 - Handles graceful shutdown (SIGINT/SIGTERM)
-- Optional restart on crash (Phase 2.5)
+- Optional restart on crash (`restart_on_crash`)
 - Preserves original command for display
 
 ### Docker Integration (`internal/docker`)
@@ -128,9 +128,9 @@ Interactive terminal UI built with Bubble Tea.
 - Color-coded log levels
 - Real-time updates
 
-**Known issues (fixing in Phase 2.5):**
-- Newline rendering broken (progress bars garbled)
-- Only shows last 5 minutes (should show full retention)
+**Log window:** the TUI requests `/logs?source=NAME` with no `since`, so it shows the full
+retention window rather than a recent slice, capped by the API's default `limit` of 1000
+entries.
 
 ### OTEL Tracing (`internal/tracing`)
 
@@ -213,7 +213,7 @@ YAML configuration with validation and defaults.
 5. Results returned as JSON
 ```
 
-## Extension Points (Phase 3 - Complete)
+## Extension points
 
 ### Agent-Facing API (`internal/api/server.go`)
 
@@ -231,14 +231,14 @@ endpoint and `/docs` serves interactive OpenAPI documentation.
 
 **System:** `/health`
 
-**Integration:** no authentication (local development tool, bound to localhost).
-An MCP server previously sat alongside this API and was removed — its scope was wrong
-for a per-project process runner. See `PROJECT.md`.
+**Access control:** no authentication. Bound to all interfaces by default, with process
+control restricted to loopback — see
+[network exposure](api-reference.md#network-exposure).
 
 ### Agent Integration Patterns
 
 **Common Workflows:**
-1. **Error investigation:** `get_recent_errors` → `search_logs` for context
+1. **Error investigation:** `GET /errors?since=10m` → `GET /logs?source=NAME&since=5m` for context
 2. **Startup debugging:** `get_startup_logs` for failed process initialization
 3. **Process monitoring:** `get_process_status` → `get_process_detail` for specifics
 4. **System health:** `get_health_status` for buffer stats and uptime

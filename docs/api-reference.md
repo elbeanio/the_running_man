@@ -258,25 +258,6 @@ curl "http://localhost:9000/traces/abc123def456"
 
 ---
 
-### GET /traces/slow
-
-Find traces exceeding duration thresholds.
-
-**Query Parameters:**
-- `since` - Time window
-- `threshold` - Duration threshold (e.g., `1s`, `100ms`, `500ms`)
-- `limit` - Maximum traces to return (default: 20, max: 100)
-
-**Example:**
-```bash
-curl "http://localhost:9000/traces/slow?since=5m&threshold=1s"
-curl "http://localhost:9000/traces/slow?threshold=500ms&limit=10"
-```
-
-**Response:** Same format as `/traces`
-
----
-
 ## Error Responses
 
 All endpoints return standard HTTP error codes:
@@ -304,27 +285,14 @@ All endpoints return standard HTTP error codes:
 
 ---
 
-## Rate Limiting
-
-Currently no rate limiting (local development tool).
-
----
-
-## CORS
-
-Wildcard origin (`Access-Control-Allow-Origin: *`) on both the API and the OTLP
-receiver. Browser-based OTLP export depends on it.
-
----
-
-## Authentication
-
-**None.** There are no credentials, tokens or sessions. Access control is by network
-location only — see below.
-
----
-
 ## Network exposure
+
+**There is no authentication.** No credentials, no tokens, no sessions. Access control is
+by network location only, described below. There is no rate limiting either — this is a
+local development tool.
+
+CORS uses a wildcard origin (`Access-Control-Allow-Origin: *`) on both the API and the OTLP
+receiver, because browser-based OTLP export depends on it.
 
 Running Man binds **all interfaces** (`0.0.0.0`) by default, on both the API port (9000)
 and the OTLP receiver port (4318). This is deliberate: Docker containers exporting to

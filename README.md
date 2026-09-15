@@ -1,396 +1,192 @@
 # The Running Man 🏃
 
-**A dev observability tool that captures logs, traces, and errors from local development environments.**
-
-> **Stay running when your apps crash** - Capture everything automatically and expose it via queryable APIs for AI agents and developers.
+**Run every moving part of your project under one roof — and make all of it inspectable by
+you and by your coding agent, through the same interface.**
 
 [![CI](https://github.com/elbeanio/the_running_man/actions/workflows/ci.yml/badge.svg)](https://github.com/elbeanio/the_running_man/actions/workflows/ci.yml)
 [![Security Scan](https://github.com/elbeanio/the_running_man/actions/workflows/security.yml/badge.svg)](https://github.com/elbeanio/the_running_man/actions/workflows/security.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/elbeanio/the_running_man)](https://goreportcard.com/report/github.com/elbeanio/the_running_man)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## ✨ Features
+📖 **[Documentation](https://elbeanio.github.io/the_running_man/)**
 
-- **📊 Multi-process Management** - Run and monitor multiple processes with shell support (cd, &&, pipes)
-- **🐳 Docker Compose Integration** - Automatically capture logs from all containers
-- **📱 Interactive TUI** - Real-time log viewer with tab switching between sources
-- **🔍 Smart Log Parsing** - Detects Python tracebacks, JSON logs, and plain text
-- **📡 OpenTelemetry Tracing** - Built-in OTLP receiver with automatic environment injection
-- **🤖 AI Agent Integration** - Self-describing REST API and an agent skill
-- **⚡ Ring Buffer Storage** - 30-minute retention survives app crashes; after a crash in
-  headless mode the logs stay queryable until you quit (see `--keep-alive`)
-- **🔧 YAML Configuration** - Auto-discovery with CLI override support
+## Why
 
-## 🚀 Quick Start
+A real project is not one process. It is a Node front-end build, a Python back-end, a
+worker, a job that runs every minute, and a Docker Compose stack behind them. Normally that
+means five terminal tabs, five scrollback buffers, and no way to ask a question that spans
+them.
 
-### Installation
+Running Man runs all of it, captures everything it emits into one searchable place, and
+exposes that over an HTTP API. Every source can be queried together or separately, and any
+process can be restarted without touching the others.
+
+Both audiences use the same interface. The developer gets a TUI with a tab per source; a
+coding agent gets the same data over `curl`. That matters because of what otherwise
+happens: an agent that starts its own dev server and reads its own output works perfectly
+well, and leaves the developer blind — unable to see the stack trace it is about to spend
+five minutes reasoning about, and unable to say "I recognise that, it is the migration".
+
+One copy of the stack. One record of what it did. Visible to everyone working on it.
+
+> **Note:** the Security Scan badge is **expected to be red.** Two advisories in the Docker
+> SDK are reported `Fixed in: N/A`. They are deliberately not suppressed — see
+> [PROJECT.md](PROJECT.md).
+
+## Install
 
 ```bash
-# Install via Go
 go install github.com/elbeanio/the_running_man/cmd/running-man@latest
-
-# Or download the latest binary from Releases
 ```
 
-### Basic Usage
+Requires Go 1.25+ on Linux or macOS. Windows is not supported: process supervision uses
+`Setsid`, `syscall.Kill` and `ps`/`lsof`.
 
-```bash
-# Run a single process (TUI launches automatically)
-running-man run --process "python server.py"
+## Quick start
 
-# Multiple processes - switch between them with Tab
-running-man run --process "python server.py" --process "npm run dev"
-
-# Docker Compose services
-running-man run --docker-compose ./docker-compose.yml
-
-# Headless mode for CI/automation
-running-man run --process "pytest" --no-tui
-```
-
-### Configuration File
-
-Create `running-man.yml` in your project root:
+Describe the whole stack in `running-man.yml`:
 
 ```yaml
 processes:
-  - name: backend
-    command: python server.py
   - name: frontend
+    type: web
     command: npm run dev
 
-docker_compose: ./docker-compose.yml
-api_port: 9000
-retention: 30m
-shell: /bin/bash
+  - name: backend
+    type: api
+    command: cd api && python -m uvicorn main:app --reload
 
-tracing:
-  enabled: true
-  port: 4318
+  - name: worker
+    type: worker
+    command: cd api && python worker.py
+    restart_on_crash: true
+
+  - name: healthcheck
+    command: ./scripts/health.sh
+    interval: 1m        # recurring: runs on a timer, output captured like anything else
+
+docker_compose:
+  files: [docker-compose.yml]
+  profiles: [backend]   # postgres, redis, whatever your stack needs
 ```
 
-Then just run:
-```bash
-running-man run  # auto-discovers config
-```
-
-See [running-man.yml](running-man.yml) for all configuration options.
-
-## 📖 Documentation
-
-- **[Project document](PROJECT.md)** - What this is for, its constraints and non-goals
-- **[Glossary](GLOSSARY.md)** - Locked vocabulary: **instance**, **source**, **managed
-  process**, **ring buffer**, **retention limits**
-- **[Getting Started](docs/getting-started.md)** - Comprehensive guide for new users
-- **[Configuration Guide](docs/configuration.md)** - All YAML options and CLI flags
-- **[OpenTelemetry Tracing](docs/tracing.md)** - Complete OTEL setup and usage
-- **[AI Agent Integration](docs/agent-integration.md)** - Agent setup
-- **[API Reference](docs/api-reference.md)** - REST API documentation
-- **[Architecture](docs/architecture.md)** - System design and components
-- **[Development Guide](docs/development.md)** - Building and contributing
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    The Running Man                          │
-├─────────────────────────────────────────────────────────────┤
-│  Processes  │  Docker  │  OTEL Tracing  │  Configuration    │
-│             │          │                │                   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │                 Ring Buffer Storage                 │   │
-│  │          (30min retention, 50MB limit)             │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                                                            │
-│  ┌─────────────────┐                      ┌────────────┐ │
-│  │   REST API      │                      │   TUI      │ │
-│  │   (Port 9000)   │                      │   Viewer   │ │
-│  └─────────────────┘                      └────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## 🛠️ AI Agent Integration
-
-Agents query Running Man over its REST API. There is nothing to configure: the API is
-self-describing, so one request discovers the whole surface.
+Then:
 
 ```bash
-# Every endpoint, listed
-curl http://localhost:9000/
-
-# Interactive OpenAPI documentation
-open http://localhost:9000/docs
+running-man run
 ```
 
-**The question worth asking first** — is the service I'm about to start already running?
+That starts the four processes, offers to bring the Compose stack up if it is not already
+running, and opens a TUI with a tab per source — the two containers included.
+
+Or without a config file:
 
 ```bash
+running-man run --process "npm run dev" --process "python -m uvicorn main:app --reload"
+
+running-man run --docker-compose ./docker-compose.yml --compose-profile backend
+
+running-man run --process "pytest" --no-tui     # headless, for CI
+```
+
+## Inspect and control it
+
+Everything below works identically for a person at a terminal and for an agent with
+`curl`:
+
+```bash
+# What has gone wrong anywhere in the stack, in the last ten minutes
+curl -s 'http://localhost:9000/errors?since=10m'
+
+# One source
+curl -s 'http://localhost:9000/logs?source=backend&since=5m&limit=50'
+
+# Several at once, or a glob
+curl -s 'http://localhost:9000/logs?source=frontend,worker&since=5m'
+curl -s 'http://localhost:9000/logs?source=*&contains=timeout'
+
+# What is up, what it is listening on, what exited
 curl -s http://localhost:9000/processes
+
+# Restart one thing after a code change, leaving the rest alone
+curl -s -X POST http://localhost:9000/processes/backend/restart
 ```
 
-**Endpoints:** `/logs` (with `since`, `level`, `source`, `contains`, `exclude`, `limit`),
-`/errors`, `/processes`, `/processes/{name}`, `/processes/{name}/restart`,
-`/processes/stop-all`, `/health`, `/traces`, `/traces/{id}`, `/traces/{id}/logs`
+Python tracebacks arrive as a single entry with the whole trace attached, rather than
+forty lines to stitch back together. Container logs, process output and OpenTelemetry
+spans all land in the same buffer, correlated by `trace_id` where the app provides one.
 
-### Agents discover it automatically
+`GET /` lists every endpoint and `/docs` serves interactive OpenAPI documentation.
 
-While an instance is running, `.running-man/instance.json` sits in the project root:
+## Your agent finds it by itself
+
+While an instance is running, `.running-man/instance.json` sits in the project root with
+the API URL, the configured processes and ready-to-run `curl` hints — one file read, in a
+directory agents already inspect.
+
+Paired with [`skills/running-man/SKILL.md`](skills/running-man/SKILL.md), it answers the
+question that matters before an agent starts anything: **is this already running?**
 
 ```bash
-cat .running-man/instance.json
+make skill:link   # symlink into ~/.claude/skills
+                  # or: make skill:link SKILLS_DIR=~/somewhere/else
 ```
 
-It holds the API URL, every configured process, and ready-to-run `curl` hints — one file
-read, in a directory agents already inspect. It answers the question that matters before an
-agent starts anything: **is this already running?**
+The skill is plain Markdown and the API is plain HTTP, so anything that can read a file and
+run `curl` can use it. Running Man has no opinion about which agent you use.
 
-`GET /processes` reports observed listening ports, so "is :8000 already served by your
-stack?" has a definite answer.
+## ⚠️ Network exposure
 
-### The agent skill
+Running Man binds **all interfaces** by default, on the API port (9000) and the OTLP
+receiver (4318), so containers, browsers and other devices can reach it. **There is no
+authentication**, which means anyone on your network can read your captured logs — and dev
+servers routinely print tokens and connection strings.
 
-[`skills/running-man/SKILL.md`](skills/running-man/SKILL.md) tells an agent *when* to reach
-for Running Man, not just how — starting with: before you start a dev server, check whether
-one is already running.
-
-Different agents read skills from different directories, so installation is a symlink into
-whichever one yours uses:
-
-```bash
-make link-skill                              # default: ~/.claude/skills
-make link-skill SKILLS_DIR=~/some/other/dir  # anywhere else
-make unlink-skill                            # remove it
-```
-
-It is a symlink rather than a copy, so editing the skill takes effect immediately rather
-than drifting from whatever was installed. Most agents discover skills at session start, so
-restart yours after linking.
-
-Running Man is not opinionated about which agent you use: the skill is a plain Markdown
-file and the API is plain HTTP, so anything that can read a file and run `curl` can use it.
-
-### ⚠️ Network exposure
-
-Running Man binds **all interfaces** by default, so containers and browsers can export to
-it. There is no authentication, which means **anyone on your network can read your
-captured logs** — and dev servers routinely print tokens and connection strings.
-
-Process control is the exception: `/processes/{name}/restart` and `/processes/stop-all`
-are served to this machine only and return 403 otherwise.
+Process control is the exception: `/processes/{name}/restart` and `/processes/stop-all` are
+served to this machine only and return 403 otherwise.
 
 ```bash
 running-man run --listen 127.0.0.1       # restrict everything to this machine
 running-man run --allow-remote-control   # open process control (think first)
 ```
 
-See [Network exposure](docs/api-reference.md#network-exposure) for the full picture.
-
-Running Man previously shipped an MCP server. It was removed: its scope was wrong for a
-per-project process runner, and the REST API already covers the same ground in a form
-agents handle well. See [PROJECT.md](PROJECT.md).
-
-See [Agent Integration Guide](docs/agent-integration.md) for complete setup.
-
-## 📈 OpenTelemetry Tracing
-
-Running Man includes built-in OpenTelemetry support:
-
-- **OTLP HTTP receiver** on port 4318
-- **Automatic environment variable injection** for managed processes
-- **Trace-log correlation** via `trace_id`
-- **In-memory span storage** with configurable retention
-- **Trace endpoints for exploration by agents**
-
-**Example Python setup:**
-```python
-# With Running Man, OTEL environment variables are automatically injected
-from opentelemetry import trace
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-
-# Uses OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 from environment
-otlp_exporter = OTLPSpanExporter()
-```
-
-See [Tracing Guide](docs/tracing.md) for complete setup instructions.
-
-## 🗺️ Roadmap
-
-- ✅ **Phase 1:** Core Foundation (COMPLETE)
-- ✅ **Phase 2:** Multi-Source Capture (COMPLETE)
-- ✅ **Phase 2.5:** Quality of Life & Bug Fixes (COMPLETE)
-- ✅ **Phase 3:** Agent Integration - COMPLETE
-- ✅ **Phase 4:** OpenTelemetry Tracing - COMPLETE
-- 📋 **Phase 5:** Browser Integration & Web UI
-- 📋 **Phase 6:** Advanced Visualization & Analytics
-
-See [Implementation History](docs/implementation-history.md) for detailed progress.
-
-## 🚦 Quick Examples
-
-### Debugging with AI Agent
-```bash
-# Start your stack
-running-man run --process "python server.py" --process "npm run dev"
-
-# Agent can now:
-# - "Show me recent errors from the backend"
-# - "Check if the frontend process is running"
-# - "Search logs for 'database connection' issues"
-# - "Get traces for slow API requests"
-```
-
-### OpenTelemetry Setup
-```bash
-# Tracing enabled by default
-running-man run --process "python app.py"
-
-# View traces via API
-curl http://localhost:9000/traces?since=5m
-
-# Or ask an AI agent, which queries the same endpoints
-# "Show me traces with errors from the last 10 minutes"
-```
-
-### Docker Development
-```bash
-# Monitor your entire Docker Compose stack
-running-man run --docker-compose docker-compose.yml
-
-# Projects with profiles
-running-man run --docker-compose docker-compose.yml --compose-profile backend
-
-# If nothing is running, Running Man offers to start it -- and leaves it
-# running when you quit. It monitors the stack; it does not manage it.
-
-# All container logs in one TUI
-# Filter by service, search content, view errors
-```
-
-### Visual Debugging with Screenshots
-```bash
-# Install screenshot capture script (Node.js required)
-cd scripts
-npm install
-npx playwright install chromium
-
-# Capture screenshots of web applications
-node capture-web.js --url http://localhost:3000 --output screenshot.png
-node capture-web.js --url http://localhost:3000 --selector ".app-container" --debug
-node capture-web.js --url http://localhost:3000 --viewport 1920x1080 --full-page
-
-# Use with AI agents for visual debugging
-# "Capture a screenshot of the frontend to see layout issues"
-# "Take a screenshot of the error modal that appears"
-```
-
-## 🏗️ Development
-
-```bash
-# Build from source
-go build -o running-man ./cmd/running-man
-
-# Run tests
-go test ./...
-
-# Run locally
-./running-man run --process "python -m http.server 8080"
-```
-
-See [Development Guide](docs/development.md) for contributor information.
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Features
-
-- **Process Management**: Run and monitor multiple processes with shell support (cd, &&, pipes)
-- **TUI Log Viewer**: Interactive terminal UI with tab switching between sources
-- **Docker Compose**: Automatically capture logs from all containers
-- **YAML Configuration**: Auto-discovery with CLI flag override support
-- **Smart Parsing**: Detects Python tracebacks, JSON logs, and plain text
-- **Ring Buffer**: Efficient in-memory storage (30min or 50MB default)
-- **Query API**: Filter logs by time, level, source, and content
-- **Configurable Shell**: Use bash, zsh, or any shell per process
-
-## Architecture
-
-```
-the_running_man/
-├── cmd/running-man/        # CLI entry point
-└── internal/
-    ├── process/            # Process spawning and output capture
-    ├── parser/             # Log format detection and parsing
-    ├── storage/            # Ring buffer implementation
-    ├── docker/             # Docker Compose integration
-    └── api/                # HTTP query endpoints
-```
-
-## What's Next
-
-**Phase 4 (Next):** OTEL tracing and visualization
-
-**Future:** Browser SDK and more
-
-See [docs/implementation-history.md](docs/implementation-history.md) for the full vision and historical development phases.
-
-## CI/CD & Security
-
-The Running Man uses GitHub Actions for continuous integration and security scanning:
-
-### Automated Workflows:
-- **CI Pipeline** - Runs tests, linting, and builds on every push/PR
-- **Security Scanning** - Weekly vulnerability checks with CodeQL and govulncheck
-- **Dependency Updates** - Automated PRs for dependency updates
-- **SBOM Generation** - Software Bill of Materials for releases
-- **License Compliance** - Checks for problematic licenses
-
-### Quality Gates:
-- ✅ All tests must pass
-- ✅ No security vulnerabilities
-- ✅ Code passes linting checks
-- ✅ Builds successfully on Linux, macOS, and Windows
-
-### Development
-
-```bash
-# Build
-go build -o running-man ./cmd/running-man
-
-# Run tests
-go test ./...
-
-# Test coverage
-go test ./... -cover
-
-# Run locally
-./running-man run --process "python -m http.server 8080"
-```
+Full detail: [Network exposure](https://elbeanio.github.io/the_running_man/api-reference#network-exposure).
 
 ## Documentation
 
-- [Overview](docs/overview.md) - What is The Running Man and why?
-- [Getting Started](docs/getting-started.md) - Quick start guide
-- [Configuration](docs/configuration.md) - YAML configuration reference
-- [Architecture](docs/architecture.md) - How it works
-- [Implementation History](docs/implementation-history.md) - Roadmap and historical phases
-- [API Reference](docs/api-reference.md) - REST API documentation
-- [Agent Integration](docs/agent-integration.md) - Using with AI coding assistants
-- [OpenTelemetry Tracing](docs/tracing.md) - Distributed tracing setup
-- [Development Guide](docs/development.md) - Building and contributing
-- [Troubleshooting](docs/troubleshooting.md) - Common issues and solutions
+Full documentation lives here: **[elbeanio.github.io/the_running_man](https://elbeanio.github.io/the_running_man/)**
 
-## Roadmap
+| | |
+|---|---|
+| [Overview](https://elbeanio.github.io/the_running_man/overview) | What it is and what problem it solves |
+| [Getting started](https://elbeanio.github.io/the_running_man/getting-started) | Install, first run, first queries |
+| [Configuration](https://elbeanio.github.io/the_running_man/configuration) | Every `running-man.yml` key and CLI flag |
+| [API reference](https://elbeanio.github.io/the_running_man/api-reference) | Endpoints, parameters, network exposure |
+| [Agent integration](https://elbeanio.github.io/the_running_man/agent-integration) | The instance marker and the skill |
+| [Tracing](https://elbeanio.github.io/the_running_man/tracing) | OpenTelemetry setup |
+| [Architecture](https://elbeanio.github.io/the_running_man/architecture) | How it fits together |
+| [Troubleshooting](https://elbeanio.github.io/the_running_man/troubleshooting) | When something is wrong |
+| [Development](https://elbeanio.github.io/the_running_man/development) | Building and contributing |
 
-- ✅ **Phase 1:** Core Foundation (COMPLETE)
-- ✅ **Phase 2:** Multi-Source Capture (COMPLETE)
-- ✅ **Phase 2.5:** Quality of Life & Bug Fixes (COMPLETE)
-- ✅ **Phase 3:** Agent Integration - COMPLETE
-- 📋 **Phase 4:** OTEL & Visualization
-- 📋 **Phase 5:** Browser Integration
+For contributors and agents working *on* Running Man, rather than with it:
 
-See [docs/implementation-plan.md](docs/implementation-plan.md) for detailed roadmap.
+- **[PROJECT.md](PROJECT.md)** — what this is for, its constraints, its non-goals, and the
+  decisions that shaped it
+- **[GLOSSARY.md](GLOSSARY.md)** — the locked vocabulary: **instance**, **source**,
+  **managed process**, **observed port**, **retention limits**
+- **[AGENTS.md](AGENTS.md)** — the rules for changing this repository
+
+## Development
+
+```bash
+make build        # build
+make test         # unit tests (seconds)
+make test-race    # race detector
+make lint         # golangci-lint
+```
+
+See [Development](https://elbeanio.github.io/the_running_man/development).
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details
+MIT — see [LICENSE](LICENSE).

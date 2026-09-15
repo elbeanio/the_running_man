@@ -1,4 +1,4 @@
-.PHONY: build test test-coverage test-integration test-race clean deps install install-local link-skill unlink-skill fmt lint help
+.PHONY: build test test-coverage test-integration test-race clean deps install install-local fmt lint help
 
 # Default target
 all: build
@@ -80,7 +80,16 @@ lint:
 # silently drifting from whatever was installed.
 SKILLS_DIR ?= $(HOME)/.claude/skills
 
-link-skill:
+# Colons in target names must be escaped in the Makefile but are written
+# plainly on the command line: `make skill:link`.
+#
+# The FORCE prerequisite is not decoration. .PHONY does not work with an
+# escaped colon in GNU Make 3.81 (which macOS ships), so without FORCE these
+# targets would be silently skipped as "up to date" if a file named
+# `skill:link` ever existed.
+FORCE:
+
+skill\:link: FORCE
 	@if [ ! -d "skills/running-man" ]; then \
 		echo "Error: skills/running-man not found"; \
 		exit 1; \
@@ -90,7 +99,7 @@ link-skill:
 	@ln -s "$(CURDIR)/skills/running-man" "$(SKILLS_DIR)/running-man"
 	@echo "Linked $(SKILLS_DIR)/running-man -> $(CURDIR)/skills/running-man"
 
-unlink-skill:
+skill\:unlink: FORCE
 	@rm -rf "$(SKILLS_DIR)/running-man"
 	@echo "Removed $(SKILLS_DIR)/running-man"
 
@@ -106,9 +115,9 @@ help:
 	@echo "  deps             - Install/update dependencies"
 	@echo "  install          - Install to GOPATH"
 	@echo "  install-local    - Install to ~/bin"
-	@echo "  link-skill       - Symlink the agent skill into SKILLS_DIR"
+	@echo "  skill:link       - Symlink the agent skill into SKILLS_DIR"
 	@echo "                     (default ~/.claude/skills; override with SKILLS_DIR=...)"
-	@echo "  unlink-skill     - Remove that symlink"
+	@echo "  skill:unlink     - Remove that symlink"
 	@echo "  fmt              - Format code"
 	@echo "  lint             - Run linter"
 	@echo "  help             - Show this help"

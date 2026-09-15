@@ -1,73 +1,83 @@
-# The Running Man
+# Overview
 
-## What It Is
+## What it is
 
-A dev observability tool that captures logs from your local processes and Docker containers, staying alive even when your app crashes. Built for AI-assisted development.
+A process runner with a memory. You describe your project's processes in `running-man.yml`,
+start an instance, and it spawns them and captures everything they emit — plus Docker
+container logs and OpenTelemetry spans — into one in-memory buffer, queryable over HTTP.
 
-## Why It Exists
+## Why it exists
 
-When debugging with an AI coding agent, you spend too much time:
-- Tab-switching between terminals to find the right logs
-- Copy-pasting stack traces and error messages
-- Missing important context (what happened before the error?)
-- Starting over when the app crashes mid-debug
+An AI coding agent that starts its own dev server and reads its own output works perfectly
+well. The problem is that you cannot see any of it.
 
-Running Man solves this by capturing everything automatically and exposing it via a queryable API that your coding agent can use.
+You cannot see the stack trace it is about to spend five minutes reasoning about. You cannot
+tell it that you recognise the error instantly, or that it is testing a different server
+from the one actually serving your requests. An experienced developer watching a run go
+wrong is the cheapest debugging resource available, and the usual setup makes them blind.
 
-## Current Capabilities
+Running Man keeps one copy of the stack running and serves what it captures to both of you
+over the same API. The agent gets logs it would otherwise have to re-run the app to see, and
+history that survives a crash. You get to watch, and to interject.
 
-- **Multi-process management** - Run multiple processes with shell support (cd, &&, pipes, etc.)
-- **Docker Compose integration** - Automatically capture logs from all your containers
-- **YAML configuration** - Auto-discovery with CLI override support
-- **Interactive TUI** - Tab switching between log sources, real-time updates
-- **REST API** - Query logs by time, source, level, or content
-- **OpenTelemetry Tracing** - Built-in OTLP receiver with automatic environment injection
-- **REST API** - Agent integration via a self-describing HTTP API
-- **Smart parsing** - Detects Python tracebacks, JSON logs, plain text
-- **Ring buffer** - 30-minute retention survives app crashes
-- **Trace storage** - In-memory span storage with configurable retention
-- **Trace-log correlation** - Automatic correlation via `trace_id`
-- **Configurable shell** - Use bash, zsh, or any shell you prefer
+## The key property
 
-## What's Next
+Running Man runs **outside** your application. When a process dies on startup, Running Man
+still has the output that explains why — and in headless mode it keeps serving it after the
+process is gone, rather than exiting and taking the logs with it.
 
-- **Phase 5:** Browser SDK for frontend observability
-- **Phase 6:** Advanced visualization and analytics
+That makes it most useful in the hardest case: the app that will not start at all.
 
-**Current Status:** Agent integration via the REST API, including OpenTelemetry trace exploration. The MCP server that previously provided this was removed — see `PROJECT.md`.
+## What it does
 
-## Quick Example
+- **Multi-process supervision** — several processes with full shell support (`cd`, `&&`,
+  pipes), restartable individually
+- **Recurring processes** — run a command on an interval, with its output captured like
+  anything else
+- **Docker Compose** — attaches to container logs, understands profiles, and offers to
+  start the stack if it is not running
+- **Smart parsing** — Python tracebacks grouped into one entry, JSON logs field-extracted,
+  plain text level-detected
+- **Ring buffer** — in-memory, bounded by retention limits (30 minutes / 10,000 entries /
+  50MB by default)
+- **REST API** — query by time, source, level or content; self-describing at `GET /` and
+  `/docs`
+- **OpenTelemetry** — built-in OTLP receiver, environment injected into managed processes,
+  traces correlated to logs by `trace_id`
+- **Interactive TUI** — a tab per source, live
+- **Agent integration** — an instance marker agents discover on their own, plus a skill
 
-```bash
-# Create a config file
-cat > running-man.yml <<EOF
+## What it is not
+
+- **Not production observability.** A local development tool: no persistence, no
+  multi-user concerns, not a hosted service.
+- **Not a Compose manager.** It offers to start your stack and then monitors it. Quitting
+  leaves the stack exactly where it was.
+- **Not an intervention tool.** It shows you what is happening; you talk to your agent
+  yourself.
+
+The full statement of purpose, constraints and non-goals is in
+[PROJECT.md](https://github.com/elbeanio/the_running_man/blob/main/PROJECT.md).
+
+## Example
+
+```yaml
+# running-man.yml
 processes:
   - name: backend
     command: python server.py
-  - name: frontend  
+  - name: frontend
     command: npm run dev
 
 docker_compose: ./docker-compose.yml
-api_port: 9000
-EOF
-
-# Start your stack (TUI launches automatically)
-running-man run
-
-# In another terminal, query from your agent (or manually)
-curl http://localhost:9000/errors?since=30s
 ```
 
-## The Key Insight
+```bash
+running-man run
 
-Running Man runs **outside** your application. When your Python server crashes on startup, Running Man still has the traceback. When your frontend throws an error, both sides of the story are in one queryable place.
+# from another terminal, or from your agent
+curl -s 'http://localhost:9000/errors?since=30s'
+```
 
-This makes it invaluable for the hardest debugging scenarios: the ones where your app won't even start.
-
----
-
-See [README.md](https://github.com/elbeanio/the_running_man/blob/main/README.md) for installation and detailed usage.
-
-See [getting-started.md](getting-started.md) for a comprehensive getting started guide.
-
-See [implementation-history.md](implementation-history.md) for historical development phases.
+Next: **[Getting started](getting-started.md)** for a full walkthrough, or
+**[Configuration](configuration.md)** for every available option.
