@@ -85,9 +85,9 @@ Skills are picked up from different places depending on the agent you use, so in
 is a symlink into whichever directory yours reads:
 
 ```bash
-make link-skill                              # default: ~/.claude/skills
-make link-skill SKILLS_DIR=~/some/other/dir  # anywhere else
-make unlink-skill                            # remove it
+make skill:link                              # default: ~/.claude/skills
+make skill:link SKILLS_DIR=~/some/other/dir  # anywhere else
+make skill:unlink                            # remove it
 ```
 
 A symlink rather than a copy, so editing `skills/running-man/SKILL.md` takes effect

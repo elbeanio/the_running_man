@@ -162,7 +162,7 @@ their own.
 Install the skill so yours knows when to look:
 
 ```bash
-make link-skill
+make skill:link
 ```
 
 See **[Agent integration](agent-integration.md)**.

@@ -70,7 +70,7 @@ are not for publication. It is excluded via `.git/info/exclude`, not `.gitignore
 make test          # unit tests (seconds; anything slower is a bug)
 make test-race     # race detector
 make lint          # golangci-lint
-make link-skill    # symlink the agent skill into ~/.claude/skills
+make skill:link    # symlink the agent skill into ~/.claude/skills
 go generate ./internal/api   # re-sync the embedded OpenAPI spec after editing docs/openapi.yaml
 ```
 

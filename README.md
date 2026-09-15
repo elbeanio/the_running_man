@@ -1,7 +1,7 @@
 # The Running Man 🏃
 
-**Run your project's processes, capture everything they emit, and make it equally available
-to you and to your coding agent.**
+**Run every moving part of your project under one roof — and make all of it inspectable by
+you and by your coding agent, through the same interface.**
 
 [![CI](https://github.com/elbeanio/the_running_man/actions/workflows/ci.yml/badge.svg)](https://github.com/elbeanio/the_running_man/actions/workflows/ci.yml)
 [![Security Scan](https://github.com/elbeanio/the_running_man/actions/workflows/security.yml/badge.svg)](https://github.com/elbeanio/the_running_man/actions/workflows/security.yml)
@@ -12,13 +12,22 @@ to you and to your coding agent.**
 
 ## Why
 
-When a coding agent starts its own dev server and reads its own output, it works fine — and
-you are blind. You cannot see the stack trace it is about to spend five minutes on, so you
-cannot tell it that you recognise the problem.
+A real project is not one process. It is a Node front-end build, a Python back-end, a
+worker, a job that runs every minute, and a Docker Compose stack behind them. Normally that
+means five terminal tabs, five scrollback buffers, and no way to ask a question that spans
+them.
 
-Running Man keeps one copy of your stack running, captures everything it emits, and serves
-that to both of you over the same API. The agent gets logs it would otherwise have to
-re-run the app to see; you get to watch, and to interject.
+Running Man runs all of it, captures everything it emits into one searchable place, and
+exposes that over an HTTP API. Every source can be queried together or separately, and any
+process can be restarted without touching the others.
+
+Both audiences use the same interface. The developer gets a TUI with a tab per source; a
+coding agent gets the same data over `curl`. That matters because of what otherwise
+happens: an agent that starts its own dev server and reads its own output works perfectly
+well, and leaves the developer blind — unable to see the stack trace it is about to spend
+five minutes reasoning about, and unable to say "I recognise that, it is the migration".
+
+One copy of the stack. One record of what it did. Visible to everyone working on it.
 
 > **Note:** the Security Scan badge is **expected to be red.** Two advisories in the Docker
 > SDK are reported `Fixed in: N/A`. They are deliberately not suppressed — see
@@ -35,39 +44,77 @@ Requires Go 1.25+ on Linux or macOS. Windows is not supported: process supervisi
 
 ## Quick start
 
-```bash
-# One process — the TUI launches automatically
-running-man run --process "python server.py"
-
-# Several — Tab between them
-running-man run --process "python server.py" --process "npm run dev"
-
-# A Docker Compose stack (offers to start it if it is not up)
-running-man run --docker-compose ./docker-compose.yml
-
-# Headless, for CI
-running-man run --process "pytest" --no-tui
-```
-
-Or put it in `running-man.yml` and just run `running-man run`:
+Describe the whole stack in `running-man.yml`:
 
 ```yaml
 processes:
-  - name: backend
-    command: python server.py
   - name: frontend
+    type: web
     command: npm run dev
 
-docker_compose: ./docker-compose.yml
+  - name: backend
+    type: api
+    command: cd api && python -m uvicorn main:app --reload
+
+  - name: worker
+    type: worker
+    command: cd api && python worker.py
+    restart_on_crash: true
+
+  - name: healthcheck
+    command: ./scripts/health.sh
+    interval: 1m        # recurring: runs on a timer, output captured like anything else
+
+docker_compose:
+  files: [docker-compose.yml]
+  profiles: [backend]   # postgres, redis, whatever your stack needs
 ```
 
-Then query it:
+Then:
 
 ```bash
-curl -s 'http://localhost:9000/errors?since=10m'
-curl -s 'http://localhost:9000/logs?source=backend&since=5m&limit=50'
-curl -s http://localhost:9000/processes
+running-man run
 ```
+
+That starts the four processes, offers to bring the Compose stack up if it is not already
+running, and opens a TUI with a tab per source — the two containers included.
+
+Or without a config file:
+
+```bash
+running-man run --process "npm run dev" --process "python -m uvicorn main:app --reload"
+
+running-man run --docker-compose ./docker-compose.yml --compose-profile backend
+
+running-man run --process "pytest" --no-tui     # headless, for CI
+```
+
+## Inspect and control it
+
+Everything below works identically for a person at a terminal and for an agent with
+`curl`:
+
+```bash
+# What has gone wrong anywhere in the stack, in the last ten minutes
+curl -s 'http://localhost:9000/errors?since=10m'
+
+# One source
+curl -s 'http://localhost:9000/logs?source=backend&since=5m&limit=50'
+
+# Several at once, or a glob
+curl -s 'http://localhost:9000/logs?source=frontend,worker&since=5m'
+curl -s 'http://localhost:9000/logs?source=*&contains=timeout'
+
+# What is up, what it is listening on, what exited
+curl -s http://localhost:9000/processes
+
+# Restart one thing after a code change, leaving the rest alone
+curl -s -X POST http://localhost:9000/processes/backend/restart
+```
+
+Python tracebacks arrive as a single entry with the whole trace attached, rather than
+forty lines to stitch back together. Container logs, process output and OpenTelemetry
+spans all land in the same buffer, correlated by `trace_id` where the app provides one.
 
 `GET /` lists every endpoint and `/docs` serves interactive OpenAPI documentation.
 
@@ -81,8 +128,8 @@ Paired with [`skills/running-man/SKILL.md`](skills/running-man/SKILL.md), it ans
 question that matters before an agent starts anything: **is this already running?**
 
 ```bash
-make link-skill   # symlink into ~/.claude/skills
-                  # or: make link-skill SKILLS_DIR=~/somewhere/else
+make skill:link   # symlink into ~/.claude/skills
+                  # or: make skill:link SKILLS_DIR=~/somewhere/else
 ```
 
 The skill is plain Markdown and the API is plain HTTP, so anything that can read a file and
@@ -107,7 +154,7 @@ Full detail: [Network exposure](https://elbeanio.github.io/the_running_man/api-r
 
 ## Documentation
 
-Everything is at **[elbeanio.github.io/the_running_man](https://elbeanio.github.io/the_running_man/)**:
+Full documentation lives here: **[elbeanio.github.io/the_running_man](https://elbeanio.github.io/the_running_man/)**
 
 | | |
 |---|---|
