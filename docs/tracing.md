@@ -1,5 +1,9 @@
 # OpenTelemetry Tracing with Running Man
 
+[Home](index.md) · [Overview](overview.md) · [Getting started](getting-started.md) · [Configuration](configuration.md) · [API reference](api-reference.md) · [Agent integration](agent-integration.md) · **Tracing** · [Architecture](architecture.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
+
+---
+
 Running Man includes built-in OpenTelemetry tracing support, making it easy to add distributed tracing to your local development workflow.
 
 ## Overview

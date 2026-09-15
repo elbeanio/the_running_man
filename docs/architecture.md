@@ -1,5 +1,9 @@
 # Architecture
 
+[Home](index.md) · [Overview](overview.md) · [Getting started](getting-started.md) · [Configuration](configuration.md) · [API reference](api-reference.md) · [Agent integration](agent-integration.md) · [Tracing](tracing.md) · **Architecture** · [Troubleshooting](troubleshooting.md) · [Development](development.md)
+
+---
+
 ## System Diagram
 
 ```mermaid

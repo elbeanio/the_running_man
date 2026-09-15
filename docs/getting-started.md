@@ -1,5 +1,9 @@
 # Getting Started with The Running Man
 
+[Home](index.md) · [Overview](overview.md) · **Getting started** · [Configuration](configuration.md) · [API reference](api-reference.md) · [Agent integration](agent-integration.md) · [Tracing](tracing.md) · [Architecture](architecture.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
+
+---
+
 Welcome to The Running Man! This guide will help you get started with the dev observability tool that captures logs, traces, and errors from your local development environment.
 
 ## Installation

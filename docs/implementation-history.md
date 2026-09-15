@@ -1,5 +1,9 @@
 # The Running Man Implementation History
 
+[Home](index.md) · [Overview](overview.md) · [Getting started](getting-started.md) · [Configuration](configuration.md) · [API reference](api-reference.md) · [Agent integration](agent-integration.md) · [Tracing](tracing.md) · [Architecture](architecture.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
+
+---
+
 ## Project Status
 
 This is a **weekend project** for building dev observability tooling focused on AI-assisted development.
