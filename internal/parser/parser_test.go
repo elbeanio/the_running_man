@@ -225,7 +225,7 @@ func TestPlainTextParser(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entry := parser.Parse("test", tt.input, ts)
+			entry := parser.Parse("test", tt.input, ts, false)
 
 			if entry.Level != tt.wantLevel {
 				t.Errorf("Level = %v, want %v", entry.Level, tt.wantLevel)

@@ -103,10 +103,24 @@ func (m *MultiParser) ParseLine(source string, line string, timestamp time.Time)
 	return m.ParseLineWithType(source, "", line, timestamp)
 }
 
+// ParseStderrLine is ParseLineWithType for a line that arrived on stderr.
+//
+// Whether a line came from stderr is weak evidence on its own -- many tools
+// write progress there -- but it is the only signal available for a failure
+// message that matches none of the level patterns, so it raises the floor to
+// warn rather than leaving it as info.
+func (m *MultiParser) ParseStderrLine(source string, sourceType string, line string, timestamp time.Time) []*LogEntry {
+	return m.parse(source, sourceType, line, timestamp, true)
+}
+
 // ParseLineWithType parses a log line with source type information.
 //
 // See ParseLine for the return contract.
 func (m *MultiParser) ParseLineWithType(source string, sourceType string, line string, timestamp time.Time) []*LogEntry {
+	return m.parse(source, sourceType, line, timestamp, false)
+}
+
+func (m *MultiParser) parse(source string, sourceType string, line string, timestamp time.Time, isStderr bool) []*LogEntry {
 	st := m.stateFor(source)
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -151,7 +165,7 @@ func (m *MultiParser) ParseLineWithType(source string, sourceType string, line s
 	}
 
 	// Fall back to plain text parser
-	plain := m.plainTextParser.Parse(source, line, timestamp)
+	plain := m.plainTextParser.Parse(source, line, timestamp, isStderr)
 	plain.SourceType = sourceType
 	return append(entries, plain)
 }

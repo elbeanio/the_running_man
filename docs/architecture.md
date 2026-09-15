@@ -78,6 +78,25 @@ Detects log formats and extracts structure.
 - **JSON logs** - Field extraction (level, message, trace_id, etc.)
 - **Plain text** - Heuristic level detection (ERROR, WARN, INFO)
 
+**Level detection for plain text**, in order:
+
+1. An explicit level in the text (`ERROR`, `[warn]`, `DEBUG:` …).
+2. Unambiguous failure phrases that contain no level word at all — "address already in
+   use", "permission denied", "connection refused", "command not found", "no such file or
+   directory", "read-only file system", "segmentation fault" and similar. Without these a
+   process could die with a perfectly clear message and be classified `info`.
+   Deliberately conservative: phrases like "not found" on its own are excluded, because a
+   web server logging a 404 is not an error and false positives make `/errors` useless.
+3. **stderr raises the floor to `warn`**, not `error`. Many well-behaved tools write
+   ordinary progress to stderr (npm, pip, webpack, git), so treating it as an error would
+   flood `/errors`. `warn` means "visible if you look, not shouted about".
+4. Otherwise `info`.
+
+Separately, the process manager records a `Process "name" failed: exited with code N`
+entry whenever a managed process exits non-zero. Process failures used to be printed only
+to running-man's own stdout, so nothing about them reached the buffer and `/errors` could
+be empty while a process sat there failed.
+
 ### Ring Buffer (`internal/storage`)
 
 In-memory circular buffer with time and size limits.
