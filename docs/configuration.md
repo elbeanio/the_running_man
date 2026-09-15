@@ -1,5 +1,9 @@
 # Configuration Guide
 
+[Home](index.md) · [Overview](overview.md) · [Getting started](getting-started.md) · **Configuration** · [API reference](api-reference.md) · [Agent integration](agent-integration.md) · [Tracing](tracing.md) · [Architecture](architecture.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
+
+---
+
 The Running Man supports comprehensive configuration through YAML files, CLI flags, and environment variables.
 
 ## Configuration File

@@ -1,5 +1,9 @@
 # Agent Integration Guide
 
+[Home](index.md) · [Overview](overview.md) · [Getting started](getting-started.md) · [Configuration](configuration.md) · [API reference](api-reference.md) · **Agent integration** · [Tracing](tracing.md) · [Architecture](architecture.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
+
+---
+
 Running Man exposes everything it captures over a **REST API**, which is the interface
 coding agents use. It is self-describing: `GET /` lists every endpoint and `/docs` serves
 interactive OpenAPI documentation, so an agent can discover the whole surface with one

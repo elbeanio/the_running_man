@@ -1,5 +1,9 @@
 # The Running Man
 
+**Home** · [Overview](overview.md) · [Getting started](getting-started.md) · [Configuration](configuration.md) · [API reference](api-reference.md) · [Agent integration](agent-integration.md) · [Tracing](tracing.md) · [Architecture](architecture.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
+
+---
+
 **Run your project's processes, capture everything they emit, and make it equally available
 to you and to your coding agent.**
 
@@ -10,29 +14,19 @@ cannot tell it that you recognise the problem.
 Running Man keeps one copy of your stack running, captures everything it emits, and serves
 that to both of you over the same API.
 
-## Start here
+## The pages
 
 | | |
 |---|---|
-| **[Overview](overview.md)** | What it is, what problem it solves, what it deliberately is not |
-| **[Getting started](getting-started.md)** | Install, first run, first queries |
-| **[Configuration](configuration.md)** | Every `running-man.yml` key and every CLI flag |
-
-## Reference
-
-| | |
-|---|---|
-| **[API reference](api-reference.md)** | Endpoints, query parameters, response shapes, and **[network exposure](api-reference.md#network-exposure)** |
-| **[Agent integration](agent-integration.md)** | The instance marker and the skill |
-| **[Tracing](tracing.md)** | OpenTelemetry setup and trace/log correlation |
-| **[Architecture](architecture.md)** | Components and how data flows between them |
-
-## When things go wrong
-
-| | |
-|---|---|
-| **[Troubleshooting](troubleshooting.md)** | Symptoms, causes, fixes |
-| **[Development](development.md)** | Building, testing, contributing |
+| [Overview](overview.md) | What it is, what problem it solves, what it deliberately is not |
+| [Getting started](getting-started.md) | Install, first run, first queries |
+| [Configuration](configuration.md) | Every `running-man.yml` key and every CLI flag |
+| [API reference](api-reference.md) | Endpoints, parameters, response shapes, [network exposure](api-reference.md#network-exposure) |
+| [Agent integration](agent-integration.md) | The instance marker and the skill |
+| [Tracing](tracing.md) | OpenTelemetry setup and trace/log correlation |
+| [Architecture](architecture.md) | Components and how data flows between them |
+| [Troubleshooting](troubleshooting.md) | Symptoms, causes, fixes |
+| [Development](development.md) | Building, testing, contributing |
 
 ## In 60 seconds
 

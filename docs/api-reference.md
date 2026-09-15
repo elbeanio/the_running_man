@@ -1,5 +1,9 @@
 # API Reference
 
+[Home](index.md) · [Overview](overview.md) · [Getting started](getting-started.md) · [Configuration](configuration.md) · **API reference** · [Agent integration](agent-integration.md) · [Tracing](tracing.md) · [Architecture](architecture.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
+
+---
+
 ## Overview
 
 The Running Man exposes a REST API on `http://localhost:9000` (configurable via `--api-port` or `api_port` in config). All endpoints return JSON responses.

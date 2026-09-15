@@ -1,5 +1,9 @@
 # Troubleshooting Guide
 
+[Home](index.md) · [Overview](overview.md) · [Getting started](getting-started.md) · [Configuration](configuration.md) · [API reference](api-reference.md) · [Agent integration](agent-integration.md) · [Tracing](tracing.md) · [Architecture](architecture.md) · **Troubleshooting** · [Development](development.md)
+
+---
+
 Common issues and solutions for The Running Man.
 
 ## Installation Issues
