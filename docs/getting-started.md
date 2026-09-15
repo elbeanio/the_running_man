@@ -206,9 +206,7 @@ curl -s http://localhost:9000/processes
 ### Skills
 
 Point your agent at Running Man with a skill — see
-[agent-integration.md](agent-integration.md). Running Man previously shipped an MCP
-server; it was removed because its scope was wrong for a per-project process runner
-(see `PROJECT.md`), and the REST API covers the same ground.
+[agent integration](agent-integration.md).
 
 ### Agent Commands Examples
 

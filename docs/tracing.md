@@ -480,16 +480,6 @@ Instrumented App → OTLP HTTP → Running Man Receiver → Trace Storage
                                                   Developer / AI Agent
 ```
 
-## 🔮 Future Enhancements
-
-Planned tracing improvements:
-
-- **Trace visualization** in TUI
-- **Export to Jaeger/Zipkin** for external analysis
-- **Metrics collection** via OpenTelemetry
-- **Custom span processors** for filtering/transformation
-- **Distributed context propagation** across services
-
 ## 📖 Resources
 
 - [OpenTelemetry Python Documentation](https://opentelemetry.io/docs/instrumentation/python/)
