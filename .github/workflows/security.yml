@@ -9,6 +9,16 @@ on:
     - cron: '0 2 * * 1'  # Weekly on Monday at 2 AM
 
 jobs:
+  # NOTE: this job is currently expected to FAIL.
+  #
+  # govulncheck reports GO-2026-4887 and GO-2026-4883 in
+  # github.com/docker/docker, both "Fixed in: N/A" -- no released version
+  # resolves them.
+  #
+  # Do NOT add an allowlist to turn this green. That is a deliberate decision
+  # (see PROJECT.md): a standing red check is a reminder to go and look, whereas
+  # a suppression quietly outlives the problem. Anything govulncheck reports
+  # beyond those two IDs is actionable -- fix it rather than filtering it.
   vulnerability-scan:
     name: Vulnerability Scan
     runs-on: ubuntu-latest
