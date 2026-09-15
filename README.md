@@ -16,7 +16,7 @@
 - **📱 Interactive TUI** - Real-time log viewer with tab switching between sources
 - **🔍 Smart Log Parsing** - Detects Python tracebacks, JSON logs, and plain text
 - **📡 OpenTelemetry Tracing** - Built-in OTLP receiver with automatic environment injection
-- **🤖 AI Agent Integration** - Self-describing REST API for Claude Code/OpenCode
+- **🤖 AI Agent Integration** - Self-describing REST API and an agent skill
 - **⚡ Ring Buffer Storage** - 30-minute retention survives app crashes; after a crash in
   headless mode the logs stay queryable until you quit (see `--keep-alive`)
 - **🔧 YAML Configuration** - Auto-discovery with CLI override support
@@ -84,7 +84,7 @@ See [running-man.yml](running-man.yml) for all configuration options.
 - **[Getting Started](docs/getting-started.md)** - Comprehensive guide for new users
 - **[Configuration Guide](docs/configuration.md)** - All YAML options and CLI flags
 - **[OpenTelemetry Tracing](docs/tracing.md)** - Complete OTEL setup and usage
-- **[AI Agent Integration](docs/agent-integration.md)** - Agent setup for Claude Code/OpenCode
+- **[AI Agent Integration](docs/agent-integration.md)** - Agent setup
 - **[API Reference](docs/api-reference.md)** - REST API documentation
 - **[Architecture](docs/architecture.md)** - System design and components
 - **[Development Guide](docs/development.md)** - Building and contributing
@@ -141,12 +141,33 @@ cat .running-man/instance.json
 ```
 
 It holds the API URL, every configured process, and ready-to-run `curl` hints — one file
-read, in a directory agents already inspect. Paired with the skill in
-`.opencode/skills/running-man/`, it answers the question that matters before an agent
-starts anything: **is this already running?**
+read, in a directory agents already inspect. It answers the question that matters before an
+agent starts anything: **is this already running?**
 
 `GET /processes` reports observed listening ports, so "is :8000 already served by your
 stack?" has a definite answer.
+
+### The agent skill
+
+[`skills/running-man/SKILL.md`](skills/running-man/SKILL.md) tells an agent *when* to reach
+for Running Man, not just how — starting with: before you start a dev server, check whether
+one is already running.
+
+Different agents read skills from different directories, so installation is a symlink into
+whichever one yours uses:
+
+```bash
+make link-skill                              # default: ~/.claude/skills
+make link-skill SKILLS_DIR=~/some/other/dir  # anywhere else
+make unlink-skill                            # remove it
+```
+
+It is a symlink rather than a copy, so editing the skill takes effect immediately rather
+than drifting from whatever was installed. Most agents discover skills at session start, so
+restart yours after linking.
+
+Running Man is not opinionated about which agent you use: the skill is a plain Markdown
+file and the API is plain HTTP, so anything that can read a file and run `curl` can use it.
 
 ### ⚠️ Network exposure
 
@@ -197,7 +218,7 @@ See [Tracing Guide](docs/tracing.md) for complete setup instructions.
 - ✅ **Phase 1:** Core Foundation (COMPLETE)
 - ✅ **Phase 2:** Multi-Source Capture (COMPLETE)
 - ✅ **Phase 2.5:** Quality of Life & Bug Fixes (COMPLETE)
-- ✅ **Phase 3:** Agent Integration (Claude Code, OpenCode) - COMPLETE
+- ✅ **Phase 3:** Agent Integration - COMPLETE
 - ✅ **Phase 4:** OpenTelemetry Tracing - COMPLETE
 - 📋 **Phase 5:** Browser Integration & Web UI
 - 📋 **Phase 6:** Advanced Visualization & Analytics
@@ -358,7 +379,7 @@ go test ./... -cover
 - ✅ **Phase 1:** Core Foundation (COMPLETE)
 - ✅ **Phase 2:** Multi-Source Capture (COMPLETE)
 - ✅ **Phase 2.5:** Quality of Life & Bug Fixes (COMPLETE)
-- ✅ **Phase 3:** Agent Integration (Claude Code, OpenCode) - COMPLETE
+- ✅ **Phase 3:** Agent Integration - COMPLETE
 - 📋 **Phase 4:** OTEL & Visualization
 - 📋 **Phase 5:** Browser Integration
 

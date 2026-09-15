@@ -77,16 +77,22 @@ curl -X POST http://localhost:9000/processes/{name}/restart
 
 ### The skill
 
-`.opencode/skills/running-man/SKILL.md` tells an agent **when** to reach for Running Man,
-not just how. Its first instruction is the one that matters: before starting a dev server,
-check whether one is already running.
+`skills/running-man/SKILL.md` tells an agent **when** to reach for Running Man, not just
+how. Its first instruction is the one that matters: before starting a dev server, check
+whether one is already running.
 
-It is discovered automatically in this project. To install it globally:
+Skills are picked up from different places depending on the agent you use, so installation
+is a symlink into whichever directory yours reads:
 
 ```bash
-make install-skills   # Claude Code (~/.claude/skills) and OpenCode (~/.config/opencode/skills)
-make install-skill    # Claude Code only
+make link-skill                              # default: ~/.claude/skills
+make link-skill SKILLS_DIR=~/some/other/dir  # anywhere else
+make unlink-skill                            # remove it
 ```
+
+A symlink rather than a copy, so editing `skills/running-man/SKILL.md` takes effect
+immediately instead of silently drifting from whatever was installed. Agents generally
+discover skills at session start, so restart yours after linking.
 
 ### The instance marker
 

@@ -6,7 +6,7 @@ A dev observability tool that captures logs from your local processes and Docker
 
 ## Why It Exists
 
-When debugging with Claude Code or OpenCode, you spend too much time:
+When debugging with an AI coding agent, you spend too much time:
 - Tab-switching between terminals to find the right logs
 - Copy-pasting stack traces and error messages
 - Missing important context (what happened before the error?)
@@ -22,7 +22,7 @@ Running Man solves this by capturing everything automatically and exposing it vi
 - **Interactive TUI** - Tab switching between log sources, real-time updates
 - **REST API** - Query logs by time, source, level, or content
 - **OpenTelemetry Tracing** - Built-in OTLP receiver with automatic environment injection
-- **REST API** - Agent integration via a self-describing HTTP API (Claude Code, OpenCode)
+- **REST API** - Agent integration via a self-describing HTTP API
 - **Smart parsing** - Detects Python tracebacks, JSON logs, plain text
 - **Ring buffer** - 30-minute retention survives app crashes
 - **Trace storage** - In-memory span storage with configurable retention

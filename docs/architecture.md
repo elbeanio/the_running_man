@@ -38,7 +38,7 @@ graph TB
     end
     
     subgraph "Consumers"
-        AGENT[AI Agent<br/>Claude Code/OpenCode]
+        AGENT[AI Agent]
         USER[Developer]
         
         API -->|REST API| AGENT

@@ -268,7 +268,7 @@ curl http://localhost:9000/
 
 If the API responds but the agent still ignores it, the problem is discovery rather than
 connectivity — the agent has no cheap signal that Running Man exists. Check that the
-skill is installed (`.opencode/skills/`) and that `AGENTS.md` points at it.
+skill is installed (see `skills/running-man/`) and that `AGENTS.md` points at it.
 
 ### An agent can't reach the API
 

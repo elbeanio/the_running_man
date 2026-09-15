@@ -1,4 +1,4 @@
-.PHONY: build test clean install install-local run-tests help
+.PHONY: build test test-coverage test-integration test-race clean deps install install-local link-skill unlink-skill fmt lint help
 
 # Default target
 all: build
@@ -72,29 +72,27 @@ lint:
 	@echo "Running linter..."
 	@golangci-lint run || echo "golangci-lint not installed, skipping"
 
-# Install OpenCode skill to ~/.claude/skills
-install-skill:
-	@echo "Installing the running-man skill to ~/.claude/skills..."
-	@mkdir -p ~/.claude/skills/running-man
-	@if [ -d ".opencode/skills/running-man" ]; then \
-		cp -r .opencode/skills/running-man/* ~/.claude/skills/running-man/; \
-		echo "✓ Skill installed to ~/.claude/skills/running-man"; \
-	else \
-		echo "❌ Error: .opencode/skills/running-man not found"; \
-		exit 1; \
-	fi
+# Link the skill into an agent's skills directory.
+#
+# Deliberately not opinionated about which agent harness you use: SKILLS_DIR is
+# a variable, and the default is only a default. A symlink rather than a copy,
+# so editing skills/running-man/SKILL.md takes effect immediately instead of
+# silently drifting from whatever was installed.
+SKILLS_DIR ?= $(HOME)/.claude/skills
 
-# Install the skill for both Claude Code and OpenCode
-install-skills: install-skill
-	@echo "Installing the running-man skill to ~/.config/opencode/skills..."
-	@mkdir -p ~/.config/opencode/skills/running-man
-	@if [ -d ".opencode/skills/running-man" ]; then \
-		cp -r .opencode/skills/running-man/* ~/.config/opencode/skills/running-man/; \
-		echo "✓ Skill installed to ~/.config/opencode/skills/running-man"; \
-	else \
-		echo "❌ Error: .opencode/skills/running-man not found"; \
+link-skill:
+	@if [ ! -d "skills/running-man" ]; then \
+		echo "Error: skills/running-man not found"; \
 		exit 1; \
 	fi
+	@mkdir -p "$(SKILLS_DIR)"
+	@rm -rf "$(SKILLS_DIR)/running-man"
+	@ln -s "$(CURDIR)/skills/running-man" "$(SKILLS_DIR)/running-man"
+	@echo "Linked $(SKILLS_DIR)/running-man -> $(CURDIR)/skills/running-man"
+
+unlink-skill:
+	@rm -rf "$(SKILLS_DIR)/running-man"
+	@echo "Removed $(SKILLS_DIR)/running-man"
 
 # Show help
 help:
@@ -108,8 +106,9 @@ help:
 	@echo "  deps             - Install/update dependencies"
 	@echo "  install          - Install to GOPATH"
 	@echo "  install-local    - Install to ~/bin"
-	@echo "  install-skill    - Install OpenCode skill to ~/.claude/skills"
-	@echo "  install-skills   - Install skill to both OpenCode and Claude locations"
+	@echo "  link-skill       - Symlink the agent skill into SKILLS_DIR"
+	@echo "                     (default ~/.claude/skills; override with SKILLS_DIR=...)"
+	@echo "  unlink-skill     - Remove that symlink"
 	@echo "  fmt              - Format code"
 	@echo "  lint             - Run linter"
 	@echo "  help             - Show this help"
