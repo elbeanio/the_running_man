@@ -2,6 +2,22 @@
 
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
+## Before starting any long-running process
+
+**Check whether it is already running:**
+
+```bash
+cat .running-man/instance.json 2>/dev/null && curl -s http://localhost:9000/processes
+```
+
+If that file exists, a Running Man instance is supervising this project and the dev
+servers are probably already up. Use them rather than starting a second copy — a second
+copy collides on the port or silently binds a different one, and its output is invisible
+to the developer watching the project.
+
+The file lists the API URL, every configured process, and ready-to-run `curl` hints.
+Full guidance is in `.opencode/skills/running-man/SKILL.md`.
+
 ## Project Context
 
 Read [`PROJECT.md`](PROJECT.md) for what this project is for, its constraints and its

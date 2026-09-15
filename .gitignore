@@ -42,3 +42,4 @@ internal/api/openapi.yaml
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+.running-man/

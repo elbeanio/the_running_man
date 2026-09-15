@@ -15,6 +15,7 @@ import (
 	"github.com/elbeanio/the_running_man/internal/api"
 	"github.com/elbeanio/the_running_man/internal/config"
 	"github.com/elbeanio/the_running_man/internal/docker"
+	"github.com/elbeanio/the_running_man/internal/instance"
 	"github.com/elbeanio/the_running_man/internal/parser"
 	"github.com/elbeanio/the_running_man/internal/process"
 	"github.com/elbeanio/the_running_man/internal/storage"
@@ -497,6 +498,51 @@ func runCommand(args []string) {
 		os.Exit(1)
 	}
 
+	// Write the instance marker so anything inspecting the project directory can
+	// discover this instance cheaply -- notably a coding agent about to start a
+	// dev server that is already running here.
+	//
+	// Written after the processes start so it is never present without an
+	// instance behind it, and removed on every shutdown path below.
+	projectDir, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[running-man] Could not determine working directory: %v\n", err)
+		projectDir = "."
+	}
+
+	marker := instance.New(
+		fmt.Sprintf("http://localhost:%d", finalAPIPort),
+		projectDir,
+		markerProcesses(processes),
+	)
+	if err := marker.Write(projectDir); err != nil {
+		// Not fatal: the marker is a discovery aid, and losing it must not stop
+		// the tool doing its actual job.
+		fmt.Fprintf(os.Stderr, "[running-man] Could not write instance marker: %v\n", err)
+	} else {
+		fmt.Printf("[running-man] Instance marker: %s\n", instance.Path(projectDir))
+	}
+
+	// Remove the marker however we leave: normal return, os.Exit paths below,
+	// and signals. A marker outliving its instance points an agent at a dead
+	// API, which is worse than no marker at all.
+	removeMarker := func() {
+		if err := instance.Remove(projectDir); err != nil {
+			fmt.Fprintf(os.Stderr, "[running-man] Could not remove instance marker: %v\n", err)
+		}
+	}
+	defer removeMarker()
+
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+		<-sigChan
+		// The process manager handles the signal too and stops the processes;
+		// this only cleans up the marker, because a deferred call does not run
+		// when the process is signalled.
+		removeMarker()
+	}()
+
 	// Launch TUI or run in headless mode (don't wait for processes to finish first)
 	if *noTUI {
 		// Headless mode - print info and wait for processes
@@ -564,6 +610,9 @@ func runCommand(args []string) {
 			// Report failure to the caller. Headless mode is the CI/automation
 			// path, and it previously exited 0 regardless, so a failing process
 			// looked like success.
+			//
+			// os.Exit skips deferred calls, so the marker is removed explicitly.
+			removeMarker()
 			os.Exit(1)
 		}
 	} else {
@@ -669,4 +718,25 @@ Examples:
 
 For more information, visit: github.com/elbeanio/the_running_man
 `)
+}
+
+// markerProcesses converts the resolved process configs into the marker's
+// stable view of them.
+//
+// Deliberately omits anything live (status, pid, ports): the marker records
+// what this instance was configured to run, and points at /processes for the
+// rest. See internal/instance.
+func markerProcesses(configs []process.ProcessConfig) []instance.Process {
+	out := make([]instance.Process, 0, len(configs))
+	for _, c := range configs {
+		out = append(out, instance.Process{
+			Name:        c.Name,
+			Command:     c.Command,
+			Type:        c.Type,
+			Description: c.Description,
+			URL:         c.URL,
+			Interval:    c.Interval,
+		})
+	}
+	return out
 }

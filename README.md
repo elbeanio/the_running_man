@@ -132,6 +132,22 @@ curl -s http://localhost:9000/processes
 `/errors`, `/processes`, `/processes/{name}`, `/processes/{name}/restart`,
 `/processes/stop-all`, `/health`, `/traces`, `/traces/{id}`, `/traces/{id}/logs`
 
+### Agents discover it automatically
+
+While an instance is running, `.running-man/instance.json` sits in the project root:
+
+```bash
+cat .running-man/instance.json
+```
+
+It holds the API URL, every configured process, and ready-to-run `curl` hints — one file
+read, in a directory agents already inspect. Paired with the skill in
+`.opencode/skills/running-man/`, it answers the question that matters before an agent
+starts anything: **is this already running?**
+
+`GET /processes` reports observed listening ports, so "is :8000 already served by your
+stack?" has a definite answer.
+
 ### ⚠️ Network exposure
 
 Running Man binds **all interfaces** by default, so containers and browsers can export to

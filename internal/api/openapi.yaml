@@ -574,6 +574,21 @@ components:
           type: string
           format: date-time
           description: When the process was started
+        interval:
+          type: string
+          description: |
+            Interval for a recurring process (e.g. "30s", "1m"). Absent for ordinary
+            long-running processes.
+        ports:
+          type: array
+          items:
+            type: integer
+          description: |
+            TCP ports this process (or any of its descendants) is listening on.
+            Observed via the OS, not configured -- nothing in running-man.yml records a
+            port. Absent when the process listens on nothing, has exited, or ports could
+            not be determined, and a process that has just started may not have bound
+            yet. A strong hint, not a guarantee.
       required:
         - name
         - command

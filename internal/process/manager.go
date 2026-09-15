@@ -39,6 +39,12 @@ type ProcessInfo struct {
 	ExitCode    int       `json:"exit_code"` // -1 for running processes
 	StartTime   time.Time `json:"start_time"`
 	Interval    string    `json:"interval,omitempty"` // Interval for recurring execution (e.g., "1m", "30s")
+
+	// Ports the process (or any of its descendants) is listening on. Observed,
+	// not configured -- nothing in running-man.yml records a port. Empty when
+	// the process listens on nothing, has exited, or ports could not be
+	// determined; treat it as a hint, never a guarantee.
+	Ports []int `json:"ports,omitempty"`
 }
 
 // Manager manages multiple ProcessWrappers
@@ -413,6 +419,9 @@ func (m *Manager) ListProcesses() []ProcessInfo {
 			info.Interval = config.Interval
 			info.Status = recurringStatus(info.Status, config.Interval, info.ExitCode)
 		}
+		if info.Status == "running" {
+			info.Ports = ListeningPorts(info.PID)
+		}
 		infos = append(infos, info)
 	}
 	return infos
@@ -476,6 +485,9 @@ func (m *Manager) GetProcess(name string) (*ProcessInfo, error) {
 		info.URL = config.URL
 		info.Interval = config.Interval
 		info.Status = recurringStatus(info.Status, config.Interval, info.ExitCode)
+	}
+	if info.Status == "running" {
+		info.Ports = ListeningPorts(info.PID)
 	}
 	return info, nil
 }
