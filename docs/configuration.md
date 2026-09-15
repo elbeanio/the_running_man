@@ -277,7 +277,8 @@ shell: /bin/zsh
 OpenTelemetry tracing configuration.
 
 **Sub-fields:**
-- `enabled` (boolean): Enable/disable tracing (default: `true`)
+- `enabled` (boolean): Enable/disable tracing (default: `true`). **Removing the `tracing:`
+  block does not disable tracing** — absence means the default applies. Set `enabled: false`.
 - `port` (integer): OTLP HTTP receiver port (default: `4318`). Other collectors default to
   4318 as well — Arize Phoenix, the OpenTelemetry Collector, Jaeger — so change this if one
   of them is already running. A conflict fails at startup rather than silently disabling

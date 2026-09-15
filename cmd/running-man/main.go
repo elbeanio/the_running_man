@@ -290,6 +290,26 @@ func runCommand(args []string) {
 		finalShell = cfg.GetShell()
 	}
 
+	// Was tracing actually requested, or is it merely on by default?
+	//
+	// This matters when the OTLP port is already taken. If tracing was asked
+	// for, a conflict is fatal -- silently not doing what was asked is worse.
+	// If it is on only because the default is on, refusing to start would
+	// block the whole tool over a feature nobody requested, which is how
+	// Running Man behaves alongside any other collector on 4318.
+	tracingRequested := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "tracing" || f.Name == "tracing-port" {
+			tracingRequested = true
+		}
+	})
+	if cfg != nil && cfg.Tracing.Enabled != nil {
+		tracingRequested = true
+	}
+	if cfg != nil && cfg.Tracing.Port != 0 {
+		tracingRequested = true
+	}
+
 	// Get tracing configuration
 	finalTracingEnabled := *tracingEnabled
 	finalTracingPort := *tracingPort
@@ -575,9 +595,24 @@ func runCommand(args []string) {
 				"Other OTLP collectors default to it too -- Arize Phoenix, the OTel Collector, Jaeger.\n",
 				finalTracingPort)
 			fmt.Fprintf(os.Stderr, "[running-man]   running-man run --tracing-port PORT   use a different port\n")
-			fmt.Fprintf(os.Stderr, "[running-man]   running-man run --tracing=false        run without tracing\n")
-			os.Exit(1)
+			fmt.Fprintf(os.Stderr, "[running-man]   running-man run --tracing=false        silence this\n")
+
+			if tracingRequested {
+				// Tracing was asked for. Carrying on without it would be the
+				// silent failure this replaced.
+				os.Exit(1)
+			}
+
+			// Tracing is on only because the default is on. Continue without
+			// it rather than blocking startup over an unrequested feature.
+			fmt.Fprintf(os.Stderr, "[running-man] Continuing without tracing (it was not explicitly enabled).\n\n")
+			tracingReceiver = nil
+			spanStorage = nil
+			finalTracingEnabled = false
 		}
+	}
+
+	if tracingReceiver != nil {
 
 		// Wait for receiver to be ready before starting processes
 		fmt.Printf("[running-man] Waiting for OTEL receiver to be ready...\n")
