@@ -51,7 +51,7 @@ If you're new to The Running Man, follow this path:
 
 ### For AI Agent Integration
 - [agent-integration.md](agent-integration.md) - agent setup guide
-- OpenCode and Claude Desktop configuration
+- Installing the agent skill
 - Endpoints and usage examples
 
 ### For API Integration

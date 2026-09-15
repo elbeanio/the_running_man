@@ -16,7 +16,7 @@ copy collides on the port or silently binds a different one, and its output is i
 to the developer watching the project.
 
 The file lists the API URL, every configured process, and ready-to-run `curl` hints.
-Full guidance is in `.opencode/skills/running-man/SKILL.md`.
+Full guidance is in `skills/running-man/SKILL.md`.
 
 ## Project Context
 
