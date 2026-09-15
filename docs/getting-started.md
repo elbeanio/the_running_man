@@ -2,7 +2,7 @@
 
 Welcome to The Running Man! This guide will help you get started with the dev observability tool that captures logs, traces, and errors from your local development environment.
 
-## 📦 Installation
+## Installation
 
 ### Option 1: Install via Go (Recommended)
 
@@ -30,7 +30,7 @@ running-man --version
 # Should show version information
 ```
 
-## 🚀 Your First Run
+## Your First Run
 
 ### Basic Example
 
@@ -70,54 +70,26 @@ Running Man will:
 - Show each service in a separate TUI tab
 - Handle container restarts automatically
 
-## ⚙️ Configuration
+## Configuration
 
-### Configuration File
-
-Create a `running-man.yml` file in your project root:
+Most projects want a `running-man.yml` rather than long command lines. Auto-discovered from
+the working directory:
 
 ```yaml
-# running-man.yml
 processes:
   - name: backend
     command: python server.py
-    restart_on_crash: true  # Auto-restart on failure
-
   - name: frontend
     command: npm run dev
-    shell: /bin/bash  # Use bash for shell features
 
 docker_compose: ./docker-compose.yml
-
-api_port: 9000
-retention: 30m  # Keep logs for 30 minutes
-
-tracing:
-  enabled: true
-  port: 4318
-  max_spans: 10000
 ```
 
-### Auto-discovery
+Then `running-man run` needs no arguments.
 
-Running Man automatically searches up the directory tree for `running-man.yml`:
+Every key and every flag is documented in **[Configuration](configuration.md)**.
 
-```bash
-# From anywhere in your project
-running-man run  # Finds and uses running-man.yml
-```
-
-### CLI Flags Override Config
-
-```bash
-# Override specific settings
-running-man run \
-  --api-port 8080 \
-  --tracing false \
-  --process "custom command"
-```
-
-## 🖥️ Using the TUI
+## Using the TUI
 
 The Terminal User Interface (TUI) provides real-time log viewing:
 
@@ -142,7 +114,7 @@ running-man run --process "pytest" --no-tui
 # Runs processes, captures logs, but doesn't show TUI
 ```
 
-## 🔍 Querying Logs
+## Querying Logs
 
 ### REST API
 
@@ -181,136 +153,45 @@ curl "http://localhost:9000/logs?limit=100&offset=0"
 curl "http://localhost:9000/logs?since=2024-01-15T10:00:00Z&until=2024-01-15T11:00:00Z"
 ```
 
-## 🤖 AI Agent Integration
+## Point your agent at it
 
-### The REST API
+While an instance is running, `.running-man/instance.json` sits in the project root with
+the API URL, the configured processes and ready-to-run `curl` hints. Agents find it on
+their own.
 
-Agents use Running Man's REST API. It is self-describing, so an agent needs no setup and
-no configuration file — one request discovers the whole surface:
-
-```bash
-# List every endpoint
-curl http://localhost:9000/
-
-# Interactive OpenAPI documentation
-open http://localhost:9000/docs
-```
-
-The most useful question an agent can ask is whether a service is *already running*
-before starting its own copy:
+Install the skill so yours knows when to look:
 
 ```bash
-curl -s http://localhost:9000/processes
+make link-skill
 ```
 
-### Skills
+See **[Agent integration](agent-integration.md)**.
 
-Point your agent at Running Man with a skill — see
-[agent integration](agent-integration.md).
+## Tracing
 
-### Agent Commands Examples
-
-Once configured, your AI agent can:
-- "Show me recent errors from the backend"
-- "Check if the frontend process is running"
-- "Search logs for 'database connection' issues"
-- "Get startup logs to see why a process failed"
-- "Show me slow traces from the last 5 minutes"
-
-## 📊 OpenTelemetry Tracing
-
-### Enable Tracing
-
-Tracing is enabled by default. To verify:
+Tracing is on by default. Running Man runs an OTLP receiver on port 4318 and injects the
+matching `OTEL_*` variables into the processes it starts, so an instrumented app finds it
+without configuration.
 
 ```bash
-running-man run --process "echo 'Hello'" --no-tui
-# Should show: "Tracing: OTLP receiver on http://localhost:4318"
+curl -s 'http://localhost:9000/traces?since=10m'
+curl -s http://localhost:9000/traces/TRACE_ID/logs   # logs correlated to a trace
 ```
 
-### Python Application Setup
+Setup for Python, Flask and Django: **[Tracing](tracing.md)**.
 
-**requirements.txt:**
-```txt
-opentelemetry-api==1.28.0
-opentelemetry-sdk==1.28.0
-opentelemetry-exporter-otlp==1.28.0
-```
-
-**app.py:**
-```python
-from opentelemetry import trace
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-
-# Running Man automatically sets OTEL_EXPORTER_OTLP_ENDPOINT
-trace.set_tracer_provider(TracerProvider())
-tracer_provider = trace.get_tracer_provider()
-
-otlp_exporter = OTLPSpanExporter()
-span_processor = BatchSpanProcessor(otlp_exporter)
-tracer_provider.add_span_processor(span_processor)
-
-tracer = trace.get_tracer(__name__)
-
-# Create spans
-with tracer.start_as_current_span("my_operation"):
-    # Your code here
-    pass
-```
-
-### Query Traces
+## Docker Compose
 
 ```bash
-# Via REST API
-curl "http://localhost:9000/traces?since=5m"
-curl "http://localhost:9000/traces/abc123-def456"  # Specific trace
-
-# Or ask an agent, which will query the same endpoints
-# "Show me traces with errors"
-```
-
-## 🐳 Docker Development
-
-### Basic Docker Compose
-
-```yaml
-# docker-compose.yml
-version: '3.8'
-services:
-  postgres:
-    image: postgres:15
-    environment:
-      POSTGRES_PASSWORD: password
-  
-  redis:
-    image: redis:7-alpine
-  
-  app:
-    build: .
-    depends_on:
-      - postgres
-      - redis
-```
-
-```bash
-# Monitor all services
 running-man run --docker-compose ./docker-compose.yml
 ```
 
-### Environment Variables
+Container logs join your process logs in the same buffer and get their own TUI tabs. If the
+stack is not running, Running Man offers to start it — and leaves it running when you quit.
 
-Running Man supports environment variable substitution in configuration:
+Profiles, multiple files and project names: **[Configuration](configuration.md#docker-integration)**.
 
-```yaml
-processes:
-  - name: app
-    command: python server.py --port ${PORT:-8000}
-    # Uses PORT env var, defaults to 8000
-```
-
-## 🔧 Common Workflows
+## Common Workflows
 
 ### Development Workflow
 
@@ -378,40 +259,22 @@ running-man run
 # Or directly: curl "http://localhost:9000/traces?since=2m"
 ```
 
-## 🚨 Troubleshooting
+## If something is wrong
 
-### Common Issues
+Start with what Running Man captured:
 
-**"Port already in use"**
 ```bash
-# Change API port
-running-man run --api-port 9001
-
-# Change tracing port
-running-man run --tracing-port 4321
+curl -s 'http://localhost:9000/errors?since=10m'
+curl -s http://localhost:9000/processes        # is anything not running?
 ```
 
-**"Command not found: running-man"**
-- Ensure Go binary is in your PATH
-- Or use full path: `~/go/bin/running-man`
+A process that exits non-zero is recorded as an error, so `/errors` tells you something
+died even if the process itself said nothing recognisable. Check `level=warn` too — output
+on stderr that matched no known error phrasing lands there.
 
-**"TUI rendering issues"**
-- Try a different terminal (iTerm2, Alacritty, WezTerm)
-- Ensure terminal supports ANSI escape codes
+Symptoms, causes and fixes: **[Troubleshooting](troubleshooting.md)**.
 
-**"Docker logs not appearing"**
-- Ensure Docker daemon is running
-- Check `docker ps` to see if containers are running
-- Verify docker-compose.yml path is correct
-
-### Getting Help
-
-- Check the [Troubleshooting Guide](troubleshooting.md)
-- Review [Configuration Guide](configuration.md) for all options
-- See [API Reference](api-reference.md) for endpoint details
-- File issues on [GitHub](https://github.com/elbeanio/the_running_man/issues)
-
-## 📚 Next Steps
+## Next Steps
 
 Now that you're up and running, explore:
 

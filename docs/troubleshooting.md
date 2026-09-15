@@ -2,7 +2,7 @@
 
 Common issues and solutions for The Running Man.
 
-## 🚨 Installation Issues
+## Installation Issues
 
 ### "Command not found: running-man"
 
@@ -51,7 +51,7 @@ chmod +x ~/go/bin/running-man
 sudo go install github.com/elbeanio/the_running_man/cmd/running-man@latest
 ```
 
-## 🔧 Configuration Issues
+## Configuration Issues
 
 ### Configuration File Not Found
 
@@ -111,7 +111,7 @@ processes:
     command: python app.py --port ${PORT}
 ```
 
-## 🖥️ Runtime Issues
+## Runtime Issues
 
 ### Port Already in Use
 
@@ -149,7 +149,7 @@ ls -la docker-compose.yml
 docker info
 
 # Run with verbose logging
-RUNNING_MAN_DEBUG=1 running-man run --docker-compose docker-compose.yml
+running-man run --docker-compose docker-compose.yml
 ```
 
 ### TUI Rendering Issues
@@ -193,7 +193,7 @@ processes:
     command: /usr/bin/python /full/path/app.py
 ```
 
-## 📊 OpenTelemetry Issues
+## OpenTelemetry Issues
 
 ### Tracing Not Enabled
 
@@ -248,7 +248,7 @@ tracing:
   max_span_age: 10m
 ```
 
-## 🤖 AI Agent Issues
+## AI Agent Issues
 
 ### An agent isn't using Running Man
 
@@ -283,7 +283,7 @@ lsof -i :9000
 running-man run --api-port 9001
 ```
 
-## 🔍 API Issues
+## API Issues
 
 ### 403 when restarting or stopping a process
 
@@ -382,7 +382,7 @@ curl "http://localhost:9000/logs?limit=1000"
 curl "http://localhost:9000/logs?source=*"
 ```
 
-## 🐳 Docker-Specific Issues
+## Docker-Specific Issues
 
 ### Docker Daemon Not Running
 
@@ -441,7 +441,7 @@ docker logs <container-name>
 docker-compose restart
 ```
 
-## 🐍 Python-Specific Issues
+## Python-Specific Issues
 
 ### OpenTelemetry Python Packages Missing
 
@@ -496,21 +496,20 @@ import os
 os.environ.setdefault('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://localhost:4318')
 ```
 
-## 🐛 Debugging Techniques
+## Debugging Techniques
 
-### Enable Debug Logging
+### Seeing what Running Man is doing
+
+There is no debug or verbosity flag. Running Man reports what it resolved on startup and
+captures its own output as the `running-man` source, so its decisions are queryable like
+anything else:
 
 ```bash
-# Set debug environment variable
-RUNNING_MAN_DEBUG=1 running-man run --process "python app.py"
-
-# Debug output includes:
-# - Configuration loading
-# - Process startup
-# - API initialization
-# - Trace ingestion
+curl -s 'http://localhost:9000/logs?source=running-man&since=5m'
 ```
 
+Startup prints the API address and network posture, the Compose files, profiles and
+services being watched, which services are not running, and the instance marker path.
 ### Check Log Files
 
 ```bash
@@ -557,7 +556,7 @@ curl http://localhost:9000/health | jq '.buffer'
 curl http://localhost:9000/health | jq '.tracing'
 ```
 
-## 🔄 Performance Issues
+## Performance Issues
 
 ### High Memory Usage
 
@@ -615,7 +614,7 @@ processes:
       python app.py
 ```
 
-## 🆘 Getting Help
+## Getting Help
 
 ### Collect Diagnostic Information
 
@@ -635,7 +634,7 @@ uname -a
 cat running-man.yml
 
 # Error output
-RUNNING_MAN_DEBUG=1 running-man run --process "test" 2>&1
+running-man run --process "test" 2>&1
 
 # API test
 curl -v http://localhost:9000/health
@@ -681,17 +680,5 @@ curl http://localhost:9000/health
 
 4. **Checking logs**:
 ```bash
-RUNNING_MAN_DEBUG=1 running-man run --process "echo test" 2>&1 | tail -50
+running-man run --process "echo test" 2>&1 | tail -50
 ```
-
-## 📚 Additional Resources
-
-- [Getting Started Guide](getting-started.md)
-- [Configuration Guide](configuration.md)
-- [OpenTelemetry Guide](tracing.md)
-- [API Reference](api-reference.md)
-- [GitHub Repository](https://github.com/elbeanio/the_running_man)
-
----
-
-*Still having issues?* Create a detailed issue on [GitHub](https://github.com/elbeanio/the_running_man/issues) with the diagnostic information above.

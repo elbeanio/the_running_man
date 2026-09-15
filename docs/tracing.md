@@ -2,7 +2,7 @@
 
 Running Man includes built-in OpenTelemetry tracing support, making it easy to add distributed tracing to your local development workflow.
 
-## 📊 Overview
+## Overview
 
 Running Man provides a complete OpenTelemetry solution for local development:
 
@@ -13,7 +13,7 @@ Running Man provides a complete OpenTelemetry solution for local development:
 - **Trace endpoints** for exploration by AI agents
 - **REST API** for programmatic access to traces
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Enable Tracing
 
@@ -44,7 +44,7 @@ Running Man automatically injects OTEL environment variables into managed proces
 | `OTEL_METRICS_SAMPLER` | `always_on` | Sample all metrics |
 | `OTEL_LOGS_SAMPLER` | `always_on` | Sample all logs |
 
-## 🐍 Python Setup Examples
+## Python Setup Examples
 
 ### Basic Python Application
 
@@ -266,7 +266,7 @@ if __name__ == '__main__':
     main()
 ```
 
-## ⚙️ Configuration
+## Configuration
 
 ### YAML Configuration
 
@@ -298,7 +298,7 @@ running-man run --process "python app.py" --tracing-port 4321
 running-man run --config my-config.yml
 ```
 
-## 🔍 Querying Traces
+## Querying Traces
 
 ### REST API
 
@@ -341,7 +341,7 @@ running-man run --process "python app.py"
 # - "Show me traces from the payment service"
 ```
 
-## 🎯 Advanced Usage
+## Advanced Usage
 
 ### Custom Span Attributes
 
@@ -402,7 +402,7 @@ def process_request(request_id):
         # Your processing logic...
 ```
 
-## 🚨 Troubleshooting
+## Troubleshooting
 
 ### Spans Not Appearing
 
@@ -451,7 +451,7 @@ tracing:
   max_span_age: 1h  # Reduce retention
 ```
 
-## 📚 Architecture
+## Architecture
 
 ### Components
 
@@ -480,7 +480,7 @@ Instrumented App → OTLP HTTP → Running Man Receiver → Trace Storage
                                                   Developer / AI Agent
 ```
 
-## 📖 Resources
+## Resources
 
 - [OpenTelemetry Python Documentation](https://opentelemetry.io/docs/instrumentation/python/)
 - [OpenTelemetry Python GitHub](https://github.com/open-telemetry/opentelemetry-python)

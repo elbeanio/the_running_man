@@ -285,27 +285,14 @@ All endpoints return standard HTTP error codes:
 
 ---
 
-## Rate Limiting
-
-Currently no rate limiting (local development tool).
-
----
-
-## CORS
-
-Wildcard origin (`Access-Control-Allow-Origin: *`) on both the API and the OTLP
-receiver. Browser-based OTLP export depends on it.
-
----
-
-## Authentication
-
-**None.** There are no credentials, tokens or sessions. Access control is by network
-location only — see below.
-
----
-
 ## Network exposure
+
+**There is no authentication.** No credentials, no tokens, no sessions. Access control is
+by network location only, described below. There is no rate limiting either — this is a
+local development tool.
+
+CORS uses a wildcard origin (`Access-Control-Allow-Origin: *`) on both the API and the OTLP
+receiver, because browser-based OTLP export depends on it.
 
 Running Man binds **all interfaces** (`0.0.0.0`) by default, on both the API port (9000)
 and the OTLP receiver port (4318). This is deliberate: Docker containers exporting to

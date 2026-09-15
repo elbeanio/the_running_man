@@ -2,7 +2,7 @@
 
 This guide covers how to build, test, and contribute to The Running Man.
 
-## 🏗️ Building from Source
+## Building from Source
 
 ### Prerequisites
 
@@ -44,7 +44,7 @@ GOOS=darwin GOARCH=arm64 go build -o running-man-macos-arm64 ./cmd/running-man
 # ps/lsof. A Windows port would need a separate implementation of that package.
 ```
 
-## 🧪 Testing
+## Testing
 
 ### Run All Tests
 
@@ -93,7 +93,7 @@ go tool cover -html=coverage.out -o coverage.html
 go tool cover -func=coverage.out
 ```
 
-## 🏃 Running Locally
+## Running Locally
 
 ### Development Build
 
@@ -109,13 +109,13 @@ go build -gcflags="all=-N -l" -o running-man-debug ./cmd/running-man
 
 ```bash
 # Run with debug logging
-RUNNING_MAN_DEBUG=1 ./running-man run --process "python app.py"
+./running-man run --process "python app.py"
 
 # Use delve debugger
 dlv debug ./cmd/running-man -- run --process "python app.py"
 ```
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 the_running_man/
@@ -157,7 +157,7 @@ the_running_man/
 - **parser.go** - Log format detection
 - **formats/** - Specific format parsers (python, json, plain)
 
-## 🔧 Adding New Features
+## Adding New Features
 
 ### Adding a New API Endpoint
 
@@ -199,7 +199,7 @@ func NewMultiParser() *MultiParser {
 }
 ```
 
-## 🧹 Code Style
+## Code Style
 
 ### Formatting
 
@@ -234,7 +234,7 @@ return fmt.Errorf("failed to parse %s: %w", filename, err)
 var ErrNotFound = errors.New("not found")
 ```
 
-## 📦 Dependencies
+## Dependencies
 
 ### Adding a Dependency
 
@@ -253,7 +253,7 @@ go mod tidy
 - **github.com/charmbracelet/bubbletea** - TUI framework
 - **gopkg.in/yaml.v3** - YAML parsing
 
-## 🐛 Debugging
+## Debugging
 
 ### Common Issues
 
@@ -282,7 +282,7 @@ running-man run --tracing-port 4321
 
 Enable debug logging with environment variable:
 ```bash
-RUNNING_MAN_DEBUG=1 ./running-man run --process "python app.py"
+./running-man run --process "python app.py"
 ```
 
 Debug output includes:
@@ -291,7 +291,7 @@ Debug output includes:
 - API server initialization
 - Trace ingestion
 
-## 🚀 Release Process
+## Release Process
 
 ### Versioning
 
@@ -331,7 +331,7 @@ go test -tags=integration ./...
 - [ ] Release notes written
 - [ ] GitHub release created
 
-## 🤝 Contributing
+## Contributing
 
 ### Workflow
 
@@ -377,7 +377,7 @@ git push origin feature/new-feature
 - [ ] Performance considerations addressed
 - [ ] Security implications considered
 
-## 📊 Performance Considerations
+## Performance Considerations
 
 ### Memory Usage
 
@@ -397,7 +397,7 @@ go test -bench=. -cpuprofile=cpu.prof
 go tool pprof cpu.prof
 ```
 
-## 🔒 Security
+## Security
 
 ### Best Practices
 
@@ -422,37 +422,3 @@ go tool pprof cpu.prof
 - **Docker integration**: Requires Docker socket access
 - **Environment variables**: May contain secrets (not logged)
 - **Configuration files**: May be in source control
-
-## 📚 Learning Resources
-
-### Go Resources
-- [Go Documentation](https://go.dev/doc/)
-- [Effective Go](https://go.dev/doc/effective_go)
-- [Go by Example](https://gobyexample.com/)
-
-### Project-Specific
-- [OpenTelemetry Go](https://opentelemetry.io/docs/instrumentation/go/)
-- [Model Context Protocol](https://spec.modelcontextprotocol.io/)
-- [Bubble Tea TUI](https://github.com/charmbracelet/bubbletea)
-
-### Related Projects
-- [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)
-- [Jaeger](https://www.jaegertracing.io/)
-- [Grafana](https://grafana.com/)
-
-## 🆘 Getting Help
-
-### Issue Tracker
-- [GitHub Issues](https://github.com/elbeanio/the_running_man/issues)
-- **Bug reports**: Include reproduction steps
-- **Feature requests**: Describe use case
-- **Questions**: Check documentation first
-
-### Development Questions
-- Check existing issues and PRs
-- Review code and documentation
-- Ask in issue comments
-
----
-
-*Happy coding!* 🏃

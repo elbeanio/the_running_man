@@ -2,7 +2,7 @@
 
 The Running Man supports comprehensive configuration through YAML files, CLI flags, and environment variables.
 
-## 📁 Configuration File
+## Configuration File
 
 ### File Location
 
@@ -49,7 +49,7 @@ tracing:
   max_span_age: 30m
 ```
 
-## ⚙️ Configuration Options
+## Configuration Options
 
 ### Processes Configuration
 
@@ -287,7 +287,7 @@ tracing:
   max_span_age: 1h
 ```
 
-## 🔧 Environment Variable Substitution
+## Environment Variable Substitution
 
 Running Man supports environment variable substitution in configuration values.
 
@@ -318,7 +318,7 @@ processes:
     # Uses PROJECT_DIR environment variable
 ```
 
-## 🚩 CLI Flags
+## CLI Flags
 
 CLI flags override configuration file values.
 
@@ -410,7 +410,7 @@ failure it is meant to report.
 
 Headless mode **exits non-zero** when any managed process fails, in every mode.
 
-## 📋 Configuration Examples
+## Configuration Examples
 
 ### Basic Development Setup
 ```yaml
@@ -509,7 +509,7 @@ processes:
 # ENVIRONMENT=staging running-man run
 ```
 
-## 🔄 Configuration Precedence
+## Configuration Precedence
 
 Running Man uses this precedence order (highest to lowest):
 
@@ -530,7 +530,7 @@ running-man run
 # Config uses ${PORT:-8000} → 3000
 ```
 
-## 🧪 Validation
+## Validation
 
 Running Man validates configuration with helpful error messages:
 
@@ -566,7 +566,7 @@ To see what Running Man resolved, start it and read the banner and the startup l
 report the API address and posture, the Compose files and profiles, the services being
 watched, and which are not.
 
-## 📁 Multiple Configuration Files
+## Multiple Configuration Files
 
 ### Layered Configuration
 You can use multiple configuration files:
@@ -603,7 +603,7 @@ retention: 5m  # Shorter retention in production
 max_entries: 1000
 ```
 
-## 🔍 Configuration Tips
+## Configuration Tips
 
 ### 1. Use Environment Variables for Secrets
 ```yaml
@@ -657,7 +657,7 @@ processes:
       fi
 ```
 
-## 🚨 Common Issues
+## Common Issues
 
 ### Configuration File Not Found
 ```bash
@@ -689,7 +689,7 @@ retention: 30m  # Correct
 retention: 30   # Incorrect
 ```
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [getting-started.md](getting-started.md) - Getting started guide
 - [tracing.md](tracing.md) - OpenTelemetry configuration
