@@ -2,6 +2,7 @@ package config
 
 import (
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -27,6 +28,9 @@ func TestDockerComposeConfig_AcceptsStringForm(t *testing.T) {
 	if got := cfg.DockerCompose.GetStart(); got != ComposeStartAsk {
 		t.Errorf("start = %q, want %q", got, ComposeStartAsk)
 	}
+	if got := cfg.DockerCompose.GetStartTimeout(); got != DefaultComposeStartTimeout {
+		t.Errorf("start_timeout = %s, want %s", got, DefaultComposeStartTimeout)
+	}
 }
 
 func TestDockerComposeConfig_AcceptsStructuredForm(t *testing.T) {
@@ -39,6 +43,7 @@ docker_compose:
   project_name: myproject
   env_file: .env
   start: always
+  start_timeout: 5m
 `
 	var cfg Config
 	if err := yaml.Unmarshal([]byte(in), &cfg); err != nil {
@@ -60,6 +65,9 @@ docker_compose:
 	}
 	if d.GetStart() != ComposeStartAlways {
 		t.Errorf("start = %q", d.GetStart())
+	}
+	if got := d.GetStartTimeout(); got != 5*time.Minute {
+		t.Errorf("start_timeout = %s, want 5m", got)
 	}
 }
 
@@ -85,8 +93,34 @@ func TestDockerComposeConfig_Validate(t *testing.T) {
 		t.Error("an empty profile name should be rejected")
 	}
 
+	unparseable := &Config{Processes: base, DockerCompose: DockerComposeConfig{
+		Files: []string{"a.yml"}, StartTimeout: "5 minutes",
+	}}
+	if err := unparseable.Validate(); err == nil {
+		t.Error("an unparseable start_timeout should be rejected")
+	}
+
+	// A non-positive deadline has already passed, so the wait would give up
+	// before any container could appear.
+	zeroTimeout := &Config{Processes: base, DockerCompose: DockerComposeConfig{
+		Files: []string{"a.yml"}, StartTimeout: "0s",
+	}}
+	if err := zeroTimeout.Validate(); err == nil {
+		t.Error("a zero start_timeout should be rejected")
+	}
+
+	negativeTimeout := &Config{Processes: base, DockerCompose: DockerComposeConfig{
+		Files: []string{"a.yml"}, StartTimeout: "-1m",
+	}}
+	if err := negativeTimeout.Validate(); err == nil {
+		t.Error("a negative start_timeout should be rejected")
+	}
+
 	ok := &Config{Processes: base, DockerCompose: DockerComposeConfig{
-		Files: []string{"a.yml"}, Profiles: []string{"api"}, Start: ComposeStartNever,
+		Files:        []string{"a.yml"},
+		Profiles:     []string{"api"},
+		Start:        ComposeStartNever,
+		StartTimeout: "10m",
 	}}
 	if err := ok.Validate(); err != nil {
 		t.Errorf("valid compose config rejected: %v", err)

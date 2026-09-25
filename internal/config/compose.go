@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -19,6 +20,12 @@ const (
 	ComposeStartAlways = "always"
 )
 
+// DefaultComposeStartTimeout bounds how long to wait for containers to appear
+// after starting the stack. Enough for an ordinary stack; a project that has to
+// bring up a database, migrate it and then start something slow behind that
+// needs start_timeout.
+const DefaultComposeStartTimeout = 30 * time.Second
+
 // DockerComposeConfig describes a Compose project to watch.
 //
 // Accepts both the original string form and a structured form:
@@ -31,6 +38,7 @@ const (
 //	  project_name: myproject
 //	  env_file: .env
 //	  start: ask
+//	  start_timeout: 5m
 //
 // The string form is kept working because it is in the README and the shipped
 // example config.
@@ -56,6 +64,10 @@ type DockerComposeConfig struct {
 	// Start controls whether to offer to bring the stack up when nothing is
 	// running: ask (default), never, always.
 	Start string `yaml:"start,omitempty"`
+
+	// StartTimeout is how long to wait for containers to appear after starting
+	// the stack, as a duration string. Defaults to DefaultComposeStartTimeout.
+	StartTimeout string `yaml:"start_timeout,omitempty"`
 }
 
 // UnmarshalYAML accepts either a plain path string or the structured mapping.
@@ -108,6 +120,20 @@ func (d *DockerComposeConfig) GetStart() string {
 	return d.Start
 }
 
+// GetStartTimeout returns how long to wait for containers after starting the
+// stack, or the default. Call Validate() first to ensure the value parses.
+func (d *DockerComposeConfig) GetStartTimeout() time.Duration {
+	if d == nil || d.StartTimeout == "" {
+		return DefaultComposeStartTimeout
+	}
+	timeout, err := time.ParseDuration(d.StartTimeout)
+	if err != nil {
+		// Should never happen if Validate() was called.
+		return DefaultComposeStartTimeout
+	}
+	return timeout
+}
+
 // Validate checks the Compose configuration.
 func (d *DockerComposeConfig) Validate() error {
 	if !d.IsSet() {
@@ -130,6 +156,21 @@ func (d *DockerComposeConfig) Validate() error {
 	default:
 		return fmt.Errorf("docker_compose start must be one of %q, %q or %q, got %q",
 			ComposeStartAsk, ComposeStartNever, ComposeStartAlways, d.Start)
+	}
+
+	if d.StartTimeout != "" {
+		timeout, err := time.ParseDuration(d.StartTimeout)
+		if err != nil {
+			return fmt.Errorf("invalid docker_compose start_timeout '%s': %w", d.StartTimeout, err)
+		}
+		// Must be positive: a non-positive deadline has already passed, so the
+		// wait would give up before Compose could possibly have registered a
+		// container.
+		if timeout <= 0 {
+			return fmt.Errorf("docker_compose start_timeout must be positive, got '%s': "+
+				"a non-positive timeout would give up before any container could appear",
+				d.StartTimeout)
+		}
 	}
 
 	for _, p := range d.Profiles {

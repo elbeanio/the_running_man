@@ -220,6 +220,8 @@ func runCommand(args []string) {
 		"Docker Compose project name (overrides config and the directory-name default)")
 	composeStart := fs.String("compose-start", "",
 		"When the Compose stack is not running: ask|never|always (default: ask)")
+	composeStartTimeout := fs.String("compose-start-timeout", "",
+		"How long to wait for containers after starting the stack, e.g. 5m (default: 30s)")
 	keepAlive := fs.String("keep-alive", keepAliveAuto,
 		"After a process fails in headless mode, keep serving its logs: auto|always|never "+
 			"(auto = only when stdout is a terminal)")
@@ -261,6 +263,9 @@ func runCommand(args []string) {
 	}
 	if *composeStart != "" {
 		finalCompose.Start = *composeStart
+	}
+	if *composeStartTimeout != "" {
+		finalCompose.StartTimeout = *composeStartTimeout
 	}
 	if err := finalCompose.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -795,6 +800,10 @@ Flags:
   --compose-project NAME   Compose project name (overrides the directory-name default)
   --compose-start MODE     When the stack is not running: ask|never|always
                            (default: ask; ask needs a terminal, so CI behaves as never)
+  --compose-start-timeout DURATION
+                           How long to wait for containers after starting the stack
+                           (default: 30s; raise it for a stack that migrates a
+                           database or starts services in sequence)
   --api-port PORT          API server port (default: 9000, overrides config)
   --listen ADDR            Address to bind the API to (default: 0.0.0.0, all
                            interfaces). Use 127.0.0.1 to restrict to this machine.
