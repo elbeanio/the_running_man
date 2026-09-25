@@ -57,6 +57,9 @@ processes:
 #   project_name: myproject           # needed if you use `docker compose -p`
 #   env_file: .env
 #   start: ask                        # ask | never | always
+#   start_timeout: 5m                 # wait this long for containers after starting
+#                                     # (default: 30s; raise it for a stack that
+#                                     # migrates a database before it serves)
 #
 # When nothing is running, Running Man offers to start the stack for you.
 # It does not manage it: whatever it starts is left running when you quit.

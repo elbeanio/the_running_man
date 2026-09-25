@@ -21,11 +21,6 @@ import (
 // after. That one rule is what keeps this simple -- there is no ownership
 // question to answer, and no surprise when you quit.
 
-// composeStartTimeout bounds how long to wait for containers to appear after
-// starting the stack. Containers do not register instantly, and failing
-// immediately after being told to start would be absurd.
-const composeStartTimeout = 30 * time.Second
-
 // offerToStartCompose is called when no containers were found. Depending on the
 // configured mode it starts the stack, offers to, or declines to.
 func offerToStartCompose(
@@ -88,9 +83,14 @@ func offerToStartCompose(
 		return nil, fmt.Errorf("`%s` failed: %w", docker.DisplayCommand(composeCmd, opts), err)
 	}
 
-	fmt.Printf("[running-man] Waiting for containers (up to %s)...\n", composeStartTimeout)
+	// Containers do not register instantly, and failing immediately after being
+	// told to start would be absurd. How long that takes is the project's
+	// business: a stack that migrates a database before starting anything else
+	// needs far longer than the default, hence start_timeout.
+	timeout := cfg.GetStartTimeout()
+	fmt.Printf("[running-man] Waiting for containers (up to %s)...\n", timeout)
 
-	containers, err := waitForContainers(ctx, discover, composeStartTimeout)
+	containers, err := waitForContainers(ctx, discover, timeout)
 	if err != nil {
 		return nil, err
 	}

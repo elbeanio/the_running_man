@@ -161,6 +161,7 @@ docker_compose:
   project_name: myproject
   env_file: .env
   start: ask                        # ask | never | always
+  start_timeout: 5m                 # how long to wait for containers (default: 30s)
 ```
 
 | Key | Meaning |
@@ -170,6 +171,7 @@ docker_compose:
 | `project_name` | Overrides the project name. **Set this if you use `docker compose -p` or `COMPOSE_PROJECT_NAME`** — container discovery filters on the project label, so a mismatch finds nothing at all and Running Man will tell you to start a stack you already started. |
 | `env_file` | Passed to Compose as `--env-file`. |
 | `start` | What to do when nothing is running: `ask` (default), `never`, `always`. |
+| `start_timeout` | How long to wait for containers to appear after starting the stack (default: `30s`). Raise it for a stack that brings up a database, migrates it, then starts services behind that. |
 
 The plain string form is still valid and equivalent to `files: [path]`.
 
@@ -195,6 +197,11 @@ anything happens.
 `ask` requires a terminal to answer, so in CI or when output is piped it behaves as
 `never` and reports that the stack is not running. Use `start: always` or
 `--compose-start=always` to start without asking.
+
+After starting, Running Man waits up to `start_timeout` (30s by default) for the first
+container to appear, then reports that none did and suggests `docker compose ps`. A stack
+that has to bring up a database, run migrations and only then start the services behind
+them will exceed that — give it a `start_timeout` that covers a cold start.
 
 Only offered when **nothing** is running. If some expected services are up and others are
 not, the missing ones are listed and Running Man watches what exists — starting more
@@ -380,6 +387,7 @@ Every flag `running-man run` accepts:
 | `--compose-profile NAME` | Active Compose profile (repeatable or comma-separated) | - |
 | `--compose-project NAME` | Compose project name | directory name |
 | `--compose-start MODE` | When the stack is down: `ask`, `never`, `always` | `ask` |
+| `--compose-start-timeout DURATION` | How long to wait for containers after starting the stack | `30s` |
 | `--api-port PORT` | API server port | 9000 |
 | `--listen ADDR` | Address to bind the API to | `0.0.0.0` |
 | `--allow-remote-control` | Serve process restart/stop to remote callers | false |
