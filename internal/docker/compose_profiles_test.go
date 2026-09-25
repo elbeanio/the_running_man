@@ -193,3 +193,63 @@ func TestDisplayCommand_ShowsExactlyWhatWillRun(t *testing.T) {
 		t.Errorf("DisplayCommand = %q, want %q", got, want)
 	}
 }
+
+// A project that declares `name:` is not findable by directory name, so the key
+// has to survive parsing. This is the eureka/duet case: a compose file named
+// duet living in a directory called eureka.
+func TestParseComposeFiles_ReadsTopLevelName(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "docker-compose.yml", `
+name: duet
+services:
+  web:
+    image: nginx
+`)
+
+	cf, err := ParseComposeFiles([]string{path})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cf.Name != "duet" {
+		t.Errorf("name = %q, want duet", cf.Name)
+	}
+}
+
+// Compose takes the name from the last file that sets one; a file that omits it
+// must not blank out a name an earlier file established.
+func TestParseComposeFiles_LastNameWins(t *testing.T) {
+	dir := t.TempDir()
+	base := writeFile(t, dir, "base.yml", "name: base-name\nservices:\n  web:\n    image: nginx\n")
+	renaming := writeFile(t, dir, "rename.yml", "name: override-name\nservices:\n  api:\n    image: api\n")
+	silent := writeFile(t, dir, "silent.yml", "services:\n  extra:\n    image: extra\n")
+
+	cf, err := ParseComposeFiles([]string{base, renaming})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cf.Name != "override-name" {
+		t.Errorf("name = %q, want override-name (later file should win)", cf.Name)
+	}
+
+	cf, err = ParseComposeFiles([]string{base, silent})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cf.Name != "base-name" {
+		t.Errorf("name = %q, want base-name (a file without a name must not clear it)", cf.Name)
+	}
+}
+
+// No name key at all leaves it empty, so the directory-name fallback applies.
+func TestParseComposeFiles_NameAbsent(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "docker-compose.yml", "services:\n  web:\n    image: nginx\n")
+
+	cf, err := ParseComposeFiles([]string{path})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cf.Name != "" {
+		t.Errorf("name = %q, want empty", cf.Name)
+	}
+}

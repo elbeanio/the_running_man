@@ -72,6 +72,56 @@ func TestClose(t *testing.T) {
 	}
 }
 
+// The precedence that makes Running Man agree with Compose about which project
+// it is looking at.
+func TestProjectName(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured string
+		fileName   string
+		primary    string
+		expected   string
+	}{
+		{
+			name:       "configured name beats everything",
+			configured: "explicit",
+			fileName:   "duet",
+			primary:    "/Users/x/Code/eureka/docker-compose.yml",
+			expected:   "explicit",
+		},
+		{
+			// The reported bug: name: duet in a directory called eureka.
+			name:     "compose file name beats the directory",
+			fileName: "duet",
+			primary:  "/Users/x/Code/eureka/docker-compose.yml",
+			expected: "duet",
+		},
+		{
+			name:     "directory name when nothing else is set",
+			primary:  "/Users/x/Code/eureka/docker-compose.yml",
+			expected: "eureka",
+		},
+		{
+			// Compose rejects a non-lowercase name key outright, so this only
+			// normalises a file Compose would not have accepted.
+			name:     "compose file name is lowercased",
+			fileName: "Duet",
+			primary:  "/Users/x/Code/eureka/docker-compose.yml",
+			expected: "duet",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ProjectName(tt.configured, tt.fileName, tt.primary)
+			if result != tt.expected {
+				t.Errorf("ProjectName(%q, %q, %q) = %q, want %q",
+					tt.configured, tt.fileName, tt.primary, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestGetProjectNameFromPath(t *testing.T) {
 	tests := []struct {
 		name     string

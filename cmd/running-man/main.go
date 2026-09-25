@@ -480,7 +480,13 @@ func runCommand(args []string) {
 			os.Exit(1)
 		}
 
+		projectName := docker.ProjectName(
+			finalCompose.ProjectName, compose.Name, finalCompose.PrimaryFile())
+
 		fmt.Printf("Docker Compose: %s\n", strings.Join(finalCompose.Files, ", "))
+		// Named explicitly: discovery filters on it, and when it is wrong every
+		// container is invisible with no other clue as to why.
+		fmt.Printf("  project: %s\n", projectName)
 		if len(finalCompose.Profiles) > 0 {
 			fmt.Printf("  profiles: %s\n", strings.Join(finalCompose.Profiles, ", "))
 		}
@@ -503,11 +509,6 @@ func runCommand(args []string) {
 		if err = dockerClient.Ping(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] Docker daemon not available: %v\n", err)
 			os.Exit(1)
-		}
-
-		projectName := finalCompose.ProjectName
-		if projectName == "" {
-			projectName = docker.GetProjectNameFromPath(finalCompose.PrimaryFile())
 		}
 
 		discover := func() ([]docker.Container, error) {

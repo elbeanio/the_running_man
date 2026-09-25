@@ -156,6 +156,41 @@ docker info
 running-man run --docker-compose docker-compose.yml
 ```
 
+### "No containers are running" for a stack that is running
+
+**Problem:** `docker compose ps` shows the stack up, but Running Man reports:
+
+```
+[running-man] No containers are running for Compose project "eureka".
+```
+
+**Cause:** the project name Running Man looked for is not the one the containers carry.
+Discovery filters on the `com.docker.compose.project` label, so the names have to match
+exactly.
+
+Check what each side thinks the project is:
+
+```bash
+# What Running Man resolved (printed at startup)
+running-man run | head -5
+
+# What the containers are actually labelled
+docker ps --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}'
+```
+
+**Solutions:**
+
+- A `name:` key in the compose file is honoured, and wins over the directory name. If the
+  two disagree and Running Man is using the directory name, the binary predates that
+  support — rebuild it.
+- `COMPOSE_PROJECT_NAME` and `docker compose -p` are invisible to Running Man. If you use
+  either, set `project_name` in `running-man.yml` to the same value.
+- A stale stack started under a different project name will hold the ports the real one
+  needs, which usually shows up as containers stuck in `created`. `docker compose -p
+  <name> down` clears them.
+
+See [Configuration](configuration.md#the-project-name) for the full precedence order.
+
 ### TUI Rendering Issues
 
 **Problem:** TUI displays incorrectly or freezes.
