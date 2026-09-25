@@ -54,7 +54,9 @@ processes:
 #     - docker-compose.yml
 #     - docker-compose.override.yml   # repeated -f, later files win
 #   profiles: [api, workers]          # only these services are expected
-#   project_name: myproject           # needed if you use `docker compose -p`
+#   project_name: myproject           # only for `docker compose -p` or
+#                                     # COMPOSE_PROJECT_NAME; a `name:` key in the
+#                                     # compose file is picked up automatically
 #   env_file: .env
 #   start: ask                        # ask | never | always
 #   start_timeout: 5m                 # wait this long for containers after starting

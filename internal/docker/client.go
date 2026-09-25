@@ -173,6 +173,32 @@ func (c *Client) findServiceContainers(ctx context.Context, projectName, service
 	return containers, nil
 }
 
+// ProjectName resolves the Compose project name the way Compose itself does:
+// an explicitly configured name wins, then the compose file's top-level `name:`,
+// and only then the directory name.
+//
+// Getting this wrong is not a cosmetic problem. Container discovery filters on
+// the com.docker.compose.project label, so a project that declares `name: duet`
+// in a directory called eureka was previously invisible -- Running Man reported
+// that nothing was running and offered to start a stack that was already up.
+//
+// configured is docker_compose.project_name or --compose-project; fileName is
+// ComposeFile.Name; primaryFile is the first Compose file, for the fallback.
+//
+// COMPOSE_PROJECT_NAME sits between the first two in Compose's own precedence
+// and is deliberately not consulted here -- see docs/configuration.md.
+func ProjectName(configured, fileName, primaryFile string) string {
+	if configured != "" {
+		return configured
+	}
+	if fileName != "" {
+		// Compose requires the name key to be lowercase and rejects the file
+		// otherwise, so this only normalises what Compose would have refused.
+		return strings.ToLower(fileName)
+	}
+	return GetProjectNameFromPath(primaryFile)
+}
+
 // GetProjectNameFromPath extracts the project name from a compose file path
 // Docker Compose uses the directory name as the default project name
 func GetProjectNameFromPath(composePath string) string {

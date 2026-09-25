@@ -10,7 +10,13 @@ import (
 
 // ComposeFile represents a parsed docker-compose.yml file
 type ComposeFile struct {
-	Version  string                    `yaml:"version"`
+	Version string `yaml:"version"`
+
+	// Name is the top-level `name:` key, which sets the Compose project name.
+	// Without it Compose falls back to the directory name -- so a project that
+	// declares one is not findable by directory name at all.
+	Name string `yaml:"name"`
+
 	Services map[string]ComposeService `yaml:"services"`
 }
 
@@ -126,6 +132,11 @@ func ParseComposeFiles(paths []string) (*ComposeFile, error) {
 		if merged.Version == "" {
 			merged.Version = cf.Version
 		}
+		// Last non-empty name wins, matching Compose: when several files set
+		// `name:`, the last one specified is the project name.
+		if cf.Name != "" {
+			merged.Name = cf.Name
+		}
 		for name, svc := range cf.Services {
 			merged.Services[name] = svc
 		}
@@ -150,12 +161,4 @@ func parseComposeFileAllowEmpty(path string) (*ComposeFile, error) {
 		return nil, fmt.Errorf("failed to parse compose file %s: %w", path, err)
 	}
 	return &compose, nil
-}
-
-// GetProjectName extracts the project name from the compose file path
-// Docker Compose uses the directory name as the default project name
-func GetProjectName(composePath string) string {
-	// For now, we'll implement this in the next task when we integrate with Docker API
-	// Docker Compose typically uses the directory name as project name
-	return ""
 }

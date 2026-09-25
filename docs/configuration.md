@@ -168,12 +168,42 @@ docker_compose:
 |---|---|
 | `files` | Compose files in order. Merged by service name, later files winning. |
 | `profiles` | Active Compose profiles. Services gated behind an inactive profile are not expected, and are reported as "not watched" rather than silently ignored. |
-| `project_name` | Overrides the project name. **Set this if you use `docker compose -p` or `COMPOSE_PROJECT_NAME`** — container discovery filters on the project label, so a mismatch finds nothing at all and Running Man will tell you to start a stack you already started. |
+| `project_name` | Overrides the project name. Rarely needed — the compose file's own `name:` is honoured (see below). **Set this if you use `docker compose -p` or `COMPOSE_PROJECT_NAME`**, neither of which Running Man can see. |
 | `env_file` | Passed to Compose as `--env-file`. |
 | `start` | What to do when nothing is running: `ask` (default), `never`, `always`. |
 | `start_timeout` | How long to wait for containers to appear after starting the stack (default: `30s`). Raise it for a stack that brings up a database, migrates it, then starts services behind that. |
 
 The plain string form is still valid and equivalent to `files: [path]`.
+
+#### The project name
+
+Container discovery filters on the `com.docker.compose.project` label, so Running Man has
+to arrive at the same project name Compose does. A mismatch finds nothing at all, and
+Running Man reports a stack that is not running and offers to start one that already is.
+
+It resolves the name the way Compose does, highest precedence first:
+
+1. `project_name` in the config, or `--compose-project`
+2. the top-level `name:` in the compose file (the last file that sets one, when several are
+   layered)
+3. the name of the directory containing the first compose file, lowercased
+
+```yaml
+# docker-compose.yml
+name: duet        # a stack in ~/Code/eureka whose project is "duet", not "eureka"
+```
+
+**`COMPOSE_PROJECT_NAME` is not consulted.** Compose ranks it above the file's `name:`, but
+it reaches Compose through the environment or an `.env` file that Running Man does not
+read. If you set it, set `project_name` to match.
+
+Running Man prints the name it settled on at startup, which is the fastest way to check:
+
+```
+Docker Compose: docker-compose.yml
+  project: duet
+  services: db, denodo, jaeger, keycloak
+```
 
 #### Offering to start the stack
 
