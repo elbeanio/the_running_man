@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // LineHandler is called for each line of output from a container
@@ -43,7 +43,7 @@ func NewContainerStreamer(client *Client, containerID, name string, handler Line
 // Start begins streaming logs from the container
 func (s *ContainerStreamer) Start() error {
 	// Get container logs
-	options := container.LogsOptions{
+	options := client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     true,
