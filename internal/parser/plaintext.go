@@ -35,13 +35,42 @@ var (
 		regexp.MustCompile(`(?i)too many open files`),
 		regexp.MustCompile(`(?i)\btraceback\b`),
 		regexp.MustCompile(`(?i)unhandled ?(exception|rejection|promise)`),
-		regexp.MustCompile(`(?i)\bEADDRINUSE|EACCES|ECONNREFUSED|ENOENT\b`),
+		// Grouped, and case-sensitive. Written as
+		// (?i)\bEADDRINUSE|EACCES|ECONNREFUSED|ENOENT\b, the word boundaries bound
+		// only the first and last arms, so EACCES and ECONNREFUSED matched mid-word
+		// -- "reaccessing the cache" was an error. And errno names are always
+		// upper case, so matching them case-insensitively only ever added false
+		// positives: a path component spelled "eacces" is not a permission error.
+		regexp.MustCompile(`\b(EADDRINUSE|EACCES|ECONNREFUSED|ENOENT)\b`),
 	}
 
 	warnPatterns = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)\b(warn|warning|deprecated)\b`),
 		regexp.MustCompile(`(?i)\[warn\]`),
 		regexp.MustCompile(`(?i)\bwarning:`),
+	}
+
+	// traceIDPattern finds a trace ID annotation: trace_id=, trace-id=, traceId:,
+	// or a bare trace: followed by something ID-shaped.
+	//
+	// Compiled once. It used to be compiled inside Parse, on every info line,
+	// which is the most common line there is.
+	//
+	// The leading \b stops it matching inside "backtrace", and the value must be
+	// at least 8 characters and contain a digit (checked in extractTraceID): the
+	// bare "trace:" form otherwise turns "backtrace: disabled" into the trace ID
+	// "disabled". Hex IDs and UUIDs always pass both tests.
+	traceIDPattern = regexp.MustCompile(`(?i)\btrace(?:[_-]?id)?\s*[=:]\s*([a-z0-9][a-z0-9_.\-]{7,})`)
+
+	// zeroFailurePatterns match a test runner reporting that nothing failed.
+	// "0 failed" contains the word failed, and every green run prints it --
+	// pytest, go test, jest, cargo -- so without these /errors filled up with
+	// successes, which is the false positive the error patterns' own comment
+	// ranks worse than a miss. The spans are removed before classifying, so a
+	// line reporting both "0 failed" and a real error is still an error.
+	zeroFailurePatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\b0\s+(failed|failures?|errors?)\b`),
+		regexp.MustCompile(`(?i)\b(failed|failures?|errors?)\s*[:=]\s*0\b`),
 	}
 
 	debugPatterns = []*regexp.Regexp{
@@ -74,6 +103,18 @@ func (p *PlainTextParser) Parse(source string, line string, timestamp time.Time,
 		Message:   line,
 		Raw:       line,
 	}
+
+	// The trace ID is taken before the level is decided, because deciding the
+	// level returns early. Extraction used to sit at the bottom, so only lines
+	// that fell through to info ever got one -- errors and warnings, the lines
+	// anyone wants to correlate, never did.
+	var traceSpan []int
+	entry.TraceID, traceSpan = extractTraceID(line)
+
+	// Classify what the line says, not its annotations. A "trace-id=..." token
+	// otherwise matched the debug pattern's \btrace\b, and a test summary's
+	// "0 failed" matched the error patterns.
+	line = classificationText(line, traceSpan)
 
 	// Detect level based on content
 	lineLower := strings.ToLower(line)
@@ -116,16 +157,33 @@ func (p *PlainTextParser) Parse(source string, line string, timestamp time.Time,
 
 	// Default to info
 	entry.Level = LevelInfo
-
-	// Try to extract trace_id from plain text (common patterns)
-	// Look for patterns like "trace_id=abc123", "trace: abc123", "traceId=abc123"
-	// Support alphanumeric strings, hex strings, and UUIDs (with hyphens)
-	traceIDRegex := regexp.MustCompile(`(?i)(?:trace[_-]?id|trace)[=:]\s*([a-zA-Z0-9\-_\.]+)`)
-	if matches := traceIDRegex.FindStringSubmatch(line); len(matches) > 1 {
-		entry.TraceID = matches[1]
-	}
-
 	return entry
+}
+
+// extractTraceID returns the trace ID annotated on a line and the span of the
+// whole annotation, or "" and nil.
+func extractTraceID(line string) (string, []int) {
+	m := traceIDPattern.FindStringSubmatchIndex(line)
+	if m == nil {
+		return "", nil
+	}
+	id := line[m[2]:m[3]]
+	if !strings.ContainsAny(id, "0123456789") {
+		return "", nil
+	}
+	return id, m[:2]
+}
+
+// classificationText is the line with its trace annotation and any zero-count
+// failure summaries removed, which is what the level patterns should see.
+func classificationText(line string, traceSpan []int) string {
+	if traceSpan != nil {
+		line = line[:traceSpan[0]] + line[traceSpan[1]:]
+	}
+	for _, p := range zeroFailurePatterns {
+		line = p.ReplaceAllString(line, "")
+	}
+	return line
 }
 
 // parseLevel converts a string level to LogLevel

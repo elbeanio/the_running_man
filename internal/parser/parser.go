@@ -34,13 +34,17 @@ type LogEntry struct {
 	TraceID    string    `json:"trace_id,omitempty"`
 }
 
-// sourceState holds the per-source parsing state.
+// sourceState holds the parsing state for one stream of one source.
 //
 // Only the Python traceback parser is stateful; the JSON and plain-text
-// parsers are pure. Each source gets its own mutex so that a noisy source
-// cannot serialise every other one, and because a single source has two
-// concurrent readers (stdout and stderr) that must not interleave into the
-// same traceback accumulator.
+// parsers are pure. State is keyed by source AND stream. A source has two
+// concurrent readers, stdout and stderr, and a mutex shared between them made
+// that race-free but not interleave-free: calls were serialised, yet a stdout
+// line could still arrive between two stderr traceback lines and end the
+// traceback, so the rest of it was parsed as unrelated plain text. Reproduced
+// against a real process -- the traceback came back in fragments, stored ahead
+// of a stdout line that had been printed before it. Tracebacks arrive on
+// stderr, so with a stream each, stdout simply cannot reach them.
 type sourceState struct {
 	mu     sync.Mutex
 	python *PythonParser
@@ -67,7 +71,13 @@ type MultiParser struct {
 	plainTextParser *PlainTextParser
 
 	mu     sync.Mutex
-	states map[string]*sourceState
+	states map[streamKey]*sourceState
+}
+
+// streamKey identifies one stream of one source.
+type streamKey struct {
+	source   string
+	isStderr bool
 }
 
 // NewMultiParser creates a new multi-format parser
@@ -75,21 +85,22 @@ func NewMultiParser() *MultiParser {
 	return &MultiParser{
 		jsonParser:      NewJSONParser(),
 		plainTextParser: NewPlainTextParser(),
-		states:          make(map[string]*sourceState),
+		states:          make(map[streamKey]*sourceState),
 	}
 }
 
-// stateFor returns the parsing state for a source, creating it on first use.
-// The number of sources is bounded by the processes and containers being
+// stateFor returns the parsing state for one stream of a source, creating it on
+// first use. Bounded by twice the number of processes and containers being
 // watched, so this map does not grow without limit in practice.
-func (m *MultiParser) stateFor(source string) *sourceState {
+func (m *MultiParser) stateFor(source string, isStderr bool) *sourceState {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	st, ok := m.states[source]
+	key := streamKey{source: source, isStderr: isStderr}
+	st, ok := m.states[key]
 	if !ok {
 		st = &sourceState{python: NewPythonParser()}
-		m.states[source] = st
+		m.states[key] = st
 	}
 	return st
 }
@@ -126,7 +137,7 @@ func (m *MultiParser) parse(source string, sourceType string, line string, times
 	// "ERROR" wrapped in colour escapes did not match the error patterns.
 	line = SanitiseLine(line)
 
-	st := m.stateFor(source)
+	st := m.stateFor(source, isStderr)
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -175,9 +186,10 @@ func (m *MultiParser) parse(source string, sourceType string, line string, times
 	return append(entries, plain)
 }
 
-// Flush returns any in-progress multi-line entry for a source, or nil.
-func (m *MultiParser) Flush(source string) *LogEntry {
-	st := m.stateFor(source)
+// Flush returns any in-progress multi-line entry for one stream of a source, or
+// nil. Per stream because traceback state is.
+func (m *MultiParser) Flush(source string, isStderr bool) *LogEntry {
+	st := m.stateFor(source, isStderr)
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
