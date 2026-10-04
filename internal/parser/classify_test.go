@@ -141,3 +141,22 @@ func TestMultiParser_StdoutDoesNotSplitAStderrTraceback(t *testing.T) {
 		t.Error("the stdout line was lost")
 	}
 }
+
+// The level patterns are matched against the lower-cased line rather than each
+// carrying (?i), so every case a line might arrive in must still classify.
+func TestPlainText_ClassificationIgnoresCase(t *testing.T) {
+	p := NewPlainTextParser()
+	for line, want := range map[string]LogLevel{
+		"Permission Denied":              LevelError,
+		"bind: ADDRESS ALREADY IN USE":   LevelError,
+		"Unhandled Promise Rejection":    LevelError,
+		"FATAL: out of disk":             LevelError,
+		"Warning: config key deprecated": LevelWarn,
+		"[WARN] slow":                    LevelWarn,
+		"Debug: cache primed":            LevelDebug,
+	} {
+		if e := p.Parse("s", line, time.Now(), false); e.Level != want {
+			t.Errorf("%q classified as %s, want %s", line, e.Level, want)
+		}
+	}
+}

@@ -2,6 +2,7 @@ package parser
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,13 @@ func NewJSONParser() *JSONParser {
 
 // Parse attempts to parse a JSON log line
 func (p *JSONParser) Parse(source string, line string, timestamp time.Time) (*LogEntry, bool) {
+	// Only an object can be a structured log line. Checked first because this
+	// runs on every line, and for the plain-text majority Unmarshal did nothing
+	// but build a SyntaxError to throw away.
+	if t := strings.TrimLeft(line, " \t"); t == "" || t[0] != '{' {
+		return nil, false
+	}
+
 	var data map[string]interface{}
 
 	if err := json.Unmarshal([]byte(line), &data); err != nil {
