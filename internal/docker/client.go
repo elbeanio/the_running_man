@@ -59,9 +59,11 @@ func NewClient() (*Client, error) {
 		opts = append(opts, client.WithHost(endpoint))
 	}
 
-	opts = append(opts, client.FromEnv, client.WithAPIVersionNegotiation())
+	// No WithAPIVersionNegotiation: it is a no-op in this client, which
+	// negotiates by default. Passing it is deprecated.
+	opts = append(opts, client.FromEnv)
 
-	cli, err := client.NewClientWithOpts(opts...)
+	cli, err := client.New(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Docker client: %w", err)
 	}
