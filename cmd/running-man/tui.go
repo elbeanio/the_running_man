@@ -11,6 +11,7 @@ import (
 	"os"
 	"runtime/debug"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,11 +60,17 @@ type model struct {
 	manager        *process.Manager // Process manager to stop on quit
 	scrollOffset   int              // Number of lines scrolled from bottom (0 = showing latest)
 	autoScroll     bool             // Whether to auto-scroll to bottom on new logs
-	mode           Mode             // Current mode (normal or search)
-	searchInput    textinput.Model  // Text input for search mode
-	searchQuery    string           // Current search query (mirrored from searchInput)
-	searchMatchIdx int              // Current match index when navigating with n/N
-	showTraceIDs   bool             // Whether to show trace indicators (toggled with 't')
+
+	// pinnedTop holds the view at the oldest line, the way autoScroll holds it
+	// at the newest. Set by Home. Without it, the full history that arrives
+	// after leaving the live tail landed below the view, and Home stopped at
+	// the top of the live window rather than the top of the log.
+	pinnedTop      bool
+	mode           Mode            // Current mode (normal or search)
+	searchInput    textinput.Model // Text input for search mode
+	searchQuery    string          // Current search query (mirrored from searchInput)
+	searchMatchIdx int             // Current match index when navigating with n/N
+	showTraceIDs   bool            // Whether to show trace indicators (toggled with 't')
 
 	// Trace view state
 	traces            []traceSummary // List of trace summaries
@@ -78,6 +85,20 @@ type model struct {
 
 	// Internal state
 	tickCount int // Count of tick messages received
+
+	// matchIndex is the display-line index of every search match, built once
+	// when the logs or the query change rather than on every frame. It used to
+	// be rebuilt by each of the help line, the search bar and the highlighting
+	// pass: three or four full lowercase scans of every log per frame, which
+	// made a frame cost 26ms at a full buffer while searching.
+	//
+	// Read through matches(), never directly: matchFor records what it was
+	// built from, so a stale index is rebuilt rather than trusted. Forgetting
+	// refreshMatches after changing the logs or the query then costs speed, not
+	// correctness -- which matters, because the first draft of this missed it
+	// in nine places.
+	matchIndex []int
+	matchFor   matchKey
 
 	// notice is a one-line status shown in the footer, such as the outcome of a
 	// restart. Empty when there is nothing to say.
@@ -141,7 +162,16 @@ type sourcesMsg struct {
 	names []string
 	types map[string]string
 }
-type logsMsg []logEntry
+
+// logsMsg carries one /logs response and what it was a response to. A response
+// used not to say, so a slow one could land after a newer one and overwrite
+// it: a reply for the previous tab replaced the current tab's logs, and a
+// live-window reply replaced the full history fetched on scrolling up.
+type logsMsg struct {
+	source  string
+	limited bool
+	logs    []logEntry
+}
 type tracesMsg []traceSummary
 type traceSpansMsg []spanDetail
 type traceLogsMsg []logEntry
@@ -149,6 +179,105 @@ type errMsg struct{ err error }
 type tickMsg time.Time
 
 func (e errMsg) Error() string { return e.err.Error() }
+
+// matchKey identifies the logs and query a match index was built from.
+//
+// The logs are identified by their backing array and length: the TUI replaces
+// m.logs wholesale on every fetch, so a new fetch is a new array even when the
+// length is unchanged, as it is with a full buffer.
+type matchKey struct {
+	query string
+	first *logEntry
+	n     int
+}
+
+func keyFor(logs []logEntry, query string) matchKey {
+	k := matchKey{query: query, n: len(logs)}
+	if len(logs) > 0 {
+		k.first = &logs[0]
+	}
+	return k
+}
+
+// maxScroll is the largest useful scroll offset: the oldest line at the top of
+// the window.
+func (m model) maxScroll() int {
+	total := 0
+	for i := range m.logs {
+		total += entryLines(m.logs[i])
+	}
+	return max(0, total-m.contentHeight())
+}
+
+// scrollBy moves the log view; positive is up, toward older lines.
+//
+// Clamped to what exists. Scrolling used to be unbounded: Home set the offset
+// to math.MaxInt, so PgUp afterwards overflowed it to a large negative number,
+// which renders as the bottom -- Home then PgUp jumped to the newest output --
+// while PgDn from Home subtracted a page from MaxInt and appeared to do
+// nothing. And up past the top kept counting invisibly, so it took as many
+// downs to come back.
+func (m *model) scrollBy(delta int) {
+	m.pinnedTop = false
+	m.scrollOffset = max(0, min(m.scrollOffset+delta, m.maxScroll()))
+	m.autoScroll = m.scrollOffset == 0
+}
+
+// scrollToTop shows the oldest lines and stays there as history loads.
+func (m *model) scrollToTop() {
+	m.scrollOffset = m.maxScroll()
+	m.autoScroll = m.scrollOffset == 0
+	m.pinnedTop = !m.autoScroll
+}
+
+// scrollToBottom follows the newest output.
+func (m *model) scrollToBottom() {
+	m.scrollOffset = 0
+	m.autoScroll = true
+	m.pinnedTop = false
+}
+
+// liveFetchLimit is how many entries the TUI asks for while following the live
+// tail. Comfortably more than any screen, so the view never comes up short, and
+// the same as the API's default -- so tailing costs exactly what it always did.
+const liveFetchLimit = 1000
+
+// tailing reports whether the view is following the newest output with no
+// search, the case where only the most recent entries can be on screen.
+func (m model) tailing() bool {
+	return m.autoScroll && m.searchQuery == ""
+}
+
+// logLimit is how many entries to fetch: the live window while tailing, and
+// everything (zero) otherwise.
+//
+// The TUI never asked for more than /logs gives by default, which since #23 has
+// been 1,000. So with a buffer of up to 10,000, scrolling back stopped at the
+// newest 1,000 entries and search counted matches only among them -- both
+// silently. Scrolled up, or searching, it now fetches the whole buffer. While
+// tailing only the newest entries can be on screen, so it keeps the cheaper
+// request it always made.
+func (m model) logLimit() int {
+	if m.tailing() {
+		return liveFetchLimit
+	}
+	return 0
+}
+
+// refreshMatches rebuilds the search match index. Called wherever the logs or
+// the query change -- which is the only time the answer can.
+func (m *model) refreshMatches() {
+	m.matchIndex = buildMatchLineIndex(m.logs, m.searchQuery)
+	m.matchFor = keyFor(m.logs, m.searchQuery)
+}
+
+// matches returns the search match index, rebuilding it if it is stale.
+func (m model) matches() []int {
+	if m.matchFor == keyFor(m.logs, m.searchQuery) {
+		return m.matchIndex
+	}
+	return buildMatchLineIndex(m.logs, m.searchQuery)
+}
 
 // currentSource returns the selected source name, or "" when there is nothing
 // to select.
@@ -214,7 +343,7 @@ func (m model) fetchForSelectedSource() (model, tea.Cmd) {
 	if source == "Traces" {
 		return m, fetchTraces(m.apiURL)
 	}
-	return m, fetchLogs(m.apiURL, source)
+	return m, fetchLogs(m.apiURL, source, m.logLimit())
 }
 
 // isTraceView returns true if the currently selected tab is "Traces"
@@ -479,12 +608,28 @@ func (m model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Route to mode-specific handler
+		wasTailing := m.tailing()
+		var next tea.Model
+		var cmd tea.Cmd
 		switch m.mode {
 		case ModeSearch:
-			return m.updateSearchMode(msg)
+			next, cmd = m.updateSearchMode(msg)
 		case ModeNormal, ModeTraceDetail:
-			return m.updateNormalMode(msg)
+			next, cmd = m.updateNormalMode(msg)
+		default:
+			return m, nil
 		}
+
+		// Leaving the live tail -- scrolling up, or starting a search -- needs
+		// the whole buffer, and now rather than on the next tick: until it
+		// arrives, history stops at the live window and search counts only
+		// what is loaded.
+		if nm, ok := next.(model); ok && wasTailing && !nm.tailing() {
+			if source := nm.currentSource(); source != "" && source != "Traces" {
+				cmd = tea.Batch(cmd, fetchLogs(nm.apiURL, source, 0))
+			}
+		}
+		return next, cmd
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -502,11 +647,24 @@ func (m model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The list was just replaced and may be shorter than before.
 		m.clampSelectedSource()
 		if source := m.currentSource(); source != "" {
-			return m, fetchLogs(m.apiURL, source)
+			return m, fetchLogs(m.apiURL, source, m.logLimit())
 		}
 
 	case logsMsg:
-		m.logs = msg
+		// Stale replies are dropped rather than applied: one for a tab that is
+		// no longer selected, or a live-window one when the view now wants the
+		// whole buffer.
+		if msg.source != m.currentSource() || (msg.limited && !m.tailing()) {
+			return m, nil
+		}
+		m.logs = msg.logs
+		m.refreshMatches()
+		// More history may have loaded above. Pinned to the top stays at the
+		// top; otherwise the offset from the bottom is kept, and clamped.
+		if m.pinnedTop && !m.autoScroll {
+			m.scrollOffset = m.maxScroll()
+		}
+		m.scrollOffset = min(m.scrollOffset, m.maxScroll())
 		// Reset scroll offset when auto-scroll is enabled (user is at bottom)
 		if m.autoScroll {
 			m.scrollOffset = 0
@@ -546,7 +704,7 @@ func (m model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if source == "Traces" {
 				cmds = append(cmds, fetchTraces(m.apiURL))
 			} else {
-				cmds = append(cmds, fetchLogs(m.apiURL, source))
+				cmds = append(cmds, fetchLogs(m.apiURL, source, m.logLimit()))
 			}
 		}
 
@@ -587,7 +745,11 @@ func (m model) viewModel() string {
 	c := m.chrome()
 	header, searchBar, help := c.header, c.searchBar, c.help
 	contentWidth := m.contentWidth()
-	contentHeight := m.contentHeight()
+	// Measured from the chrome just built. contentHeight() would build it a
+	// second time -- a regression from #38 that doubled the cost of the header
+	// and footer on every frame. The paging handlers still use contentHeight(),
+	// and both come from chromeRows.height, so they cannot disagree.
+	contentHeight := max(0, m.height-c.height())
 
 	// Render content based on mode
 	var content string
@@ -602,11 +764,11 @@ func (m model) viewModel() string {
 			content = renderTraceList(m.traces, contentHeight, contentWidth, m.traceScrollOffset, m.selectedTraceIdx)
 		} else {
 			// Render logs with search highlighting and current match index
-			content = renderLogs(m.logs, contentHeight, contentWidth, m.scrollOffset, m.searchQuery, m.searchMatchIdx, m.showTraceIDs)
+			content = renderLogWindow(m.logs, contentHeight, contentWidth, m.scrollOffset, m.searchQuery, m.searchMatchIdx, m.showTraceIDs, m.matches())
 		}
 	default:
 		// For search mode or others, render logs
-		content = renderLogs(m.logs, contentHeight, contentWidth, m.scrollOffset, m.searchQuery, m.searchMatchIdx, m.showTraceIDs)
+		content = renderLogWindow(m.logs, contentHeight, contentWidth, m.scrollOffset, m.searchQuery, m.searchMatchIdx, m.showTraceIDs, m.matches())
 	}
 
 	// Add neutral grey border around content (matches header borders)
@@ -1181,148 +1343,143 @@ func clampRows(block string, width int) string {
 }
 
 func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery string, currentMatchIdx int, showTraceIDs bool) string {
-	// Validate inputs
+	return renderLogWindow(logs, height, width, scrollOffset, searchQuery, currentMatchIdx,
+		showTraceIDs, buildMatchLineIndex(logs, searchQuery))
+}
+
+// renderLogWindow draws the visible window of the log view.
+//
+// It formats only the lines it will show. It used to format and style every
+// line of every entry and then slice the window out at the end, so a frame cost
+// grew with the whole buffer rather than the screen: 11.9ms and 123k
+// allocations at the default 10,000 entries to draw about 45 rows, and Bubble
+// Tea calls View after every keypress, tick and fetch.
+//
+// Line structure comes from the raw message, split on newlines, with each line
+// sanitised on its own. That keeps the count here identical to the one
+// buildMatchLineIndex uses: sanitising a whole message could swallow a newline
+// inside a malformed escape sequence, and the window and the match positions
+// would then disagree about which line is which.
+//
+// matchIndex is the model's stored index, so the match offset for a line is a
+// binary search rather than a running count over everything above it.
+func renderLogWindow(logs []logEntry, height, width, scrollOffset int, searchQuery string, currentMatchIdx int, showTraceIDs bool, matchIndex []int) string {
 	if height <= 0 || width <= 0 {
 		return logStyle.Render("Invalid terminal dimensions")
 	}
 	if scrollOffset < 0 {
 		scrollOffset = 0
 	}
-
 	if len(logs) == 0 {
 		return logStyle.Render("No logs yet...")
 	}
 
-	highlight := searchQuery != ""
-	lowerQuery := strings.ToLower(searchQuery)
+	// Pass 1: how many display lines there are. A newline count per entry, no
+	// formatting.
+	totalLines := 0
+	for i := range logs {
+		totalLines += entryLines(logs[i])
+	}
+	startIdx, endIdx := logWindow(totalLines, height, scrollOffset)
 
-	// runningMatchCount tracks which global match index we're at as we iterate lines.
-	runningMatchCount := 0
-
-	// Collect all lines (splitting multiline messages)
-	allLines := []string{}
+	// Pass 2: format only what is inside the window.
+	lines := make([]string, 0, endIdx-startIdx)
+	lineIdx := 0
 	for _, log := range logs {
+		n := entryLines(log)
+		if lineIdx+n <= startIdx {
+			lineIdx += n
+			continue
+		}
+		if lineIdx >= endIdx {
+			break
+		}
+
 		style := logStyle
 		if log.IsError {
 			style = errorLogStyle
 		}
-
-		// Sanitised again at the point of drawing. Entries are cleaned on
-		// capture, but this is the last line of defence for the symptom that
-		// started this: one escape sequence reaching the terminal clears the
-		// screen, and the renderer's line diffing never repaints it.
-		messageLines := strings.Split(parser.SanitiseLine(log.Message), "\n")
-
-		for i, msgLine := range messageLines {
-			var line string
-			// Declared out here because the truncation below needs to know
-			// whether an indicator was actually added, not merely whether one
-			// was possible.
-			traceIndicatorStyled := ""
-			if i == 0 {
-				// First line gets full prefix
-				baseLine := fmt.Sprintf("[%s] [%s] %s",
-					clockTime(log.Timestamp), log.Level, msgLine)
-
-				// Add trace indicator if enabled and trace_id exists
-				if showTraceIDs && log.TraceID != "" {
-					displayTraceID := truncate(log.TraceID, maxTraceIDDisplayLength)
-					// The styled indicator's own width, since the style may add
-					// escape sequences that occupy no columns.
-					candidate := traceIndicatorStyle.Render(fmt.Sprintf("[trace:%s]", displayTraceID))
-
-					// The indicator only earns its space if the message still
-					// has some. A 40-column window was spending 22 of them on a
-					// truncated trace ID and showing "[09:15:03] [er..." for the
-					// message, which is the wrong way round: the trace ID is
-					// recoverable from the entry, the message is why anyone is
-					// looking.
-					if width-displayWidth(candidate)-1 >= minMessageWidth {
-						traceIndicatorStyled = candidate
-					}
+		for i, raw := range strings.Split(log.Message, "\n") {
+			if lineIdx >= startIdx && lineIdx < endIdx {
+				// Sanitised again at the point of drawing, a line at a time.
+				// Entries are cleaned on capture; this is the last line of
+				// defence for the symptom that started this, one escape
+				// sequence reaching the terminal and clearing the screen.
+				line := formatLogLine(log, i, parser.SanitiseLine(raw), width, showTraceIDs)
+				if searchQuery != "" {
+					line = highlightMatchesWithCurrent(line, searchQuery,
+						sort.SearchInts(matchIndex, lineIdx), currentMatchIdx)
 				}
-
-				if traceIndicatorStyled != "" {
-					baseLine = truncate(baseLine, width-displayWidth(traceIndicatorStyled)-1)
-					line = fmt.Sprintf("%s %s", baseLine, traceIndicatorStyled)
-				} else {
-					line = baseLine
-				}
-			} else {
-				// Continuation lines get indented
-				line = fmt.Sprintf("                    %s", msgLine)
+				lines = append(lines, style.Render(line))
 			}
-
-			if traceIndicatorStyled == "" {
-				// -2 for the box's left and right borders. Lines that got an
-				// indicator were fitted when it was added.
-				line = truncate(line, width-2)
-			}
-
-			// Apply highlighting if search query exists
-			if highlight {
-				lineMatchOffset := runningMatchCount
-				occurrences := strings.Count(strings.ToLower(line), lowerQuery)
-				line = highlightMatchesWithCurrent(line, searchQuery, lineMatchOffset, currentMatchIdx)
-				runningMatchCount += occurrences
-			}
-
-			allLines = append(allLines, style.Render(line))
+			lineIdx++
 		}
 	}
 
-	// Calculate start index based on scroll offset
-	// scrollOffset = 0 means show most recent (bottom)
-	// scrollOffset > 0 means scroll up from bottom
-	totalLines := len(allLines)
-	if totalLines <= height {
-		// All lines fit, but we need to pad with empty lines to fill height
-		// This ensures old content is cleared when we have fewer lines
-		paddedLines := make([]string, height)
-		copy(paddedLines[height-totalLines:], allLines)
-		// Fill beginning with empty styled lines
-		for i := 0; i < height-totalLines; i++ {
-			paddedLines[i] = logStyle.Render("")
+	// Bottom-aligned: fewer lines than the window are padded above, so the
+	// newest output sits at the bottom and stale content is cleared.
+	if pad := height - len(lines); pad > 0 {
+		padded := make([]string, height)
+		for i := 0; i < pad; i++ {
+			padded[i] = logStyle.Render("")
 		}
-		return lipgloss.JoinVertical(lipgloss.Left, paddedLines...)
+		copy(padded[pad:], lines)
+		lines = padded
 	}
-
-	// Start from the bottom and move up by scrollOffset
-	endIdx := totalLines - scrollOffset
-	startIdx := endIdx - height
-
-	// Clamp to valid ranges
-	if endIdx < height {
-		// Scrolled too far up, show the oldest logs
-		startIdx = 0
-		endIdx = height
-	} else if endIdx > totalLines {
-		// Should never happen with valid scrollOffset, but clamp anyway
-		endIdx = totalLines
-		startIdx = totalLines - height
-		if startIdx < 0 {
-			startIdx = 0
-		}
-	} else {
-		// Normal scrolling case
-		if startIdx < 0 {
-			startIdx = 0
-		}
-	}
-
-	// Ensure we return exactly height lines
-	lines := allLines[startIdx:endIdx]
-	if len(lines) < height {
-		// Pad with empty lines
-		paddedLines := make([]string, height)
-		copy(paddedLines[height-len(lines):], lines)
-		for i := 0; i < height-len(lines); i++ {
-			paddedLines[i] = logStyle.Render("")
-		}
-		return lipgloss.JoinVertical(lipgloss.Left, paddedLines...)
-	}
-
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+// entryLines is how many display lines an entry occupies.
+func entryLines(log logEntry) int {
+	return 1 + strings.Count(log.Message, "\n")
+}
+
+// logWindow is the [start, end) range of display lines to show, given how far
+// the view is scrolled up from the bottom. Scrolled past the top, it shows the
+// oldest lines rather than fewer.
+func logWindow(totalLines, height, scrollOffset int) (int, int) {
+	if totalLines <= height {
+		return 0, totalLines
+	}
+	end := totalLines - scrollOffset
+	if end < height {
+		return 0, height
+	}
+	if end > totalLines {
+		end = totalLines
+	}
+	return end - height, end
+}
+
+// formatLogLine renders one display line of an entry: the timestamp, level and
+// optional trace indicator on its first line, an indent on the rest, fitted to
+// the width.
+func formatLogLine(log logEntry, i int, msgLine string, width int, showTraceIDs bool) string {
+	if i > 0 {
+		// Continuation lines get indented. -2 for the box's borders.
+		return truncate("                    "+msgLine, width-2)
+	}
+
+	baseLine := fmt.Sprintf("[%s] [%s] %s", clockTime(log.Timestamp), log.Level, msgLine)
+
+	if showTraceIDs && log.TraceID != "" {
+		displayTraceID := truncate(log.TraceID, maxTraceIDDisplayLength)
+		// The styled indicator's own width, since the style may add escape
+		// sequences that occupy no columns.
+		indicator := traceIndicatorStyle.Render(fmt.Sprintf("[trace:%s]", displayTraceID))
+
+		// The indicator only earns its space if the message still has some. A
+		// 40-column window was spending 22 of them on a truncated trace ID and
+		// showing "[09:15:03] [er..." for the message, which is the wrong way
+		// round: the trace ID is recoverable from the entry, the message is why
+		// anyone is looking.
+		if width-displayWidth(indicator)-1 >= minMessageWidth {
+			return truncate(baseLine, width-displayWidth(indicator)-1) + " " + indicator
+		}
+	}
+
+	// -2 for the box's left and right borders.
+	return truncate(baseLine, width-2)
 }
 
 // buildMatchLineIndex returns a slice where each element is the rendered-line index
@@ -1496,12 +1653,19 @@ func fetchSources(apiURL string) tea.Cmd {
 	}
 }
 
-func fetchLogs(apiURL, source string) tea.Cmd {
+// fetchLogs requests one source's logs. A limit of zero fetches everything.
+//
+// The limit is always sent, zero included. /logs caps an unqualified request
+// at DefaultLogLimit (1,000), so leaving it off does not mean "everything" --
+// which is how the TUI's scroll-back and search were silently confined to the
+// newest 1,000 entries of a 10,000-entry buffer.
+func fetchLogs(apiURL, source string, limit int) tea.Cmd {
 	return func() tea.Msg {
 		// Escaped: process names are validated, but an OTLP service name is
 		// whatever the sender chose, and "my app" or a stray & or # used to
 		// produce a broken request -- that source's tab simply never loaded.
-		endpoint := apiURL + "/logs?" + url.Values{"source": {source}}.Encode()
+		query := url.Values{"source": {source}, "limit": {strconv.Itoa(limit)}}
+		endpoint := apiURL + "/logs?" + query.Encode()
 		resp, err := apiClient.Get(endpoint)
 		if err != nil {
 			return errMsg{err}
@@ -1518,7 +1682,7 @@ func fetchLogs(apiURL, source string) tea.Cmd {
 			return errMsg{err}
 		}
 
-		return logsMsg(logsResp.Logs)
+		return logsMsg{source: source, limited: limit > 0, logs: logsResp.Logs}
 	}
 }
 
@@ -1648,6 +1812,7 @@ func (m model) updateSearchMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	ti, cmd := m.searchInput.Update(msg)
 	m.searchInput = ti
 	m.searchQuery = m.searchInput.Value()
+	m.refreshMatches()
 	m.searchMatchIdx = 0
 
 	// Check for escape or enter to exit search mode
@@ -1657,12 +1822,13 @@ func (m model) updateSearchMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mode = ModeNormal
 			m.searchInput.SetValue("")
 			m.searchQuery = ""
+			m.refreshMatches()
 			m.searchMatchIdx = 0
 		case "enter":
 			m.mode = ModeNormal
 			// Jump to first match (less-style: Enter confirms and navigates to match 0)
 			m.searchMatchIdx = 0
-			total := countMatches(m.logs, m.searchQuery)
+			total := len(m.matches())
 			if total > 0 {
 				m = scrollToMatch(m)
 			}
@@ -1692,6 +1858,7 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Enter search mode
 		m.mode = ModeSearch
 		m.searchQuery = ""
+		m.refreshMatches()
 		m.searchMatchIdx = 0
 		m.searchInput.Focus()
 		m.searchInput.SetValue("")
@@ -1728,14 +1895,17 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		} else {
-			m.autoScroll = false
-			m.scrollOffset++
+			m.scrollBy(1)
 		}
 
 	case "down":
 		if m.mode == ModeTraceDetail {
-			// Scroll down in trace detail view
-			m.traceDetailScrollOffset++
+			// Scroll down in trace detail view. Saturating: End sets this to
+			// math.MaxInt, and incrementing that wrapped to the minimum, which
+			// renders as the top.
+			if m.traceDetailScrollOffset < math.MaxInt {
+				m.traceDetailScrollOffset++
+			}
 		} else if m.isTraceView() {
 			// Navigate down in trace list
 			if m.selectedTraceIdx < len(m.traces)-1 {
@@ -1747,11 +1917,7 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		} else {
-			m.scrollOffset--
-			if m.scrollOffset <= 0 {
-				m.scrollOffset = 0
-				m.autoScroll = true
-			}
+			m.scrollBy(-1)
 		}
 
 	case "pgup":
@@ -1771,9 +1937,7 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.traceScrollOffset = m.selectedTraceIdx
 		} else {
-			m.autoScroll = false
-			availableHeight := m.pageSize()
-			m.scrollOffset += availableHeight
+			m.scrollBy(m.pageSize())
 		}
 
 	case "pgdown":
@@ -1793,12 +1957,7 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.traceScrollOffset = m.selectedTraceIdx - availableHeight + 1
 			}
 		} else {
-			availableHeight := m.pageSize()
-			m.scrollOffset -= availableHeight
-			if m.scrollOffset <= 0 {
-				m.scrollOffset = 0
-				m.autoScroll = true
-			}
+			m.scrollBy(-m.pageSize())
 		}
 
 	case "home":
@@ -1810,8 +1969,7 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectedTraceIdx = 0
 			m.traceScrollOffset = 0
 		} else {
-			m.autoScroll = false
-			m.scrollOffset = math.MaxInt
+			m.scrollToTop()
 		}
 
 	case "end":
@@ -1826,13 +1984,12 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.traceScrollOffset = m.selectedTraceIdx - availableHeight + 1
 			}
 		} else {
-			m.scrollOffset = 0
-			m.autoScroll = true
+			m.scrollToBottom()
 		}
 
 	case "n":
 		if m.searchQuery != "" {
-			total := countMatches(m.logs, m.searchQuery)
+			total := len(m.matches())
 			if total > 0 {
 				m.searchMatchIdx = (m.searchMatchIdx + 1) % total
 				m = scrollToMatch(m)
@@ -1841,7 +1998,7 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case "p":
 		if m.searchQuery != "" {
-			total := countMatches(m.logs, m.searchQuery)
+			total := len(m.matches())
 			if total > 0 {
 				m.searchMatchIdx = (m.searchMatchIdx - 1 + total) % total
 				m = scrollToMatch(m)
@@ -1914,7 +2071,7 @@ func restartProcess(apiURL, process string) tea.Cmd {
 // scrollToMatch sets m.scrollOffset so that the line containing the current
 // searchMatchIdx is centered in the viewport. Disables autoScroll.
 func scrollToMatch(m model) model {
-	matchLineIndices := buildMatchLineIndex(m.logs, m.searchQuery)
+	matchLineIndices := m.matches()
 	if m.searchMatchIdx < 0 || m.searchMatchIdx >= len(matchLineIndices) {
 		return m
 	}

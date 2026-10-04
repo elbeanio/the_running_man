@@ -109,7 +109,7 @@ func (m model) helpText() string {
 	long := "←/→ Tab: Switch source | ↑/↓ PgUp/PgDn Home/End: Scroll"
 	medium := "Tab: source | ↑/↓: scroll"
 	if m.searchQuery != "" {
-		matchCount := countMatches(m.logs, m.searchQuery)
+		matchCount := len(m.matches())
 		status := "no matches"
 		if matchCount > 0 {
 			status = fmt.Sprintf("%d of %d", m.searchMatchIdx+1, matchCount)
@@ -145,7 +145,7 @@ func (m model) chrome() chromeRows {
 			Background(lipgloss.Color("235")).
 			Padding(0, 1)
 
-		matchCount := countMatches(m.logs, m.searchQuery)
+		matchCount := len(m.matches())
 		var status string
 		switch {
 		case m.searchQuery == "":

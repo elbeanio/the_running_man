@@ -31,7 +31,7 @@ func TestFetchLogsEscapesTheSourceName(t *testing.T) {
 	defer func() { apiClient = saved }()
 
 	const name = "my app & co #1"
-	fetchLogs(srv.URL, name)()
+	fetchLogs(srv.URL, name, 0)()
 
 	if gotSource != name {
 		t.Errorf("server received source=%q, want %q", gotSource, name)
