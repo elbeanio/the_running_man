@@ -63,13 +63,19 @@ Two readings that were considered and rejected:
   should get on with starting its own processes. It should never be blocked.
 - **Tests stay fast.** The core suite runs in a second or two. Anything slower is
   tagged and run only before review.
-- **Known-vulnerable dependencies are left visibly red, not suppressed.** The Security
-  workflow currently fails on `GO-2026-4887` and `GO-2026-4883` in
-  `github.com/docker/docker`, both reported `Fixed in: N/A` — no released version resolves
-  them. **Do not add an allowlist to make the check pass.** Decided 2026-09-15: a standing
-  red check is a reminder to go and look, whereas a suppression quietly outlives the
-  problem by months. Anything else that govulncheck reports *is* actionable, so fix it
-  rather than adding to this list. Revisit when the Docker SDK ships a fix.
+- **Known-vulnerable dependencies are fixed, never suppressed.** **Do not add a
+  govulncheck allowlist.** A suppression quietly outlives the problem by months, where a
+  red check is a reminder to go and look. Everything govulncheck reports is actionable.
+
+  This was tested. The Security workflow stood red from 2026-09-15 to 2026-10-04 on
+  `GO-2026-4887` and `GO-2026-4883` in `github.com/docker/docker`, both reported
+  `Fixed in: N/A`, on the assumption that a fix would eventually arrive upstream. It would
+  not have: Moby renamed to `github.com/moby/moby/v2` and the legacy `+incompatible`
+  module was never going to be marked fixed. Waiting was the wrong call, and it took
+  someone asking "did you actually check?" to find that out. The fix was to depend on
+  `github.com/moby/moby/client` and `github.com/moby/moby/api` — slim, unaffected modules
+  — instead of the daemon monolith. **When a check is left red, put a date on the
+  assumption and go back to it.**
 
 ## Non-goals
 

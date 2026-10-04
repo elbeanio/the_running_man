@@ -9,16 +9,15 @@ on:
     - cron: '0 2 * * 1'  # Weekly on Monday at 2 AM
 
 jobs:
-  # NOTE: this job is currently expected to FAIL.
+  # This job is expected to PASS. It was red from 2026-09-15 until 2026-10-04 on
+  # GO-2026-4887 and GO-2026-4883 in github.com/docker/docker, both reported
+  # "Fixed in: N/A" -- resolved by moving to github.com/moby/moby/client and
+  # github.com/moby/moby/api, which are not affected. The legacy
+  # +incompatible module was never going to be marked fixed.
   #
-  # govulncheck reports GO-2026-4887 and GO-2026-4883 in
-  # github.com/docker/docker, both "Fixed in: N/A" -- no released version
-  # resolves them.
-  #
-  # Do NOT add an allowlist to turn this green. That is a deliberate decision
-  # (see PROJECT.md): a standing red check is a reminder to go and look, whereas
-  # a suppression quietly outlives the problem. Anything govulncheck reports
-  # beyond those two IDs is actionable -- fix it rather than filtering it.
+  # There is still no allowlist, and there should never be one: a suppression
+  # quietly outlives the problem. Everything govulncheck reports is actionable --
+  # fix it rather than filtering it.
   vulnerability-scan:
     name: Vulnerability Scan
     runs-on: ubuntu-latest

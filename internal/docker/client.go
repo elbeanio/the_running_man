@@ -8,10 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/events"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 )
 
 // getDockerEndpoint resolves the Docker host using the Docker CLI context system
@@ -62,9 +59,11 @@ func NewClient() (*Client, error) {
 		opts = append(opts, client.WithHost(endpoint))
 	}
 
-	opts = append(opts, client.FromEnv, client.WithAPIVersionNegotiation())
+	// No WithAPIVersionNegotiation: it is a no-op in this client, which
+	// negotiates by default. Passing it is deprecated.
+	opts = append(opts, client.FromEnv)
 
-	cli, err := client.NewClientWithOpts(opts...)
+	cli, err := client.New(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Docker client: %w", err)
 	}
@@ -82,7 +81,7 @@ func (c *Client) Close() error {
 
 // Ping verifies connectivity to the Docker daemon
 func (c *Client) Ping(ctx context.Context) error {
-	_, err := c.cli.Ping(ctx)
+	_, err := c.cli.Ping(ctx, client.PingOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to ping Docker daemon: %w", err)
 	}
@@ -142,12 +141,12 @@ func (c *Client) DiscoverContainersInProject(ctx context.Context, projectName st
 // findServiceContainers finds all containers for a specific service
 func (c *Client) findServiceContainers(ctx context.Context, projectName, serviceName string) ([]Container, error) {
 	// Build filter for docker-compose containers
-	filterArgs := filters.NewArgs()
-	filterArgs.Add("label", fmt.Sprintf("com.docker.compose.project=%s", projectName))
-	filterArgs.Add("label", fmt.Sprintf("com.docker.compose.service=%s", serviceName))
+	filterArgs := client.Filters{}.
+		Add("label", fmt.Sprintf("com.docker.compose.project=%s", projectName)).
+		Add("label", fmt.Sprintf("com.docker.compose.service=%s", serviceName))
 
 	// List containers
-	dockerContainers, err := c.cli.ContainerList(ctx, container.ListOptions{
+	result, err := c.cli.ContainerList(ctx, client.ContainerListOptions{
 		Filters: filterArgs,
 		All:     false, // Only running containers
 	})
@@ -156,7 +155,7 @@ func (c *Client) findServiceContainers(ctx context.Context, projectName, service
 	}
 
 	var containers []Container
-	for _, dc := range dockerContainers {
+	for _, dc := range result.Items {
 		// Extract container name (remove leading /)
 		name := strings.TrimPrefix(dc.Names[0], "/")
 
@@ -166,7 +165,10 @@ func (c *Client) findServiceContainers(ctx context.Context, projectName, service
 			ServiceName: serviceName,
 			ProjectName: projectName,
 			Image:       dc.Image,
-			State:       dc.State,
+			// Converted: the SDK types this as container.ContainerState, and
+			// Container is our own domain type -- the API and the TUI read it,
+			// and neither should acquire a Docker SDK type to do so.
+			State: string(dc.State),
 		})
 	}
 
@@ -237,19 +239,17 @@ type EventHandler func(event ContainerEvent)
 // This function blocks until the context is cancelled
 func (c *Client) WatchEvents(ctx context.Context, projectName string, handler EventHandler) error {
 	// Build filter for events from our compose project
-	filterArgs := filters.NewArgs()
-	filterArgs.Add("type", "container")
-	filterArgs.Add("label", fmt.Sprintf("com.docker.compose.project=%s", projectName))
+	filterArgs := client.Filters{}.
+		Add("type", "container").
+		Add("label", fmt.Sprintf("com.docker.compose.project=%s", projectName))
 
-	eventOptions := events.ListOptions{
+	stream := c.cli.Events(ctx, client.EventsListOptions{
 		Filters: filterArgs,
-	}
-
-	eventsChan, errsChan := c.cli.Events(ctx, eventOptions)
+	})
 
 	for {
 		select {
-		case event := <-eventsChan:
+		case event := <-stream.Messages:
 			// Process container events
 			if event.Type == "container" {
 				containerEvent := ContainerEvent{
@@ -265,7 +265,7 @@ func (c *Client) WatchEvents(ctx context.Context, projectName string, handler Ev
 					handler(containerEvent)
 				}
 			}
-		case err := <-errsChan:
+		case err := <-stream.Err:
 			if err != nil && ctx.Err() == nil {
 				return fmt.Errorf("error watching events: %w", err)
 			}
