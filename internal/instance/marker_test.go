@@ -194,3 +194,32 @@ func TestSocketPath_ShortEnoughForTheKernel(t *testing.T) {
 		t.Error("two different projects resolved to the same socket")
 	}
 }
+
+// Two spellings of one directory must yield one socket.
+//
+// The long-path fallback hashes the directory *string*, so a symlinked route to
+// the same project hashed differently -- and a short symlink to a deep project
+// skipped the fallback altogether and used the in-project path instead. Both
+// instances then thought they were alone: duplicate processes, and the second
+// overwriting the first's marker. That is the bug the socket was supposed to
+// make impossible, reached through path aliasing instead of a port collision.
+func TestSocketPath_SameProjectThroughASymlink(t *testing.T) {
+	// Deep enough that the in-project path cannot fit, so the fallback applies.
+	root := t.TempDir()
+	deep := filepath.Join(root, strings.Repeat("nested-directory/", 6)+"project")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatalf("building a deep project: %v", err)
+	}
+	if len(filepath.Join(deep, DirName, SocketName)) <= socketPathLimit {
+		t.Fatalf("test project path is not long enough to exercise the fallback: %s", deep)
+	}
+
+	alias := filepath.Join(t.TempDir(), "p")
+	if err := os.Symlink(deep, alias); err != nil {
+		t.Skipf("cannot create a symlink here: %v", err)
+	}
+
+	if got, want := SocketPath(alias), SocketPath(deep); got != want {
+		t.Errorf("symlinked route resolved to a different socket:\n  via symlink: %s\n  via real:    %s", got, want)
+	}
+}

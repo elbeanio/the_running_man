@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"syscall"
@@ -438,6 +439,13 @@ func runCommand(args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[running-man] Could not determine working directory: %v\n", err)
 		projectDir = "."
+	}
+	// Canonical, so that two spellings of one project -- a symlinked route, or
+	// /tmp vs /private/tmp on macOS -- agree about which project this is. The
+	// socket derivation resolves independently; this keeps the marker and
+	// /health reporting the same directory it used.
+	if resolved, resolveErr := filepath.EvalSymlinks(projectDir); resolveErr == nil {
+		projectDir = resolved
 	}
 	socketPath := instance.SocketPath(projectDir)
 

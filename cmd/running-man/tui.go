@@ -1872,6 +1872,8 @@ func TuiCommandWithManager(args []string, manager *process.Manager) {
 			fmt.Fprintf(os.Stderr, "Could not determine working directory: %v\n", err)
 			os.Exit(1)
 		}
+		// instance.SocketPath resolves the path itself, so a symlinked route to
+		// the project finds the same socket `running-man run` created.
 		*socketPath = instance.SocketPath(cwd)
 	}
 

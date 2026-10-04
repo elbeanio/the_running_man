@@ -231,6 +231,21 @@ func Path(projectDir string) string {
 // Either way the marker records the result, so discovery is unaffected: a reader
 // that takes the path from .running-man/instance.json is always right.
 func SocketPath(projectDir string) string {
+	// Resolved first, because the fallback below hashes the directory *string*.
+	// Two spellings of one project -- a symlinked route, /tmp vs /private/tmp on
+	// macOS -- would otherwise hash differently and hand the same project two
+	// sockets, each instance believing it was alone. Worse, a short symlink to a
+	// deep project skips the fallback entirely and lands on the in-project path.
+	// Resolving makes the derivation depend on the directory rather than on how
+	// the caller happened to spell it.
+	//
+	// An unresolvable path (not least in tests, which pass directories that do
+	// not exist) falls through unchanged: it cannot be aliased if it is not
+	// there.
+	if resolved, err := filepath.EvalSymlinks(projectDir); err == nil {
+		projectDir = resolved
+	}
+
 	inProject := filepath.Join(projectDir, DirName, SocketName)
 	if len(inProject) <= socketPathLimit {
 		return inProject
