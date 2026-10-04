@@ -199,24 +199,70 @@ docker ps --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}'
 
 See [Configuration](configuration.md#the-project-name) for the full precedence order.
 
-### TUI Rendering Issues
+### The TUI quit on its own
 
-**Problem:** TUI displays incorrectly or freezes.
+**Problem:** you came back to a shell prompt and no Running Man.
 
-**Solutions:**
+**Look in the crash log first.** Recovered panics, unrecovered panics and fatal
+runtime errors are all recorded there:
+
 ```bash
-# Try different terminal
-# Recommended: iTerm2, Alacritty, WezTerm
+cat .running-man/crash.log
+```
 
-# Check terminal supports ANSI escape codes
-echo -e "\033[31mRed Text\033[0m"
+A report names the function, the error and the stack. If the file is absent, the
+TUI did not crash — the instance was stopped some other way, or the process was
+killed.
 
-# Disable TUI for debugging
+The TUI no longer exits on a panic while drawing: it keeps the session, shows a
+warning in the footer naming the crash log, and carries on. A panic while
+handling a message discards that message rather than the session.
+
+### The display is corrupted or garbled
+
+**Problem:** borders are broken, rows are misaligned, or part of the frame has
+gone blank.
+
+**Causes, both fixed, so check your version first:**
+
+- Captured output containing terminal instructions. Dev servers emit colour
+  codes, carriage returns for spinners and occasionally a clear-screen sequence;
+  drawn into a full-screen frame those are instructions, not text, and one
+  `ESC[2J` blanked the display. Lines are now cleaned on capture — a spinner is
+  stored as its final state, so `building... 1\rbuild done` is kept as
+  `build done`.
+- Running Man printing over its own frame. The OTLP receiver logged a line per
+  request, so an instrumented application corrupted the display continuously.
+  Nothing but the TUI writes to the terminal during a session now.
+
+If it still happens:
+
+```bash
+# Capture what is actually being drawn, rather than describing it
+tmux new-session -d -s rm -x 120 -y 40
+tmux send-keys -t rm "running-man run" Enter
+sleep 5
+tmux capture-pane -t rm -p    # the frame as plain text
+
+# Turn on the TUI's own trace and the high-frequency diagnostics
+RUNNING_MAN_DEBUG=1 running-man run
+cat .running-man/tui-debug.log
+```
+
+`RUNNING_MAN_DEBUG` also re-enables the per-request OTLP lines, which are off by
+default.
+
+**Problem:** the TUI freezes, or the terminal itself misbehaves.
+
+```bash
+# Rule the TUI out entirely
 running-man run --process "python app.py" --no-tui
 
-# Increase terminal scrollback buffer
-# (Check terminal settings)
+# Check the terminal handles escape codes at all
+printf '\033[31mRed Text\033[0m\n'
 ```
+
+Recommended terminals: iTerm2, Alacritty, WezTerm, or tmux in any of them.
 
 ### Processes Not Starting
 

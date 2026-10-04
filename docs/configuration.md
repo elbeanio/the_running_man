@@ -332,6 +332,16 @@ tracing:
   max_span_age: 1h
 ```
 
+## Environment variables Running Man reads
+
+| Variable | Effect |
+|---|---|
+| `RUNNING_MAN_DEBUG` | Any non-empty value turns on diagnostics: Bubble Tea's own trace to `.running-man/tui-debug.log`, and the per-request OTLP lines that are otherwise suppressed. Off by default because they are verbose — the receiver logs one line per span batch from every instrumented process. |
+| `DOCKER_HOST`, `DOCKER_CONTEXT` | Where to find the Docker daemon, read before falling back to the Docker CLI's context. |
+
+Crash reports are written to `.running-man/crash.log` without needing a variable
+set. See [Troubleshooting](troubleshooting.md#the-tui-quit-on-its-own).
+
 ## Environment Variable Substitution
 
 Running Man supports environment variable substitution in configuration values.
