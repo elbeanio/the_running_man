@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"sync/atomic"
 )
 
@@ -36,28 +37,40 @@ const DebugEnvVar = "RUNNING_MAN_DEBUG"
 // and this is consulted on a hot path.
 var debug = os.Getenv(DebugEnvVar) != ""
 
-// quiet suppresses terminal writes. Atomic because the writers are the API
-// server's handlers, the OTLP receiver's handlers and the process manager's
-// goroutines, none of which share a lock with the TUI.
-var quiet atomic.Bool
+// silences counts active Silence calls rather than holding a flag, because they
+// nest: `running-man run` silences as soon as it knows a TUI is coming, and the
+// TUI silences again when it takes the screen. With a flag, the inner restore
+// would un-silence while the outer caller still expected quiet.
+//
+// Atomic because the writers are the API server's handlers, the OTLP receiver's
+// handlers and the process and container readers, none of which share a lock
+// with the TUI.
+var silences atomic.Int64
 
 // Silence suppresses terminal writes and returns a function that restores them.
 //
 // Call it before handing the screen to a TUI. The returned restore makes
 // shutdown messages visible again, which matters because they are the last thing
-// a user sees.
+// a user sees. Restoring more than once is harmless.
 func Silence() (restore func()) {
-	quiet.Store(true)
-	return func() { quiet.Store(false) }
+	silences.Add(1)
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			if silences.Add(-1) < 0 {
+				silences.Store(0)
+			}
+		})
+	}
 }
 
 // Quiet reports whether terminal writes are currently suppressed, for callers
 // that want to skip assembling an expensive message.
-func Quiet() bool { return quiet.Load() }
+func Quiet() bool { return silences.Load() > 0 }
 
 // Printf writes to stdout unless the terminal is in use by something else.
 func Printf(format string, a ...any) {
-	if quiet.Load() {
+	if Quiet() {
 		return
 	}
 	fmt.Fprintf(os.Stdout, format, a...)
@@ -68,7 +81,7 @@ func Printf(format string, a ...any) {
 // Suppressed on the same terms as Printf: stderr and stdout are the same
 // terminal, and a diagnostic on stderr corrupts a frame just as effectively.
 func Errorf(format string, a ...any) {
-	if quiet.Load() {
+	if Quiet() {
 		return
 	}
 	fmt.Fprintf(os.Stderr, format, a...)
@@ -76,7 +89,7 @@ func Errorf(format string, a ...any) {
 
 // Debugf writes a high-frequency diagnostic, but only when DebugEnvVar is set.
 func Debugf(format string, a ...any) {
-	if !debug || quiet.Load() {
+	if !debug || Quiet() {
 		return
 	}
 	fmt.Fprintf(os.Stdout, format, a...)
@@ -88,7 +101,7 @@ func Debug() bool { return debug }
 // Writer returns stdout, or io.Discard while writes are suppressed, for the few
 // callers that need an io.Writer rather than a print call.
 func Writer() io.Writer {
-	if quiet.Load() {
+	if Quiet() {
 		return io.Discard
 	}
 	return os.Stdout

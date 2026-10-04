@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"sync"
 	"time"
 
@@ -117,11 +116,17 @@ func (s *ContainerStreamer) streamLogs(stream io.ReadCloser) {
 		timestamp := time.Now()
 		isStderr := streamType == 2
 
-		// Pass-through to terminal with container name prefix
+		// Pass-through to terminal with container name prefix.
+		//
+		// Through termout, because this had no gate of any kind: unlike
+		// internal/process, which took a silent flag, the container streamer
+		// echoed every line unconditionally -- including while the TUI owned the
+		// screen. With a Compose stack that is a continuous stream of writes
+		// over the frame, which is exactly how it was reported.
 		if isStderr {
-			fmt.Fprintf(os.Stderr, "[%s] %s\n", s.name, line)
+			termout.Errorf("[%s] %s\n", s.name, line)
 		} else {
-			fmt.Printf("[%s] %s\n", s.name, line)
+			termout.Printf("[%s] %s\n", s.name, line)
 		}
 
 		// Call handler if provided

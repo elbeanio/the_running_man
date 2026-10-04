@@ -21,6 +21,7 @@ import (
 	"github.com/elbeanio/the_running_man/internal/parser"
 	"github.com/elbeanio/the_running_man/internal/process"
 	"github.com/elbeanio/the_running_man/internal/storage"
+	"github.com/elbeanio/the_running_man/internal/termout"
 	"github.com/elbeanio/the_running_man/internal/tracing"
 	"github.com/kballard/go-shellquote"
 )
@@ -634,13 +635,25 @@ func runCommand(args []string) {
 	if finalTracingEnabled {
 		// Use OTEL-enabled manager
 		otelEndpoint := "http://localhost"
-		// Silent mode when TUI is running (not headless mode)
-		manager = process.NewManagerWithOTEL(processes, processLineHandler, otelEndpoint, finalTracingPort, true, !*noTUI)
+		manager = process.NewManagerWithOTEL(processes, processLineHandler, otelEndpoint, finalTracingPort, true)
 	} else {
 		// Use regular manager
-		// Silent mode when TUI is running (not headless mode)
-		manager = process.NewManagerWithOTEL(processes, processLineHandler, "", 0, false, !*noTUI)
+		manager = process.NewManagerWithOTEL(processes, processLineHandler, "", 0, false)
 	}
+
+	// A TUI is coming, so nothing else may write to this terminal. Silenced
+	// here rather than when the TUI actually starts, because processes and
+	// container streamers begin producing output at manager.Start() -- which is
+	// well before the screen is handed over.
+	//
+	// restoreOutput is called as soon as the TUI gives the screen back, not at
+	// the end of this function: shutdown errors go through termout too, and
+	// they are the last thing a user sees.
+	restoreOutput := func() {}
+	if !*noTUI {
+		restoreOutput = termout.Silence()
+	}
+	defer restoreOutput()
 
 	// Start API server in background
 	var traceStorage *tracing.SpanStorage
@@ -848,6 +861,9 @@ func runCommand(args []string) {
 
 		// Run TUI with manager reference so it can stop processes on quit
 		TuiCommandWithManager([]string{"--socket=" + socketPath}, manager)
+
+		// The screen is ours again, so diagnostics are worth printing.
+		restoreOutput()
 
 		// TUI exited (user pressed 'q') - stop processes and clean up
 		fmt.Printf("\n[running-man] Shutting down processes...\n")
