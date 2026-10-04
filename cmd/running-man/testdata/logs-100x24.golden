@@ -1,0 +1,22 @@
+   ┌───────────────────┐┌──────────────┐┌──────────────┐                                            
+   │  🏃‍➡️  running-man  ││  🔧 backend  ││  🔍  Traces  │                                            
+┌──┴───────────────────┴┘              └┴──────────────┴───────────────────────────────────────────┐
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│[09:15:01] [info] listening on http://localhost:8080                                              │
+│[09:15:02] [warn] deprecated config key 'legacy_mode'                                             │
+│[09:15:03] [error] could not connect to database: connection refused [trace:4bf92f357...]         │
+│[09:15:04] [info] retrying in 5s                                                                  │
+│[09:15:05] [error] Traceback (most recent call last):                                             │
+│                      File "app.py", line 42                                                      │
+│                        connect()                                                                 │
+│                    ConnectionError: refused                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                                                    
+Tab: source | ↑/↓: scroll | /: search | t: trace:on | q: quit                                       

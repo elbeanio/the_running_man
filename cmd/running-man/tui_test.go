@@ -740,7 +740,9 @@ func TestScrollToMatch_PositionsViewCorrectly(t *testing.T) {
 	nm := newModel.(model)
 
 	// Render and check the target line is visible
-	availableHeight := nm.height - uiHeaderFooterHeight
+	// The same number View would use, so the test agrees with the renderer about
+	// how many rows are visible.
+	availableHeight := nm.pageSize()
 	result := renderLogs(nm.logs, availableHeight, nm.width, nm.scrollOffset, nm.searchQuery, nm.searchMatchIdx, nm.showTraceIDs)
 	stripped := stripANSI(result)
 	if !strings.Contains(stripped, "banana target line") {
