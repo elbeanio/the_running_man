@@ -108,6 +108,34 @@ func installDebugLog(projectDir string) func() {
 	return func() { _ = f.Close() }
 }
 
+// removeCrashLogIfEmpty deletes the crash log when nothing was ever written to
+// it.
+//
+// debug.SetCrashOutput needs an open file up front, so the log is created on
+// every launch whether or not anything crashes. Left behind, an empty crash.log
+// says the opposite of the truth -- the troubleshooting guide tells people that
+// an absent file means the TUI did not crash -- and it keeps .running-man from
+// being removed on a clean exit.
+//
+// Called at the end of shutdown rather than when the TUI returns: unlinking the
+// file while the runtime still holds it open means a fatal panic after this
+// point would write to a file nobody can find, so the window is kept as small
+// as possible.
+func removeCrashLogIfEmpty() {
+	crashLogMu.Lock()
+	path := crashLogPath
+	crashLogMu.Unlock()
+	if path == "" {
+		return
+	}
+
+	info, err := os.Stat(path)
+	if err != nil || info.Size() > 0 {
+		return
+	}
+	_ = os.Remove(path)
+}
+
 // recordPanic appends a recovered panic and its stack to the crash log, and
 // returns a one-line summary to show the user.
 //

@@ -89,3 +89,40 @@ func firstLines(s string, n int) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// debug.SetCrashOutput needs the file open from launch, so it is created whether
+// or not anything crashes. An empty one left behind says the opposite of the
+// truth -- the troubleshooting guide tells people an absent file means no crash
+// -- and keeps .running-man from being removed on a clean exit.
+func TestCrashLogRemovedOnlyWhenEmpty(t *testing.T) {
+	t.Run("empty is removed", func(t *testing.T) {
+		dir := t.TempDir()
+		installCrashLog(dir)
+		path := CrashLogPath(dir)
+
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("installCrashLog did not create %s: %v", path, err)
+		}
+		removeCrashLogIfEmpty()
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("an empty crash log survived a clean exit")
+		}
+	})
+
+	t.Run("a real report is kept", func(t *testing.T) {
+		dir := t.TempDir()
+		installCrashLog(dir)
+		path := CrashLogPath(dir)
+
+		recordPanic("View", "something broke", []byte("goroutine 1 [running]:\n"))
+		removeCrashLogIfEmpty()
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("a recorded crash was deleted: %v", err)
+		}
+		if !strings.Contains(string(data), "something broke") {
+			t.Errorf("crash log does not contain the report: %q", string(data))
+		}
+	})
+}

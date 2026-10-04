@@ -95,11 +95,18 @@ func Listen(socketPath string) (net.Listener, error) {
 //
 // Split from Listen so that binding can fail before anything else starts, while
 // serving runs for the life of the instance.
+//
+// A closed listener is a clean stop, not an error. Shutdown closes the listener
+// directly -- that is what unlinks the socket -- so http.Serve returns
+// net.ErrClosed rather than the http.ErrServerClosed that only Server.Shutdown
+// produces. Reporting it printed "API server error: accept unix ...: use of
+// closed network connection" after every quit.
 func (s *Server) Serve(ln net.Listener) error {
-	if err := http.Serve(ln, s.routes()); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+	err := http.Serve(ln, s.routes())
+	if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
+		return nil
 	}
-	return nil
+	return err
 }
 
 // NewSocketClient returns an http.Client that talks to a Running Man socket.

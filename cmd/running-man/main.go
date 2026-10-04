@@ -750,6 +750,9 @@ func runCommand(args []string) {
 		if err := apiListener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			fmt.Fprintf(os.Stderr, "[running-man] Could not close the API socket: %v\n", err)
 		}
+		// Before instance.Remove, which cannot delete the directory while this
+		// is still in it.
+		removeCrashLogIfEmpty()
 		if err := instance.Remove(projectDir); err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] Could not remove instance marker: %v\n", err)
 		}
