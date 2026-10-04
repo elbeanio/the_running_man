@@ -335,23 +335,6 @@ func (rb *RingBuffer) removeFromTraceIndex(traceID string, entry *parser.LogEntr
 	}
 }
 
-// Clear removes all entries from the buffer
-func (rb *RingBuffer) Clear() {
-	rb.mu.Lock()
-	defer rb.mu.Unlock()
-
-	// Clamped for the same reason as in NewRingBuffer: a negative capacity
-	// panics in make().
-	initialCap := rb.maxSize
-	if initialCap < 0 {
-		initialCap = 0
-	}
-	rb.entries = make([]*parser.LogEntry, 0, initialCap)
-	rb.received = make([]time.Time, 0, initialCap)
-	rb.currentSize = 0
-	rb.traceIndex = make(map[string][]*parser.LogEntry)
-}
-
 // GetLogsByTraceID returns all log entries for a specific trace ID
 func (rb *RingBuffer) GetLogsByTraceID(traceID string) []*parser.LogEntry {
 	rb.mu.RLock()

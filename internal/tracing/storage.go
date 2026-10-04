@@ -1,6 +1,7 @@
 package tracing
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -92,15 +93,8 @@ func (s *SpanStorage) Query(filters SpanQueryFilters) []*SpanEntry {
 		}
 
 		// Filter by span name (supports partial match)
-		if filters.SpanName != "" {
-			matched := false
-			// Simple contains check for now
-			if contains(span.Name, filters.SpanName) {
-				matched = true
-			}
-			if !matched {
-				continue
-			}
+		if filters.SpanName != "" && !strings.Contains(span.Name, filters.SpanName) {
+			continue
 		}
 
 		// Filter by status
@@ -128,29 +122,6 @@ func (s *SpanStorage) GetTrace(traceID string) []*SpanEntry {
 	return result
 }
 
-// Stats returns storage statistics
-func (s *SpanStorage) Stats() SpanStorageStats {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	oldest := time.Now()
-	newest := time.Time{}
-	for _, span := range s.spans {
-		if span.StartTime.Before(oldest) {
-			oldest = span.StartTime
-		}
-		if span.StartTime.After(newest) {
-			newest = span.StartTime
-		}
-	}
-
-	return SpanStorageStats{
-		TotalSpans: len(s.spans),
-		OldestSpan: oldest,
-		NewestSpan: newest,
-	}
-}
-
 // SpanQueryFilters defines filters for querying spans
 type SpanQueryFilters struct {
 	Since       time.Duration
@@ -159,26 +130,4 @@ type SpanQueryFilters struct {
 	SpanName    string
 	Status      string
 	Limit       int
-}
-
-// SpanStorageStats provides statistics about span storage
-type SpanStorageStats struct {
-	TotalSpans int
-	OldestSpan time.Time
-	NewestSpan time.Time
-}
-
-// contains is a helper function for string matching
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
-
-// containsHelper performs case-sensitive substring search
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

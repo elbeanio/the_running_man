@@ -35,14 +35,6 @@ type ComposeCommand struct {
 	Base []string
 }
 
-// String renders the command for display.
-func (c ComposeCommand) String() string {
-	if len(c.Base) == 0 {
-		return c.Name
-	}
-	return c.Name + " " + strings.Join(c.Base, " ")
-}
-
 // FindComposeCommand locates a usable Compose CLI, preferring v2.
 func FindComposeCommand(ctx context.Context) (ComposeCommand, error) {
 	if path, err := exec.LookPath("docker"); err == nil {

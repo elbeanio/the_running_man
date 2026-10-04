@@ -19,7 +19,6 @@ package termout
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -93,16 +92,4 @@ func Debugf(format string, a ...any) {
 		return
 	}
 	fmt.Fprintf(os.Stdout, format, a...)
-}
-
-// Debug reports whether high-frequency diagnostics are enabled.
-func Debug() bool { return debug }
-
-// Writer returns stdout, or io.Discard while writes are suppressed, for the few
-// callers that need an io.Writer rather than a print call.
-func Writer() io.Writer {
-	if Quiet() {
-		return io.Discard
-	}
-	return os.Stdout
 }

@@ -147,35 +147,6 @@ func TestSpanStorage_EvictionBySize(t *testing.T) {
 	assert.Equal(t, "c", spans[1].TraceID) // Third span (first was evicted)
 }
 
-func TestSpanStorage_Stats(t *testing.T) {
-	storage := NewSpanStorage(100, time.Hour)
-
-	// Add spans at different times
-	now := time.Now()
-	span1 := &SpanEntry{
-		TraceID:     "trace1",
-		SpanID:      "span1",
-		Name:        "operation1",
-		ServiceName: "service1",
-		StartTime:   now.Add(-30 * time.Minute),
-	}
-
-	span2 := &SpanEntry{
-		TraceID:     "trace2",
-		SpanID:      "span2",
-		Name:        "operation2",
-		ServiceName: "service2",
-		StartTime:   now.Add(-15 * time.Minute),
-	}
-
-	storage.Add(span1)
-	storage.Add(span2)
-
-	stats := storage.Stats()
-	assert.Equal(t, 2, stats.TotalSpans)
-	assert.True(t, stats.OldestSpan.Before(stats.NewestSpan))
-}
-
 func TestSpanStorage_QueryWithSpanName(t *testing.T) {
 	storage := NewSpanStorage(100, time.Hour)
 

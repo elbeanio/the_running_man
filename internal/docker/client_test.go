@@ -160,7 +160,7 @@ func TestGetProjectNameFromPath(t *testing.T) {
 	}
 }
 
-func TestDiscoverContainers(t *testing.T) {
+func TestDiscoverContainersInProject(t *testing.T) {
 	if !IsAvailable() {
 		t.Skip("Docker daemon not available, skipping test")
 	}
@@ -176,9 +176,9 @@ func TestDiscoverContainers(t *testing.T) {
 
 	// This test will typically find no containers (unless a compose project is running)
 	// We just verify the function doesn't error
-	containers, err := client.DiscoverContainers(ctx, "/tmp/test/docker-compose.yml", []string{"web", "db"})
+	containers, err := client.DiscoverContainersInProject(ctx, "test", []string{"web", "db"})
 	if err != nil {
-		t.Errorf("DiscoverContainers failed: %v", err)
+		t.Errorf("DiscoverContainersInProject failed: %v", err)
 	}
 
 	// Log how many containers were found (could be 0 and that's ok)
