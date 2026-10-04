@@ -419,6 +419,11 @@ func logRecordToEntry(lr *logsv1.LogRecord, service string) *parser.LogEntry {
 	if len(lr.TraceId) > 0 {
 		traceID = bytesToHex(lr.TraceId)
 	}
+	// Sanitised here as well as in the parser: this path builds entries
+	// directly and never goes through MultiParser, and anything that can reach
+	// the OTLP port chooses its own message bytes.
+	message = parser.SanitiseLine(message)
+
 	return &parser.LogEntry{
 		Timestamp:  timestamp,
 		Level:      level,

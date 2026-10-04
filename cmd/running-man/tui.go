@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/elbeanio/the_running_man/internal/api"
 	"github.com/elbeanio/the_running_man/internal/instance"
+	"github.com/elbeanio/the_running_man/internal/parser"
 	"github.com/elbeanio/the_running_man/internal/process"
 )
 
@@ -760,28 +761,19 @@ func renderTraceList(traces []traceSummary, height, width, scrollOffset, selecte
 
 	for i, trace := range traces {
 		// Truncate trace ID if needed
-		displayTraceID := trace.TraceID
-		if len(displayTraceID) > traceIDWidth {
-			displayTraceID = displayTraceID[:traceIDWidth-3] + "..."
-		}
+		displayTraceID := truncate(trace.TraceID, traceIDWidth)
 
 		// Format duration
 		durationStr := trace.Duration.String()
-		if len(durationStr) > durationWidth {
-			durationStr = durationStr[:durationWidth-3] + "..."
-		}
+		durationStr = truncate(durationStr, durationWidth)
 
 		// Format status
 		statusStr := trace.Status
-		if len(statusStr) > statusWidth {
-			statusStr = statusStr[:statusWidth-3] + "..."
-		}
+		statusStr = truncate(statusStr, statusWidth)
 
 		// Format services (comma-separated)
 		servicesStr := strings.Join(trace.Services, ", ")
-		if len(servicesStr) > servicesWidth {
-			servicesStr = servicesStr[:servicesWidth-3] + "..."
-		}
+		servicesStr = truncate(servicesStr, servicesWidth)
 
 		// Apply selection style
 		lineStyle := logStyle
@@ -914,14 +906,9 @@ func renderTraceDetail(traceID string, spans []spanDetail, logs []logEntry, heig
 	if len(logs) > 0 {
 		infoLines = append(infoLines, fmt.Sprintf("Correlated Logs (%d):", len(logs)))
 		for _, log := range logs {
-			timestamp := log.Timestamp
-			if len(timestamp) > 19 {
-				timestamp = timestamp[11:19] // HH:MM:SS
-			}
-			line := fmt.Sprintf("[%s] [%s] %s", timestamp, log.Level, log.Message)
-			if len(line) > width-2 {
-				line = line[:width-5] + "..."
-			}
+			line := fmt.Sprintf("[%s] [%s] %s",
+				clockTime(log.Timestamp), log.Level, parser.SanitiseLine(log.Message))
+			line = truncate(line, width-2)
 			infoLines = append(infoLines, line)
 		}
 	} else {
@@ -1025,10 +1012,8 @@ func renderSpanNode(span spanDetail, children map[string][]spanDetail, prefix st
 	spanInfo := fmt.Sprintf("%s %s (%s) %s", statusSymbol, span.Name, span.Duration, span.ServiceName)
 
 	// Truncate if needed
-	maxLineWidth := width - len(nodePrefix) - 2
-	if len(spanInfo) > maxLineWidth {
-		spanInfo = spanInfo[:maxLineWidth-3] + "..."
-	}
+	maxLineWidth := width - displayWidth(nodePrefix) - 2
+	spanInfo = truncate(spanInfo, maxLineWidth)
 
 	*lines = append(*lines, nodePrefix+spanInfo)
 
@@ -1238,43 +1223,34 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 			style = errorLogStyle
 		}
 
-		// Format: [timestamp] [level] message
-		timestamp := log.Timestamp
-		if len(timestamp) > 19 {
-			timestamp = timestamp[:19] // Trim to HH:MM:SS
-		}
-
-		// Split message on newlines to handle multiline output
-		messageLines := strings.Split(log.Message, "\n")
+		// Sanitised again at the point of drawing. Entries are cleaned on
+		// capture, but this is the last line of defence for the symptom that
+		// started this: one escape sequence reaching the terminal clears the
+		// screen, and the renderer's line diffing never repaints it.
+		messageLines := strings.Split(parser.SanitiseLine(log.Message), "\n")
 
 		for i, msgLine := range messageLines {
 			var line string
 			if i == 0 {
 				// First line gets full prefix
-				baseLine := fmt.Sprintf("[%s] [%s] %s", timestamp[11:19], log.Level, msgLine)
+				baseLine := fmt.Sprintf("[%s] [%s] %s",
+					clockTime(log.Timestamp), log.Level, msgLine)
 
 				// Add trace indicator if enabled and trace_id exists
 				if showTraceIDs && log.TraceID != "" {
-					// Truncate trace ID if too long
-					displayTraceID := log.TraceID
-					if len(displayTraceID) > maxTraceIDDisplayLength {
-						displayTraceID = displayTraceID[:maxTraceIDDisplayLength-3] + "..."
-					}
+					displayTraceID := truncate(log.TraceID, maxTraceIDDisplayLength)
 					traceIndicator := fmt.Sprintf("[trace:%s]", displayTraceID)
 
-					// Calculate available space for message after trace indicator
-					// We need to account for the styled width, not just string length
+					// The styled indicator's own width, since the style may add
+					// escape sequences that occupy no columns.
 					traceIndicatorStyled := traceIndicatorStyle.Render(traceIndicator)
-					indicatorWidth := lipgloss.Width(traceIndicatorStyled) + 1 // +1 for space
+					indicatorWidth := displayWidth(traceIndicatorStyled) + 1 // +1 for space
 
-					// Available width for the base line (message + timestamp + level)
-					// width is terminal width, we need to leave room for indicator
-					maxBaseLineWidth := width - indicatorWidth
-
-					if len(baseLine) > maxBaseLineWidth {
-						// Truncate message to make room for trace indicator
-						baseLine = baseLine[:maxBaseLineWidth-3] + "..."
-					}
+					// Whatever is left is for the message. In a narrow window
+					// there is nothing left, and truncate says so by returning
+					// "" -- where subtracting from the width used to produce a
+					// negative slice bound and take the whole program down.
+					baseLine = truncate(baseLine, width-indicatorWidth)
 
 					line = fmt.Sprintf("%s %s", baseLine, traceIndicatorStyled)
 				} else {
@@ -1288,16 +1264,9 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 			// Truncate long lines (only if trace indicator wasn't added above)
 			// When trace indicator is added, we've already handled truncation
 			// Use width-10 to ensure plenty of room for right border
-			if !(i == 0 && showTraceIDs && log.TraceID != "") && lipgloss.Width(line) > width-10 {
-				// Need to truncate the unstyled string, not the styled one
-				// Find how many characters to keep
-				charsToKeep := width - 13 // Leave room for "..."
-				if charsToKeep < 0 {
-					charsToKeep = 0
-				}
-				if len(line) > charsToKeep {
-					line = line[:charsToKeep] + "..."
-				}
+			if !(i == 0 && showTraceIDs && log.TraceID != "") {
+				// -2 for the box's left and right borders.
+				line = truncate(line, width-2)
 			}
 
 			// Apply highlighting if search query exists
@@ -1369,7 +1338,20 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 // buildMatchLineIndex returns a slice where each element is the rendered-line index
 // (in the flat allLines array that renderLogs would produce) for each global match
 // occurrence of query across all logs. Used to compute scrollOffset for n/p navigation.
-func buildMatchLineIndex(logs []logEntry, width int, query string) []int {
+// buildMatchLineIndex returns the display-line index of every search match.
+//
+// Deliberately takes no width. It used to truncate each line to the terminal
+// width before searching it, which had three consequences: a match beyond the
+// cut was never found, the result disagreed with countMatches (which passed a
+// huge width to disable truncation) and with the renderer (which was given
+// width-2), and the truncation itself panicked on a narrow window. Truncation
+// cannot change how many display lines an entry occupies -- only the newlines in
+// its message can -- so the width was never relevant to the answer.
+//
+// A match past the visible edge of a long line is therefore counted and can be
+// jumped to, but will not be visibly highlighted. That is the better way round:
+// the alternative was not finding it at all.
+func buildMatchLineIndex(logs []logEntry, query string) []int {
 	if query == "" {
 		return nil
 	}
@@ -1378,21 +1360,14 @@ func buildMatchLineIndex(logs []logEntry, width int, query string) []int {
 	lineIdx := 0
 
 	for _, log := range logs {
-		timestamp := log.Timestamp
-		if len(timestamp) > 19 {
-			timestamp = timestamp[:19]
-		}
 		messageLines := strings.Split(log.Message, "\n")
 
 		for i, msgLine := range messageLines {
 			var line string
 			if i == 0 {
-				line = fmt.Sprintf("[%s] [%s] %s", timestamp[11:19], log.Level, msgLine)
+				line = fmt.Sprintf("[%s] [%s] %s", clockTime(log.Timestamp), log.Level, msgLine)
 			} else {
 				line = fmt.Sprintf("                    %s", msgLine)
-			}
-			if len(line) > width-2 {
-				line = line[:width-5] + "..."
 			}
 
 			lowerLine := strings.ToLower(line)
@@ -1561,10 +1536,9 @@ func tickCmd() tea.Cmd {
 }
 
 func countMatches(logs []logEntry, query string) int {
-	// Delegate to buildMatchLineIndex so the count matches exactly what is
-	// highlighted in the rendered output (full line including timestamp/level prefix).
-	// Use a large width so truncation never fires and no matches are cut off.
-	return len(buildMatchLineIndex(logs, 1<<20, query))
+	// Delegates to buildMatchLineIndex so the count and the positions can never
+	// disagree -- they used to, by being given different widths.
+	return len(buildMatchLineIndex(logs, query))
 }
 
 // Styles
@@ -1928,7 +1902,7 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 // scrollToMatch sets m.scrollOffset so that the line containing the current
 // searchMatchIdx is centered in the viewport. Disables autoScroll.
 func scrollToMatch(m model) model {
-	matchLineIndices := buildMatchLineIndex(m.logs, m.width, m.searchQuery)
+	matchLineIndices := buildMatchLineIndex(m.logs, m.searchQuery)
 	if m.searchMatchIdx < 0 || m.searchMatchIdx >= len(matchLineIndices) {
 		return m
 	}

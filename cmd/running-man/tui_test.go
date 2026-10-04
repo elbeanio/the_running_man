@@ -439,7 +439,7 @@ func TestBuildMatchLineIndex_SingleLineMatches(t *testing.T) {
 	//   line 1: "banana split"             → 1 occurrence (global 1)
 	//   line 2: "banana bread"             → 1 occurrence (global 2)  [continuation line of log[1]]
 	//   line 4: "banana foster"            → 1 occurrence (global 3)
-	idx := buildMatchLineIndex(logs, 120, "banana")
+	idx := buildMatchLineIndex(logs, "banana")
 	if len(idx) != 4 {
 		t.Fatalf("expected 4 match positions, got %d: %v", len(idx), idx)
 	}
@@ -468,7 +468,7 @@ func TestBuildMatchLineIndex_SingleLineMatches(t *testing.T) {
 
 func TestBuildMatchLineIndex_NoMatches(t *testing.T) {
 	logs := makeTestLogs()
-	idx := buildMatchLineIndex(logs, 120, "zzznomatch")
+	idx := buildMatchLineIndex(logs, "zzznomatch")
 	if len(idx) != 0 {
 		t.Errorf("expected 0 matches, got %d", len(idx))
 	}
@@ -476,7 +476,7 @@ func TestBuildMatchLineIndex_NoMatches(t *testing.T) {
 
 func TestBuildMatchLineIndex_EmptyQuery(t *testing.T) {
 	logs := makeTestLogs()
-	idx := buildMatchLineIndex(logs, 120, "")
+	idx := buildMatchLineIndex(logs, "")
 	if len(idx) != 0 {
 		t.Errorf("expected 0 matches for empty query, got %d", len(idx))
 	}
@@ -486,7 +486,7 @@ func TestBuildMatchLineIndex_MultipleOccurrencesOnOneLine(t *testing.T) {
 	logs := []logEntry{
 		{Timestamp: "2026-03-01T10:00:01Z", Level: "INFO", Message: "foo foo foo"},
 	}
-	idx := buildMatchLineIndex(logs, 120, "foo")
+	idx := buildMatchLineIndex(logs, "foo")
 	if len(idx) != 3 {
 		t.Fatalf("expected 3 match positions, got %d: %v", len(idx), idx)
 	}
@@ -502,7 +502,7 @@ func TestBuildMatchLineIndex_CaseInsensitive(t *testing.T) {
 	logs := []logEntry{
 		{Timestamp: "2026-03-01T10:00:01Z", Level: "INFO", Message: "Hello HELLO hello"},
 	}
-	idx := buildMatchLineIndex(logs, 120, "hello")
+	idx := buildMatchLineIndex(logs, "hello")
 	if len(idx) != 3 {
 		t.Fatalf("expected 3 matches (case-insensitive), got %d", len(idx))
 	}

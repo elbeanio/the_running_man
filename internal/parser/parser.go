@@ -121,6 +121,11 @@ func (m *MultiParser) ParseLineWithType(source string, sourceType string, line s
 }
 
 func (m *MultiParser) parse(source string, sourceType string, line string, timestamp time.Time, isStderr bool) []*LogEntry {
+	// Cleaned before anything looks at it. As well as making the line safe to
+	// draw, this is why level detection works on coloured output at all: an
+	// "ERROR" wrapped in colour escapes did not match the error patterns.
+	line = SanitiseLine(line)
+
 	st := m.stateFor(source)
 	st.mu.Lock()
 	defer st.mu.Unlock()
