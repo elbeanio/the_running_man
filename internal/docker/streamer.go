@@ -21,6 +21,12 @@ import (
 // LineHandler is called for each line of output from a container
 type LineHandler func(source string, line string, timestamp time.Time, isStderr bool)
 
+// StreamEndHandler is called when a container's log stream ends, once per
+// output stream, after its last line. It lets the parser release a traceback
+// it is still holding: a container gets no exit report, so nothing else would
+// ever close it.
+type StreamEndHandler func(source string, isStderr bool)
+
 // maxContainerLineBytes caps a single line, matching the cap the process
 // wrapper applies. A line longer than this is cut and marked rather than held
 // in memory indefinitely.
@@ -32,6 +38,7 @@ type ContainerStreamer struct {
 	containerID string
 	name        string
 	handler     LineHandler
+	onEnd       StreamEndHandler
 	ctx         context.Context
 	cancel      context.CancelFunc
 	wg          sync.WaitGroup
@@ -59,6 +66,12 @@ func NewContainerStreamer(client *Client, containerID, name string, handler Line
 		cancel:      cancel,
 		history:     history,
 	}
+}
+
+// OnStreamEnd registers fn to be called as the log stream ends. It must be
+// called before Start.
+func (s *ContainerStreamer) OnStreamEnd(fn StreamEndHandler) {
+	s.onEnd = fn
 }
 
 // Start begins streaming logs from the container
@@ -119,6 +132,16 @@ func replaySince(history time.Duration) string {
 func (s *ContainerStreamer) consume(stream io.Reader, tty bool) {
 	stdout := &lineWriter{emit: func(line string) { s.emit(line, false) }}
 	stderr := &lineWriter{emit: func(line string) { s.emit(line, true) }}
+	// Deferred first so it runs last, after the partial lines are flushed.
+	defer func() {
+		if s.onEnd == nil {
+			return
+		}
+		s.onEnd(s.name, false)
+		if !tty {
+			s.onEnd(s.name, true)
+		}
+	}()
 	defer stdout.flush()
 	defer stderr.flush()
 

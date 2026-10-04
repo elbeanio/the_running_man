@@ -519,6 +519,14 @@ func runCommand(args []string) {
 		appendEntries(parse(source, "system", line, timestamp, isStderr))
 	}
 
+	// Releases a traceback the parser is still holding when a stream ends.
+	// Without it, a traceback that was a stream's last output -- cut short, or
+	// ending in an exception line the parser does not recognise -- never
+	// reached the buffer.
+	flushStream := func(source string, isStderr bool) {
+		appendEntries([]*parser.LogEntry{multiParser.Flush(source, isStderr)})
+	}
+
 	// Docker Compose integration
 	var containerStreamers []*docker.ContainerStreamer
 	var dockerClient *docker.Client
@@ -623,6 +631,7 @@ func runCommand(args []string) {
 			// replayed lines arrive now, so anything older would otherwise be
 			// held for a full retention window regardless of its age.
 			streamer := docker.NewContainerStreamer(dockerClient, container.ID, container.Name, dockerLineHandler, finalRetention)
+			streamer.OnStreamEnd(flushStream)
 			if err := streamer.Start(); err != nil {
 				fmt.Fprintf(os.Stderr, "[running-man] Failed to start log streamer for %s: %v\n", container.Name, err)
 				continue
@@ -643,6 +652,7 @@ func runCommand(args []string) {
 		// Use regular manager
 		manager = process.NewManagerWithOTEL(processes, processLineHandler, "", 0, false)
 	}
+	manager.OnStreamEnd(flushStream)
 
 	// A TUI is coming, so nothing else may write to this terminal. Silenced
 	// here rather than when the TUI actually starts, because processes and

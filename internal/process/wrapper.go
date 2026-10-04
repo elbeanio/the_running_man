@@ -38,6 +38,13 @@ import (
 // LineHandler is called for each line of output
 type LineHandler func(source string, line string, timestamp time.Time, isStderr bool)
 
+// StreamEndHandler is called when stdout or stderr reaches its end, after the
+// stream's last line has gone to the LineHandler. It exists so a consumer that
+// holds lines back -- the parser, accumulating a traceback -- can release them:
+// without it, whatever was held when the process stopped writing was never
+// emitted.
+type StreamEndHandler func(source string, isStderr bool)
+
 // MaxLineBytes is the largest single line kept intact. Longer lines are
 // truncated to this length rather than ending capture for the stream.
 const MaxLineBytes = 1024 * 1024
@@ -98,6 +105,7 @@ type ProcessWrapper struct {
 	stdout    io.ReadCloser
 	stderr    io.ReadCloser
 	handler   LineHandler
+	onEnd     StreamEndHandler
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
@@ -243,6 +251,12 @@ func (w *ProcessWrapper) Start() error {
 	return nil
 }
 
+// OnStreamEnd registers fn to be called as each output stream ends. It must be
+// called before Start.
+func (w *ProcessWrapper) OnStreamEnd(fn StreamEndHandler) {
+	w.onEnd = fn
+}
+
 // captureStream reads lines from a stream and forwards them to the handler.
 //
 // Uses a bufio.Reader rather than a bufio.Scanner. A Scanner returns
@@ -257,6 +271,13 @@ func (w *ProcessWrapper) Start() error {
 // nobody is watching.
 func (w *ProcessWrapper) captureStream(stream io.ReadCloser, isStderr bool) {
 	defer w.wg.Done()
+	// Reported before wg.Done, so it lands before Wait returns and therefore
+	// before the manager reports how the process exited.
+	defer func() {
+		if w.onEnd != nil {
+			w.onEnd(w.name, isStderr)
+		}
+	}()
 
 	reader := bufio.NewReaderSize(stream, streamReadBufferBytes)
 

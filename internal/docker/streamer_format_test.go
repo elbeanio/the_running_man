@@ -3,6 +3,7 @@ package docker
 import (
 	"bytes"
 	"encoding/binary"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -143,5 +144,43 @@ func TestStreamer_FlushesTheLastPartialLine(t *testing.T) {
 
 	if len(r.lines) != 1 || r.lines[0].line != "no newline at the end" {
 		t.Fatalf("got %+v", r.lines)
+	}
+}
+
+// The end of a container's log stream is reported after its last line, partial
+// or not, so the parser can release a traceback it is still holding. Containers
+// get no exit report of their own, so nothing else would ever close it.
+func TestStreamer_ReportsStreamEndAfterTheLastLine(t *testing.T) {
+	for _, tty := range []bool{true, false} {
+		var events []string
+		s := NewContainerStreamer(nil, "c0ffee", "svc", func(_ string, line string, _ time.Time, isStderr bool) {
+			events = append(events, line)
+		}, 0)
+		s.OnStreamEnd(func(_ string, isStderr bool) {
+			if isStderr {
+				events = append(events, "END stderr")
+			} else {
+				events = append(events, "END stdout")
+			}
+		})
+
+		var stream bytes.Buffer
+		if tty {
+			stream.WriteString("2026-10-04T12:00:01Z unterminated")
+		} else {
+			stream.Write(frame(streamStdout, "2026-10-04T12:00:01Z unterminated"))
+		}
+		s.consume(&stream, tty)
+
+		if len(events) == 0 || events[0] != "unterminated" {
+			t.Fatalf("tty=%v: last line not emitted first: %v", tty, events)
+		}
+		if !slices.Contains(events, "END stdout") {
+			t.Errorf("tty=%v: stdout end not reported: %v", tty, events)
+		}
+		// A TTY has one stream; a multiplexed log has two, and both end.
+		if got := slices.Contains(events, "END stderr"); got == tty {
+			t.Errorf("tty=%v: stderr end reported = %v: %v", tty, got, events)
+		}
 	}
 }
