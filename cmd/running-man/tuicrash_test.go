@@ -126,3 +126,28 @@ func TestCrashLogRemovedOnlyWhenEmpty(t *testing.T) {
 		}
 	})
 }
+
+// When the report cannot be written, the summary says so. The footer's message
+// is "the details are in the crash log", so sending someone to a file that does
+// not have them is worse than admitting it.
+func TestRecordPanicReportsAnUnwritableLog(t *testing.T) {
+	dir := t.TempDir()
+	installCrashLog(dir)
+
+	// A directory where the log should be: open succeeds nowhere, write fails.
+	path := CrashLogPath(dir)
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("clearing the crash log: %v", err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatalf("replacing the crash log with a directory: %v", err)
+	}
+
+	summary := recordPanic("View", "something broke", []byte("stack\n"))
+	if !strings.Contains(summary, "something broke") {
+		t.Errorf("summary lost the panic: %q", summary)
+	}
+	if !strings.Contains(summary, "unwritable") {
+		t.Errorf("summary does not admit the log could not be written: %q", summary)
+	}
+}

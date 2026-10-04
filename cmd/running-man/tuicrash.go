@@ -75,6 +75,13 @@ func installCrashLog(projectDir string) {
 
 	crashLogMu.Lock()
 	crashLogPath = path
+	// The deduplication state belongs to a log, not to the process. Carrying it
+	// across installs meant a report could be suppressed as a repeat of one
+	// written to a different file -- which is how a test calling recordPanic
+	// with the same message as an earlier test came to write nothing at all.
+	lastSummary = ""
+	lastWrite = time.Time{}
+	suppressed = 0
 	crashLogMu.Unlock()
 
 	// O_APPEND, because the interesting case is the second crash.
@@ -165,12 +172,6 @@ func recordPanic(where string, r any, stack []byte) string {
 	suppressed = 0
 	crashLogMu.Unlock()
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return summary
-	}
-	defer f.Close()
-
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n=== %s: recovered panic in %s ===\n",
 		time.Now().Format(time.RFC3339), where)
@@ -178,7 +179,47 @@ func recordPanic(where string, r any, stack []byte) string {
 		fmt.Fprintf(&b, "(the previous identical report repeated %d more times)\n", alsoSuppressed)
 	}
 	fmt.Fprintf(&b, "%v\n\n%s\n", r, stack)
-	_, _ = f.WriteString(b.String())
 
+	if err := appendReport(path, b.String()); err != nil {
+		// Said in the summary, which is shown in the footer, because the
+		// footer's whole message is "the details are in the crash log". Sending
+		// someone to a file that does not have them is worse than admitting it.
+		return summary + " (crash log unwritable)"
+	}
 	return summary
+}
+
+// appendReport writes a report to the crash log, reporting any failure to do so.
+//
+// Every step is checked, including the close. A write to a file is not durable
+// just because WriteString returned: the error can surface on the flush that
+// Close performs, and discarding it means losing the one record of a crash
+// without knowing. CodeQL flagged exactly this on the original `defer
+// f.Close()`, and it was right to -- this is the file where silence is least
+// affordable.
+func appendReport(path, report string) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return fmt.Errorf("opening %s: %w", path, err)
+	}
+
+	if _, err := f.WriteString(report); err != nil {
+		// Close anyway, and prefer the write error: it is the more specific
+		// account of what went wrong.
+		_ = f.Close()
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+
+	// Synced before closing. The process may be a moment from exiting -- this is
+	// a panic handler -- and a report still in the page cache is a report that
+	// may not survive.
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("syncing %s: %w", path, err)
+	}
+
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("closing %s: %w", path, err)
+	}
+	return nil
 }
