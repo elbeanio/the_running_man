@@ -18,9 +18,13 @@ import (
 	"github.com/elbeanio/the_running_man/internal/storage"
 )
 
+// testProjectDir stands in for the project directory. Nothing in the server
+// touches it -- it is only reported by /health -- so a literal is enough.
+const testProjectDir = "/projects/test"
+
 func setupTestServer() (*Server, *storage.RingBuffer) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil, nil) // nil lineHandler, manager, and traceStorage for tests
+	server := NewServer(buffer, testProjectDir, nil, nil, nil) // nil lineHandler, manager, and traceStorage for tests
 	return server, buffer
 }
 
@@ -306,20 +310,6 @@ func TestParseDuration(t *testing.T) {
 	}
 }
 
-func TestCORSHeaders(t *testing.T) {
-	server, _ := setupTestServer()
-
-	req := httptest.NewRequest("GET", "/logs", nil)
-	w := httptest.NewRecorder()
-
-	handler := server.corsMiddleware(http.HandlerFunc(server.handleLogs))
-	handler.ServeHTTP(w, req)
-
-	if w.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Error("Expected CORS header to be set")
-	}
-}
-
 func TestSelfLogging(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
 
@@ -338,7 +328,7 @@ func TestSelfLogging(t *testing.T) {
 		}{source, line, isStderr})
 	}
 
-	server := NewServer(buffer, 9000, lineHandler, nil, nil)
+	server := NewServer(buffer, testProjectDir, lineHandler, nil, nil)
 
 	// Test normal log
 	server.log("Test message", false)
@@ -373,7 +363,7 @@ func TestSelfLogging(t *testing.T) {
 
 func TestSelfLogging_NilHandler(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil, nil)
+	server := NewServer(buffer, testProjectDir, nil, nil, nil)
 
 	// Should not panic with nil handler
 	server.log("Test message", false)
@@ -388,7 +378,7 @@ func TestCheckPatternComplexity(t *testing.T) {
 		warnings = append(warnings, line)
 	}
 
-	server := NewServer(buffer, 9000, lineHandler, nil, nil)
+	server := NewServer(buffer, testProjectDir, lineHandler, nil, nil)
 
 	tests := []struct {
 		name         string
@@ -473,7 +463,7 @@ func TestPatternWarnings_Integration(t *testing.T) {
 		buffer.Append(entry)
 	}
 
-	server := NewServer(buffer, 9000, lineHandler, nil, nil)
+	server := NewServer(buffer, testProjectDir, lineHandler, nil, nil)
 
 	// Make a request with problematic patterns
 	req := httptest.NewRequest("GET", "/logs?source=************test", nil)
@@ -521,7 +511,7 @@ func findSubstring(s, substr string) bool {
 
 func TestHandleProcessDetail_InvalidName_Slash(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil, nil)
+	server := NewServer(buffer, testProjectDir, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/processes/foo/bar", nil)
 	w := httptest.NewRecorder()
@@ -544,7 +534,7 @@ func TestHandleProcessDetail_InvalidName_Slash(t *testing.T) {
 
 func TestHandleProcessDetail_InvalidName_DotDot(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil, nil)
+	server := NewServer(buffer, testProjectDir, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/processes/../etc/passwd", nil)
 	w := httptest.NewRecorder()
@@ -567,7 +557,7 @@ func TestHandleProcessDetail_InvalidName_DotDot(t *testing.T) {
 
 func TestHandleProcessDetail_TooLong(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil, nil)
+	server := NewServer(buffer, testProjectDir, nil, nil, nil)
 
 	longName := strings.Repeat("a", 300)
 	req := httptest.NewRequest("GET", "/processes/"+longName, nil)
@@ -591,7 +581,7 @@ func TestHandleProcessDetail_TooLong(t *testing.T) {
 
 func TestHandleProcessDetail_EmptyName(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil, nil)
+	server := NewServer(buffer, testProjectDir, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/processes/", nil)
 	w := httptest.NewRecorder()
@@ -614,7 +604,7 @@ func TestHandleProcessDetail_EmptyName(t *testing.T) {
 
 func TestHandleProcessDetail_NoManager(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil, nil) // nil manager
+	server := NewServer(buffer, testProjectDir, nil, nil, nil) // nil manager
 
 	req := httptest.NewRequest("GET", "/processes/any-name", nil)
 	w := httptest.NewRecorder()
@@ -654,7 +644,7 @@ func TestHandleProcessDetail_Success_Running(t *testing.T) {
 		t.Fatalf("Process didn't start: %v", err)
 	}
 
-	server := NewServer(buffer, 9000, nil, manager, nil)
+	server := NewServer(buffer, testProjectDir, nil, manager, nil)
 
 	req := httptest.NewRequest("GET", "/processes/test-sleep", nil)
 	w := httptest.NewRecorder()
@@ -704,7 +694,7 @@ func TestHandleProcessDetail_Success_Stopped(t *testing.T) {
 	// Wait for process to actually complete
 	manager.Wait()
 
-	server := NewServer(buffer, 9000, nil, manager, nil)
+	server := NewServer(buffer, testProjectDir, nil, manager, nil)
 
 	req := httptest.NewRequest("GET", "/processes/test-echo", nil)
 	w := httptest.NewRecorder()
@@ -750,7 +740,7 @@ func TestHandleProcessDetail_NotFound(t *testing.T) {
 		t.Fatalf("Processes didn't start: %v", err)
 	}
 
-	server := NewServer(buffer, 9000, nil, manager, nil)
+	server := NewServer(buffer, testProjectDir, nil, manager, nil)
 
 	req := httptest.NewRequest("GET", "/processes/nonexistent", nil)
 	w := httptest.NewRecorder()
@@ -782,7 +772,7 @@ func TestHandleProcessDetail_NotFound(t *testing.T) {
 
 func TestHandleProcessDetail_WhitespaceOnly(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil, nil)
+	server := NewServer(buffer, testProjectDir, nil, nil, nil)
 
 	// URL encode spaces - %20 for space
 	req := httptest.NewRequest("GET", "/processes/%20%20%20", nil)
@@ -844,7 +834,7 @@ func TestHandleProcessRestart_Success(t *testing.T) {
 		t.Fatalf("Process didn't start: %v", err)
 	}
 
-	server := NewServer(buffer, 9000, nil, manager, nil)
+	server := NewServer(buffer, testProjectDir, nil, manager, nil)
 
 	// Get original PID
 	info1, _ := manager.GetProcess("test-echo")
@@ -905,7 +895,7 @@ func TestHandleProcessRestart_NotFound(t *testing.T) {
 	}
 	defer manager.Stop()
 
-	server := NewServer(buffer, 9000, nil, manager, nil)
+	server := NewServer(buffer, testProjectDir, nil, manager, nil)
 
 	req := httptest.NewRequest("POST", "/processes/nonexistent/restart", nil)
 	req.RemoteAddr = "127.0.0.1:12345" // process control is loopback-only
@@ -940,7 +930,7 @@ func TestHandleProcessRestart_WrongMethod(t *testing.T) {
 	}
 	defer manager.Stop()
 
-	server := NewServer(buffer, 9000, nil, manager, nil)
+	server := NewServer(buffer, testProjectDir, nil, manager, nil)
 
 	// Try GET on restart endpoint
 	req := httptest.NewRequest("GET", "/processes/test-proc/restart", nil)
@@ -955,7 +945,7 @@ func TestHandleProcessRestart_WrongMethod(t *testing.T) {
 
 func TestHandleProcessRestart_NoManager(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil, nil) // nil manager
+	server := NewServer(buffer, testProjectDir, nil, nil, nil) // nil manager
 
 	req := httptest.NewRequest("POST", "/processes/any-proc/restart", nil)
 	req.RemoteAddr = "127.0.0.1:12345" // process control is loopback-only
@@ -989,7 +979,7 @@ func TestHandleStopAll_Success(t *testing.T) {
 		t.Fatalf("Processes didn't start: %v", err)
 	}
 
-	server := NewServer(buffer, 9000, nil, manager, nil)
+	server := NewServer(buffer, testProjectDir, nil, manager, nil)
 
 	// Verify all processes are running
 	infos := manager.ListProcesses()
@@ -1054,7 +1044,7 @@ func TestHandleStopAll_NoProcesses(t *testing.T) {
 	}
 	defer manager.Stop()
 
-	server := NewServer(buffer, 9000, nil, manager, nil)
+	server := NewServer(buffer, testProjectDir, nil, manager, nil)
 
 	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
 	req.RemoteAddr = "127.0.0.1:12345" // process control is loopback-only
@@ -1099,7 +1089,7 @@ func TestHandleStopAll_MixedStates(t *testing.T) {
 	// Give quick process time to finish
 	time.Sleep(100 * time.Millisecond)
 
-	server := NewServer(buffer, 9000, nil, manager, nil)
+	server := NewServer(buffer, testProjectDir, nil, manager, nil)
 
 	// Stop-all when some processes are stopped and some running
 	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
@@ -1138,7 +1128,7 @@ func TestHandleStopAll_WrongMethod(t *testing.T) {
 	}
 	defer manager.Stop()
 
-	server := NewServer(buffer, 9000, nil, manager, nil)
+	server := NewServer(buffer, testProjectDir, nil, manager, nil)
 
 	// Try GET instead of POST
 	req := httptest.NewRequest("GET", "/processes/stop-all", nil)
@@ -1163,7 +1153,7 @@ func TestHandleStopAll_WrongMethod(t *testing.T) {
 
 func TestHandleStopAll_NoManager(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil, nil) // nil manager
+	server := NewServer(buffer, testProjectDir, nil, nil, nil) // nil manager
 
 	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
 	req.RemoteAddr = "127.0.0.1:12345" // process control is loopback-only
@@ -1259,153 +1249,6 @@ func TestHandleRoot_NotFound(t *testing.T) {
 	}
 }
 
-// --- Process control is restricted to loopback callers (review finding R1) ---
-//
-// Both servers bind all interfaces by default so containers, browsers and other
-// devices can export telemetry. That also exposed POST /processes/stop-all and
-// POST /processes/{name}/restart to anyone on the network, unauthenticated --
-// verified exploitable from a LAN address before this guard existed.
-
-func TestIsLoopbackRequest(t *testing.T) {
-	tests := []struct {
-		remoteAddr string
-		want       bool
-	}{
-		{"127.0.0.1:12345", true},
-		{"127.0.0.53:9999", true}, // all of 127.0.0.0/8 is loopback
-		{"[::1]:12345", true},     // IPv6 loopback: an agent curling localhost may use either
-		{"192.168.1.42:54321", false},
-		{"10.0.0.5:1", false},
-		{"[2001:db8::1]:443", false},
-		{"", false},         // malformed: fail closed
-		{"garbage", false},  // unparseable: fail closed
-		{"127.0.0.1", true}, // no port at all
-		{"not-an-ip:80", false},
-	}
-	for _, tt := range tests {
-		req := httptest.NewRequest("POST", "/processes/stop-all", nil)
-		req.RemoteAddr = tt.remoteAddr
-		if got := isLoopbackRequest(req); got != tt.want {
-			t.Errorf("isLoopbackRequest(%q) = %v, want %v", tt.remoteAddr, got, tt.want)
-		}
-	}
-}
-
-func TestStopAll_DeniedFromRemoteAddr(t *testing.T) {
-	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil, nil)
-
-	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
-	req.RemoteAddr = "192.168.1.42:54321"
-	w := httptest.NewRecorder()
-
-	server.handleStopAll(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for a remote caller, got %d", w.Code)
-	}
-
-	var body map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatalf("403 body is not JSON: %v", err)
-	}
-	// The denial must explain itself: these endpoints are documented and listed
-	// by GET /, so a bare 403 would look like a bug.
-	if body["remote_addr"] != "192.168.1.42" {
-		t.Errorf("403 should name the caller's address, got %v", body["remote_addr"])
-	}
-	for _, k := range []string{"error", "detail", "allow", "docs"} {
-		if v, ok := body[k].(string); !ok || v == "" {
-			t.Errorf("403 body missing explanatory field %q", k)
-		}
-	}
-	if !strings.Contains(body["allow"].(string), "--allow-remote-control") {
-		t.Errorf("403 should say how to allow it, got %q", body["allow"])
-	}
-}
-
-func TestProcessRestart_DeniedFromRemoteAddr(t *testing.T) {
-	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil, nil)
-
-	req := httptest.NewRequest("POST", "/processes/whatever/restart", nil)
-	req.RemoteAddr = "10.1.2.3:4567"
-	w := httptest.NewRecorder()
-
-	server.handleProcessRestart(w, req, "whatever/restart")
-
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for a remote caller, got %d", w.Code)
-	}
-	// Denial must happen before the manager is consulted: a nil manager would
-	// otherwise return 503 and leak that the endpoint was reachable.
-	if got := w.Body.String(); !strings.Contains(got, "restricted to local requests") {
-		t.Errorf("unexpected 403 body: %s", got)
-	}
-}
-
-func TestAllowRemoteControl_OpensStateChangingEndpoints(t *testing.T) {
-	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil, nil)
-	server.SetAllowRemoteControl(true)
-
-	req := httptest.NewRequest("POST", "/processes/stop-all", nil)
-	req.RemoteAddr = "192.168.1.42:54321"
-	w := httptest.NewRecorder()
-
-	server.handleStopAll(w, req)
-
-	// With the escape hatch set, the guard must not fire. A nil manager means
-	// 503 here, which is fine -- it proves we got past the 403.
-	if w.Code == http.StatusForbidden {
-		t.Fatalf("--allow-remote-control should bypass the loopback guard, got 403")
-	}
-}
-
-func TestRoot_MarksLocalOnlyEndpoints(t *testing.T) {
-	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil, nil)
-
-	req := httptest.NewRequest("GET", "/", nil)
-	w := httptest.NewRecorder()
-	server.handleRoot(w, req)
-
-	var body struct {
-		Endpoints []struct {
-			Path      string `json:"path"`
-			LocalOnly bool   `json:"local_only"`
-			Note      string `json:"note"`
-		} `json:"endpoints"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatalf("root response is not JSON: %v", err)
-	}
-
-	// GET / is how an agent discovers the surface, so the restriction has to be
-	// visible there rather than only on refusal.
-	want := map[string]bool{
-		"/processes/{name}/restart": true,
-		"/processes/stop-all":       true,
-	}
-	seen := map[string]bool{}
-	for _, e := range body.Endpoints {
-		if want[e.Path] {
-			seen[e.Path] = true
-			if !e.LocalOnly {
-				t.Errorf("%s should be marked local_only", e.Path)
-			}
-			if e.Note == "" {
-				t.Errorf("%s should carry an explanatory note", e.Path)
-			}
-		}
-	}
-	for p := range want {
-		if !seen[p] {
-			t.Errorf("root listing is missing %s", p)
-		}
-	}
-}
-
 // --- Review findings R4 and R5: the agent-facing API describing itself truthfully ---
 
 // R4: parser.LogEntry had no json tags, so it serialised under Go field names
@@ -1426,7 +1269,7 @@ func TestLogsResponse_UsesSnakeCaseFieldNames(t *testing.T) {
 		Stacktrace: "trace here",
 		TraceID:    "abc123",
 	})
-	server := NewServer(buffer, 9000, nil, nil, nil)
+	server := NewServer(buffer, testProjectDir, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/logs", nil)
 	w := httptest.NewRecorder()
@@ -1485,7 +1328,7 @@ func TestLogs_LimitIsApplied(t *testing.T) {
 			Raw:       fmt.Sprintf("line-%d", i),
 		})
 	}
-	server := NewServer(buffer, 9000, nil, nil, nil)
+	server := NewServer(buffer, testProjectDir, nil, nil, nil)
 
 	tests := []struct {
 		query     string
@@ -1527,7 +1370,7 @@ func TestLogs_LimitKeepsMostRecent(t *testing.T) {
 			Raw:       fmt.Sprintf("line-%d", i),
 		})
 	}
-	server := NewServer(buffer, 9000, nil, nil, nil)
+	server := NewServer(buffer, testProjectDir, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/logs?limit=3", nil)
 	w := httptest.NewRecorder()
@@ -1572,7 +1415,7 @@ func TestLogs_LimitAppliesAfterFiltering(t *testing.T) {
 		add(parser.LevelInfo, "more noise")
 	}
 
-	server := NewServer(buffer, 9000, nil, nil, nil)
+	server := NewServer(buffer, testProjectDir, nil, nil, nil)
 	req := httptest.NewRequest("GET", "/logs?level=error&limit=5", nil)
 	w := httptest.NewRecorder()
 	server.handleLogs(w, req)
@@ -1591,7 +1434,7 @@ func TestLogs_LimitAppliesAfterFiltering(t *testing.T) {
 
 func TestLogs_InvalidLimitIsRejected(t *testing.T) {
 	buffer := storage.NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-	server := NewServer(buffer, 9000, nil, nil, nil)
+	server := NewServer(buffer, testProjectDir, nil, nil, nil)
 
 	// /traces already returned 400 for these; /logs returned 200 and ignored them.
 	for _, query := range []string{"/logs?limit=notanumber", "/logs?limit=-5", "/logs?limit=1.5"} {
@@ -1613,7 +1456,7 @@ func TestErrors_LimitIsApplied(t *testing.T) {
 			Message: fmt.Sprintf("err-%d", i), Raw: "e", IsError: true,
 		})
 	}
-	server := NewServer(buffer, 9000, nil, nil, nil)
+	server := NewServer(buffer, testProjectDir, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/errors?limit=4", nil)
 	w := httptest.NewRecorder()

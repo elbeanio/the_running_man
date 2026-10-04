@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
-	"net"
 	"os"
 	"os/signal"
 	"regexp"
@@ -24,7 +24,6 @@ import (
 )
 
 const (
-	defaultAPIPort    = 9000
 	defaultRetention  = 30 * time.Minute
 	defaultMaxEntries = 10000
 	defaultMaxBytes   = 50 * 1024 * 1024 // 50MB
@@ -189,30 +188,12 @@ func waitForInterrupt() {
 	<-sigChan
 }
 
-// networkPostureNote summarises who can reach the API, for the startup banner.
-// This is the one moment the user is guaranteed to be looking, and "reachable
-// from the network" is worth knowing before logs start flowing through it.
-func networkPostureNote(listenAddr string, allowRemoteControl bool) string {
-	if ip := net.ParseIP(listenAddr); ip != nil && ip.IsLoopback() {
-		return " (this machine only)"
-	}
-	if allowRemoteControl {
-		return " (reachable on all interfaces; process control OPEN to remote callers)"
-	}
-	return " (reachable on all interfaces; process control local-only)"
-}
-
 func runCommand(args []string) {
 	// Setup flags
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	configPath := fs.String("config", "", "Path to running-man.yml config file")
-	apiPort := fs.Int("api-port", 0, "API server port (overrides config file)")
 	dockerCompose := fs.String("docker-compose", "", "Path to docker-compose.yml file (overrides config file)")
 	noTUI := fs.Bool("no-tui", false, "Disable TUI and run in headless mode")
-	listenAddr := fs.String("listen", api.DefaultListenAddr,
-		"Address to bind the API to (use 127.0.0.1 to restrict to this machine)")
-	allowRemoteControl := fs.Bool("allow-remote-control", false,
-		"Serve process restart/stop endpoints to remote callers (default: loopback only)")
 	composeProfiles := &stringListFlag{}
 	fs.Var(composeProfiles, "compose-profile",
 		"Active Docker Compose profile (repeatable; overrides config)")
@@ -274,15 +255,6 @@ func runCommand(args []string) {
 	finalDockerCompose := finalCompose.PrimaryFile()
 
 	// Use config API port if not provided via CLI
-	finalAPIPort := *apiPort
-	if finalAPIPort == 0 {
-		if cfg != nil {
-			finalAPIPort = cfg.GetAPIPort()
-		} else {
-			finalAPIPort = defaultAPIPort
-		}
-	}
-
 	// Get retention, buffer, and shell settings from config (no CLI flags for these yet)
 	finalRetention := defaultRetention
 	finalMaxEntries := defaultMaxEntries
@@ -397,6 +369,16 @@ func runCommand(args []string) {
 		os.Exit(1)
 	}
 
+	// The project directory is resolved before anything binds, because the socket
+	// path derives from it and the socket is what proves whether this project
+	// already has an instance.
+	projectDir, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[running-man] Could not determine working directory: %v\n", err)
+		projectDir = "."
+	}
+	socketPath := instance.SocketPath(projectDir)
+
 	fmt.Println("The Running Man - Dev Observability Tool")
 
 	// Show running processes
@@ -404,7 +386,7 @@ func runCommand(args []string) {
 		fmt.Printf("Running [%s]: %s %v\n", proc.Name, proc.Command, proc.Args)
 	}
 
-	fmt.Printf("API: http://localhost:%d%s\n\n", finalAPIPort, networkPostureNote(*listenAddr, *allowRemoteControl))
+	fmt.Printf("API: %s\n\n", socketPath)
 
 	// Create ring buffer
 	buffer := storage.NewRingBuffer(finalMaxEntries, finalRetention, finalMaxBytes)
@@ -584,11 +566,34 @@ func runCommand(args []string) {
 	if spanStorage != nil {
 		traceStorage = spanStorage
 	}
-	apiServer := api.NewServer(buffer, finalAPIPort, systemLineHandler, manager, traceStorage)
-	apiServer.SetListenAddr(*listenAddr)
-	apiServer.SetAllowRemoteControl(*allowRemoteControl)
+	apiServer := api.NewServer(buffer, projectDir, systemLineHandler, manager, traceStorage)
+
+	// Bind before starting anything else. The previous version served in a
+	// goroutine and only printed a bind failure to stderr, where the TUI hid
+	// it -- so a second instance came up with no API and carried on as though
+	// it had one, while agents reading the marker talked to the first.
+	//
+	// This happens before manager.Start(), so a refused instance has not
+	// spawned a duplicate of anybody's dev server.
+	apiListener, err := api.Listen(socketPath)
+	if err != nil {
+		if errors.Is(err, api.ErrInstanceLive) {
+			fmt.Fprintf(os.Stderr, "\n[running-man] This project already has a Running Man instance.\n")
+			fmt.Fprintf(os.Stderr, "[running-man]   socket: %s\n", socketPath)
+			if m, readErr := instance.Read(projectDir); readErr == nil {
+				fmt.Fprintf(os.Stderr, "[running-man]   owner:  PID %d, started %s\n",
+					m.PID, m.Started.Format(time.RFC3339))
+			}
+			fmt.Fprintf(os.Stderr, "[running-man] Use it instead of starting a second copy:\n")
+			fmt.Fprintf(os.Stderr, "[running-man]   curl -s --unix-socket %s http://localhost/processes\n", socketPath)
+			fmt.Fprintf(os.Stderr, "[running-man] Or quit the other instance first.\n")
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "\n[running-man] Could not serve the API on %s: %v\n", socketPath, err)
+		os.Exit(1)
+	}
 	go func() {
-		if err := apiServer.Start(); err != nil {
+		if err := apiServer.Serve(apiListener); err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] API server error: %v\n", err)
 		}
 	}()
@@ -644,14 +649,8 @@ func runCommand(args []string) {
 	//
 	// Written after the processes start so it is never present without an
 	// instance behind it, and removed on every shutdown path below.
-	projectDir, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[running-man] Could not determine working directory: %v\n", err)
-		projectDir = "."
-	}
-
 	marker := instance.New(
-		fmt.Sprintf("http://localhost:%d", finalAPIPort),
+		socketPath,
 		projectDir,
 		markerProcesses(processes),
 	)
@@ -686,7 +685,7 @@ func runCommand(args []string) {
 	// Launch TUI or run in headless mode (don't wait for processes to finish first)
 	if *noTUI {
 		// Headless mode - print info and wait for processes
-		fmt.Printf("[running-man] API available at http://localhost:%d\n", finalAPIPort)
+		fmt.Printf("[running-man] API on %s\n", socketPath)
 		fmt.Printf("[running-man] Running in headless mode (--no-tui)\n")
 		fmt.Printf("[running-man] Press Ctrl+C to exit\n")
 
@@ -754,8 +753,8 @@ func runCommand(args []string) {
 		// someone wants. Gated so CI is not left hanging -- see shouldKeepAlive.
 		if failed && shouldKeepAlive(*keepAlive) {
 			fmt.Printf("\n[running-man] Processes have exited, but their logs are still available:\n")
-			fmt.Printf("[running-man]   http://localhost:%d/logs\n", finalAPIPort)
-			fmt.Printf("[running-man]   http://localhost:%d/errors\n", finalAPIPort)
+			fmt.Printf("[running-man]   curl -s --unix-socket %s http://localhost/logs\n", socketPath)
+			fmt.Printf("[running-man]   curl -s --unix-socket %s http://localhost/errors\n", socketPath)
 			fmt.Printf("[running-man] Press Ctrl+C to quit (--keep-alive=never to exit immediately).\n")
 			waitForInterrupt()
 			fmt.Printf("\n[running-man] Exiting.\n")
@@ -773,11 +772,11 @@ func runCommand(args []string) {
 	} else {
 		// TUI mode - launch interactive viewer immediately
 		fmt.Printf("[running-man] Starting TUI viewer...\n")
-		fmt.Printf("[running-man] API available at http://localhost:%d\n", finalAPIPort)
+		fmt.Printf("[running-man] API on %s\n", socketPath)
 		time.Sleep(200 * time.Millisecond) // Give API a moment to stabilize
 
 		// Run TUI with manager reference so it can stop processes on quit
-		TuiCommandWithManager([]string{fmt.Sprintf("--api-port=%d", finalAPIPort)}, manager)
+		TuiCommandWithManager([]string{"--socket=" + socketPath}, manager)
 
 		// TUI exited (user pressed 'q') - stop processes and clean up
 		fmt.Printf("\n[running-man] Shutting down processes...\n")

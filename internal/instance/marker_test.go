@@ -11,7 +11,7 @@ import (
 func TestMarker_WriteAndRemove(t *testing.T) {
 	dir := t.TempDir()
 
-	m := New("http://localhost:9000", dir, []Process{
+	m := New("/projects/p/.running-man/api.sock", dir, []Process{
 		{Name: "backend", Command: "python server.py", Type: "api", URL: "http://localhost:8000"},
 		{Name: "checker", Command: "./check.sh", Interval: "1m"},
 	})
@@ -29,8 +29,8 @@ func TestMarker_WriteAndRemove(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("marker is not valid JSON: %v", err)
 	}
-	if got.API != "http://localhost:9000" {
-		t.Errorf("api = %q", got.API)
+	if got.Socket != "/projects/p/.running-man/api.sock" {
+		t.Errorf("socket = %q", got.Socket)
 	}
 	if len(got.Processes) != 2 {
 		t.Fatalf("got %d processes, want 2", len(got.Processes))
@@ -87,7 +87,7 @@ func TestMarker_RemoveIsIdempotent(t *testing.T) {
 // raw file unusable to copy from, which defeats the purpose.
 func TestMarker_HintsAreCopyPasteable(t *testing.T) {
 	dir := t.TempDir()
-	m := New("http://localhost:9000", dir, nil)
+	m := New("/projects/p/.running-man/api.sock", dir, nil)
 	if err := m.Write(dir); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -106,8 +106,13 @@ func TestMarker_HintsAreCopyPasteable(t *testing.T) {
 			t.Errorf("missing hint %q", key)
 			continue
 		}
-		if !strings.Contains(hint, "localhost:9000") {
-			t.Errorf("hint %q does not reference the API: %q", key, hint)
+		if !strings.Contains(hint, "--unix-socket /projects/p/.running-man/api.sock") {
+			t.Errorf("hint %q does not reach the API over the socket: %q", key, hint)
+		}
+		// A query string must be quoted as a whole, or '&' backgrounds the
+		// command when pasted into a shell.
+		if strings.Contains(hint, "?") && !strings.Contains(hint, "'http://localhost/") {
+			t.Errorf("hint %q has an unquoted query string: %q", key, hint)
 		}
 	}
 }
@@ -116,7 +121,7 @@ func TestMarker_HintsAreCopyPasteable(t *testing.T) {
 // otherwise get a parse error and reasonably conclude the tool is broken.
 func TestMarker_WriteIsAtomicAndLeavesNoTempFiles(t *testing.T) {
 	dir := t.TempDir()
-	m := New("http://localhost:9000", dir, nil)
+	m := New("/projects/p/.running-man/api.sock", dir, nil)
 
 	for i := 0; i < 5; i++ {
 		if err := m.Write(dir); err != nil {
@@ -141,10 +146,10 @@ func TestMarker_WriteIsAtomicAndLeavesNoTempFiles(t *testing.T) {
 func TestMarker_WriteOverwrites(t *testing.T) {
 	dir := t.TempDir()
 
-	if err := New("http://localhost:1111", dir, []Process{{Name: "old"}}).Write(dir); err != nil {
+	if err := New("/projects/p/.running-man/old.sock", dir, []Process{{Name: "old"}}).Write(dir); err != nil {
 		t.Fatalf("first Write: %v", err)
 	}
-	if err := New("http://localhost:2222", dir, []Process{{Name: "new"}}).Write(dir); err != nil {
+	if err := New("/projects/p/.running-man/new.sock", dir, []Process{{Name: "new"}}).Write(dir); err != nil {
 		t.Fatalf("second Write: %v", err)
 	}
 
@@ -156,7 +161,36 @@ func TestMarker_WriteOverwrites(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("not valid JSON after overwrite: %v", err)
 	}
-	if got.API != "http://localhost:2222" || len(got.Processes) != 1 || got.Processes[0].Name != "new" {
+	if got.Socket != "/projects/p/.running-man/new.sock" || len(got.Processes) != 1 || got.Processes[0].Name != "new" {
 		t.Errorf("overwrite did not replace contents: %+v", got)
+	}
+}
+
+// sun_path is a fixed-size field: 104 bytes on macOS, 108 on Linux. Exceed it
+// and bind() fails with EINVAL, surfacing as "bind: invalid argument". A
+// deeply nested project must still be able to run, so it gets a short socket
+// elsewhere rather than no socket at all.
+func TestSocketPath_ShortEnoughForTheKernel(t *testing.T) {
+	shallow := "/Users/dev/Code/myproject"
+	if got := SocketPath(shallow); got != shallow+"/"+DirName+"/"+SocketName {
+		t.Errorf("a short project path should keep the socket in the project: %q", got)
+	}
+
+	deep := "/Users/dev/" + strings.Repeat("nested-directory/", 8) + "project"
+	got := SocketPath(deep)
+	if len(got) > socketPathLimit {
+		t.Errorf("socket path is %d bytes, over the %d limit: %q", len(got), socketPathLimit, got)
+	}
+	if strings.HasPrefix(got, deep) {
+		t.Errorf("a path that cannot fit should not stay in the project: %q", got)
+	}
+
+	// Deterministic, and distinct per project -- otherwise two deep projects
+	// would fight over one socket, which is the bug this whole change is about.
+	if again := SocketPath(deep); again != got {
+		t.Errorf("not deterministic: %q then %q", got, again)
+	}
+	if other := SocketPath(deep + "-two"); other == got {
+		t.Error("two different projects resolved to the same socket")
 	}
 }

@@ -6,7 +6,6 @@
 //	if err := yaml.Unmarshal(data, &cfg); err != nil { ... }
 //	if err := cfg.Validate(); err != nil { ... }
 //	procs := cfg.ToProcessConfigs()
-//	port := cfg.GetAPIPort()
 package config
 
 import (
@@ -20,7 +19,6 @@ import (
 
 const (
 	// Default configuration values
-	DefaultAPIPort    = 9000
 	DefaultRetention  = 30 * time.Minute
 	DefaultMaxEntries = 10000
 	DefaultMaxBytes   = 50 * 1024 * 1024 // 50MB
@@ -31,6 +29,12 @@ const (
 	DefaultTracingPort    = 4318
 	DefaultMaxSpans       = 10000
 	DefaultMaxSpanAge     = 30 * time.Minute
+
+	// socketDirName and socketFileName mirror internal/instance, for the
+	// api_port rejection message. Duplicated rather than imported to keep
+	// config free of a dependency it otherwise has no use for.
+	socketDirName  = ".running-man"
+	socketFileName = "api.sock"
 
 	// Port validation constants
 	MinPort = 1
@@ -46,7 +50,11 @@ type Config struct {
 	// structured mapping; see DockerComposeConfig.
 	DockerCompose DockerComposeConfig `yaml:"docker_compose,omitempty"`
 
-	// API server port (default: 9000)
+	// APIPort is no longer used: the API is served on a Unix socket in the
+	// project directory, so there is no port to choose. The field is kept so
+	// that a config still setting it is rejected with an explanation -- yaml.v3
+	// ignores unknown keys, and silently disregarding it would leave someone
+	// believing they had moved a port that no longer exists.
 	APIPort int `yaml:"api_port,omitempty"`
 
 	// Log retention duration (e.g., "30m", "1h", "24h")
@@ -136,9 +144,12 @@ func (c *Config) Validate() error {
 		names[proc.Name] = true
 	}
 
-	// Validate API port (0 means use default, so skip validation)
-	if c.APIPort != 0 && (c.APIPort < MinPort || c.APIPort > MaxPort) {
-		return fmt.Errorf("api_port must be between %d and %d, got %d", MinPort, MaxPort, c.APIPort)
+	if c.APIPort != 0 {
+		return fmt.Errorf("api_port is no longer supported: the API is served on a Unix "+
+			"socket at %s/%s in the project directory, so there is no port to set. "+
+			"Remove the key; agents reach the API with "+
+			"`curl --unix-socket %s/%s http://localhost/...`",
+			socketDirName, socketFileName, socketDirName, socketFileName)
 	}
 
 	// Validate shell if specified.
@@ -236,14 +247,6 @@ func (c *Config) GetRetentionDuration() time.Duration {
 		return DefaultRetention
 	}
 	return duration
-}
-
-// GetAPIPort returns the API port or the default.
-func (c *Config) GetAPIPort() int {
-	if c.APIPort == 0 {
-		return DefaultAPIPort
-	}
-	return c.APIPort
 }
 
 // GetMaxEntries returns the max entries or the default.

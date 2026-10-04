@@ -4,7 +4,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"regexp"
@@ -54,107 +53,34 @@ func validateProcessName(name string) (string, error) {
 	return processName, nil
 }
 
-// Server provides the HTTP API for querying logs
+// Server provides the HTTP API for querying logs.
+//
+// Served over a Unix socket (see socket.go), so there is no bind address and no
+// caller-IP check: reaching the socket at all requires permission to open a file
+// in the project directory. The loopback guard that used to protect the
+// state-changing endpoints is gone with the TCP listener it existed for.
 type Server struct {
 	buffer       *storage.RingBuffer
-	port         int
 	startTime    time.Time
 	lineHandler  LineHandler
 	manager      *process.Manager
 	traceStorage *tracing.SpanStorage // Optional, nil if tracing disabled
 
-	// listenAddr is the address the server binds to. Defaults to "0.0.0.0" (all
-	// interfaces) so containers, browsers and other devices on the network can
-	// reach the API and the OTLP receiver.
-	listenAddr string
-
-	// allowRemoteControl opens the state-changing endpoints to non-loopback
-	// callers. Off by default: reading logs from anywhere is useful, but nothing
-	// legitimate needs to restart or stop another machine's dev processes.
-	allowRemoteControl bool
+	// projectDir is reported by /health so a caller can prove which project
+	// answered, rather than assuming.
+	projectDir string
 }
 
-// NewServer creates a new API server bound to all interfaces, with process
-// control restricted to loopback callers. Use SetListenAddr and
-// SetAllowRemoteControl to change either.
-func NewServer(buffer *storage.RingBuffer, port int, lineHandler LineHandler, manager *process.Manager, traceStorage *tracing.SpanStorage) *Server {
+// NewServer creates a new API server for a project directory.
+func NewServer(buffer *storage.RingBuffer, projectDir string, lineHandler LineHandler, manager *process.Manager, traceStorage *tracing.SpanStorage) *Server {
 	return &Server{
 		buffer:       buffer,
-		port:         port,
 		startTime:    time.Now(),
 		lineHandler:  lineHandler,
 		manager:      manager,
 		traceStorage: traceStorage,
-		listenAddr:   DefaultListenAddr,
+		projectDir:   projectDir,
 	}
-}
-
-// SetListenAddr sets the bind address. Empty means DefaultListenAddr.
-func (s *Server) SetListenAddr(addr string) {
-	if addr == "" {
-		addr = DefaultListenAddr
-	}
-	s.listenAddr = addr
-}
-
-// SetAllowRemoteControl opens the state-changing endpoints to any caller.
-func (s *Server) SetAllowRemoteControl(allow bool) {
-	s.allowRemoteControl = allow
-}
-
-// DefaultListenAddr is the default bind address: all interfaces.
-const DefaultListenAddr = "0.0.0.0"
-
-// isLoopbackRequest reports whether a request came from this machine.
-//
-// Deliberately uses only r.RemoteAddr. X-Forwarded-For and friends are
-// caller-supplied and would make the check trivially bypassable.
-func isLoopbackRequest(r *http.Request) bool {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		// No port (or malformed): try the whole value, then fail closed.
-		host = r.RemoteAddr
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return false
-	}
-	return ip.IsLoopback()
-}
-
-// requireLocalControl guards the state-changing endpoints. It returns true if
-// the request may proceed; otherwise it has already written a 403 explaining
-// why and how to allow it.
-//
-// The explanation matters: these endpoints are documented and advertised by
-// GET /, so a bare 403 would look like a bug. The common confusion is "I
-// thought I *was* local" -- Docker bridge addresses, VPNs, 0.0.0.0 vs
-// 127.0.0.1, IPv6 ::1 vs IPv4 -- so the caller's own address is echoed back.
-func (s *Server) requireLocalControl(w http.ResponseWriter, r *http.Request) bool {
-	if s.allowRemoteControl || isLoopbackRequest(r) {
-		return true
-	}
-
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-
-	s.log(fmt.Sprintf("denied %s %s from %s (process control is loopback-only)",
-		r.Method, r.URL.Path, host), true)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusForbidden)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"error": "process control is restricted to local requests",
-		"detail": fmt.Sprintf("%s %s changes process state, so it is only served to "+
-			"loopback callers. This request arrived from %s.", r.Method, r.URL.Path, host),
-		"remote_addr": host,
-		"allow": "Call it from the machine running running-man, or restart running-man " +
-			"with --allow-remote-control.",
-		"docs": "/docs",
-	})
-	return false
 }
 
 // log sends a log message through the lineHandler to be captured
@@ -194,8 +120,11 @@ func (s *Server) checkPatternComplexity(patterns []string, patternType string) {
 	}
 }
 
-// Start starts the HTTP server
-func (s *Server) Start() error {
+// routes builds the request multiplexer.
+//
+// Split out from serving so that Serve can be handed an already-bound listener,
+// and so tests can exercise the whole surface without a socket.
+func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", s.handleRoot)
@@ -205,42 +134,13 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/processes/stop-all", s.handleStopAll)  // Must come before /processes/
 	mux.HandleFunc("/processes/", s.handleProcessOrRestart) // Handles both GET /processes/{name} and POST /processes/{name}/restart
 	mux.HandleFunc("/processes", s.handleProcesses)
-	mux.HandleFunc("/docs/openapi.yaml", s.handleOpenAPISpec)
-	mux.HandleFunc("/docs", s.handleSwaggerUI)
-	mux.HandleFunc("/docs/", s.handleSwaggerUI)
+	mux.HandleFunc("/openapi.yaml", s.handleOpenAPISpec)
 
 	// Trace endpoints
 	mux.HandleFunc("/traces", s.handleTraces)
 	mux.HandleFunc("/traces/", s.handleTraceDetail) // Handles /traces/{id} and /traces/{id}/logs
 
-	addr := net.JoinHostPort(s.listenAddr, strconv.Itoa(s.port))
-	s.log(fmt.Sprintf("API server starting on http://localhost:%d (bound to %s)", s.port, addr), false)
-	if s.allowRemoteControl {
-		s.log("process control is open to remote callers (--allow-remote-control)", false)
-	}
-	return http.ListenAndServe(addr, s.corsMiddleware(mux))
-}
-
-// corsMiddleware adds CORS headers for browser access
-func (s *Server) corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Wildcard origin: this is a local development tool, and browser-based
-		// OTLP export depends on it. See docs/api-reference.md ("Network
-		// exposure") for what is reachable from where.
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-		if r.Method == "OPTIONS" {
-			// Cache preflight response for 24 hours to reduce latency
-			w.Header().Set("Access-Control-Max-Age", "86400")
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
+	return mux
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
@@ -343,7 +243,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	sources := s.buffer.GetSources()
 
 	s.writeJSON(w, map[string]interface{}{
-		"status":         "ok",
+		"status": "ok",
+		// Identity, so a caller can verify *which* instance answered instead of
+		// assuming. A reply proving only that something is alive is what let a
+		// second instance pass a health check that was really the first one's.
+		"pid":            os.Getpid(),
+		"project":        s.projectDir,
+		"started":        s.startTime,
 		"uptime":         time.Since(s.startTime).String(),
 		"uptime_seconds": int(time.Since(s.startTime).Seconds()),
 		"buffer": map[string]interface{}{
@@ -493,11 +399,6 @@ func (s *Server) handleProcessDetail(w http.ResponseWriter, r *http.Request, pat
 }
 
 func (s *Server) handleProcessRestart(w http.ResponseWriter, r *http.Request, path string) {
-	// State-changing: loopback only unless explicitly opened.
-	if !s.requireLocalControl(w, r) {
-		return
-	}
-
 	// Extract process name from path (remove /restart suffix) and validate
 	processNamePath := strings.TrimSuffix(path, "/restart")
 	processName, err := validateProcessName(processNamePath)
@@ -546,11 +447,6 @@ func (s *Server) handleStopAll(w http.ResponseWriter, r *http.Request) {
 	// Only allow POST
 	if r.Method != http.MethodPost {
 		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed, use POST")
-		return
-	}
-
-	// State-changing: loopback only unless explicitly opened.
-	if !s.requireLocalControl(w, r) {
 		return
 	}
 
@@ -619,15 +515,11 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 			"path":        "/processes/{name}/restart",
 			"method":      "POST",
 			"description": "Restart a specific process",
-			"local_only":  !s.allowRemoteControl,
-			"note":        localOnlyNote(s.allowRemoteControl),
 		},
 		{
 			"path":        "/processes/stop-all",
 			"method":      "POST",
 			"description": "Stop all managed processes",
-			"local_only":  !s.allowRemoteControl,
-			"note":        localOnlyNote(s.allowRemoteControl),
 		},
 		{
 			"path":        "/traces",
@@ -645,12 +537,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 			"description": "Get all logs correlated with a specific trace",
 		},
 		{
-			"path":        "/docs",
-			"method":      "GET",
-			"description": "Interactive API documentation (Swagger UI)",
-		},
-		{
-			"path":        "/docs/openapi.yaml",
+			"path":        "/openapi.yaml",
 			"method":      "GET",
 			"description": "OpenAPI 3.0 specification",
 		},
@@ -661,16 +548,6 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		"version":   "1.0",
 		"endpoints": endpoints,
 	})
-}
-
-// localOnlyNote describes the process-control restriction for GET /, so an
-// agent discovering the API learns about it before being refused.
-func localOnlyNote(allowRemoteControl bool) string {
-	if allowRemoteControl {
-		return "Served to any caller (--allow-remote-control is set)."
-	}
-	return "Served to loopback callers only; returns 403 otherwise. " +
-		"Start running-man with --allow-remote-control to open it."
 }
 
 func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
@@ -806,58 +683,4 @@ func (s *Server) handleTraceLogs(w http.ResponseWriter, r *http.Request, traceID
 		"logs":     logs,
 		"count":    len(logs),
 	})
-}
-
-func (s *Server) handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
-	// Serve Swagger UI HTML that loads from CDN with SRI integrity checks
-	// SRI hashes verified for swagger-ui-dist@5.11.0
-	html := `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Running Man API Documentation</title>
-    <link rel="stylesheet" type="text/css" 
-          href="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui.css"
-          integrity="sha384-l8mq8HqmHZqZT/Rda3weNdQ7sH7HGv8xKyPrWbY3aEV8s/gOPGNnVKG0fXgDqx5g"
-          crossorigin="anonymous">
-    <style>
-        body {
-            margin: 0;
-            padding: 0;
-        }
-    </style>
-</head>
-<body>
-    <div id="swagger-ui"></div>
-    <script src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-bundle.js"
-            integrity="sha384-7HnKB57+VVQbY8kP1L0XfzL0F9C6c3T/zT4nqPYGvGFxYPz6T3oPD8Pzr6mV1KoU"
-            crossorigin="anonymous"></script>
-    <script src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-standalone-preset.js"
-            integrity="sha384-2v3j8m7xqZ1CkYxJ0t7HzDdU4K9gI4HNZpGQxQPRb3g5MfP7GV1C2YxP3K1xQm1P"
-            crossorigin="anonymous"></script>
-    <script>
-        window.onload = function() {
-            window.ui = SwaggerUIBundle({
-                url: "/docs/openapi.yaml",
-                dom_id: '#swagger-ui',
-                deepLinking: true,
-                presets: [
-                    SwaggerUIBundle.presets.apis,
-                    SwaggerUIStandalonePreset
-                ],
-                plugins: [
-                    SwaggerUIBundle.plugins.DownloadUrl
-                ],
-                layout: "StandaloneLayout"
-            });
-        };
-    </script>
-</body>
-</html>`
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if _, err := w.Write([]byte(html)); err != nil {
-		fmt.Printf("[api] Failed to write HTML: %v\n", err)
-	}
 }
