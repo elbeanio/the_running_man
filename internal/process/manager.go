@@ -12,6 +12,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/elbeanio/the_running_man/internal/termout"
 )
 
 // ProcessConfig represents a process configuration
@@ -123,7 +125,7 @@ func (m *Manager) Start() error {
 			if err := wrapper.Start(); err != nil {
 				// If any process fails to start, stop all started processes
 				if err := m.stopAllLocked(); err != nil {
-					fmt.Printf("[running-man] Failed to stop processes during cleanup: %v\n", err)
+					termout.Errorf("[running-man] Failed to stop processes during cleanup: %v\n", err)
 				}
 				// Clear the processes map since all have been stopped
 				m.processes = make(map[string]*ProcessWrapper)
@@ -166,7 +168,7 @@ func (m *Manager) runRecurringProcess(name string, cfg ProcessConfig) {
 
 	// Start the process
 	if err := wrapper.Start(); err != nil {
-		fmt.Printf("[running-man] Failed to start recurring process %s: %v\n", name, err)
+		termout.Errorf("[running-man] Failed to start recurring process %s: %v\n", name, err)
 		if m.handler != nil {
 			m.handler(name, fmt.Sprintf("Process %q failed to start: %v", name, err), time.Now(), true)
 		}
@@ -187,7 +189,7 @@ func (m *Manager) runRecurringProcess(name string, cfg ProcessConfig) {
 	// Wait for the process to complete
 	err := wrapper.Wait()
 	if err != nil {
-		fmt.Printf("[running-man] Recurring process %s exited with error: %v\n", name, err)
+		termout.Errorf("[running-man] Recurring process %s exited with error: %v\n", name, err)
 	}
 	// A recurring process that fails every run would otherwise be invisible in
 	// the logs, since each run exits and is replaced by the next.
@@ -526,9 +528,9 @@ func (m *Manager) setupSignalHandlers() {
 	go func() {
 		select {
 		case sig := <-m.sigChan:
-			fmt.Fprintf(os.Stderr, "\n[running-man] Received %v, stopping all processes...\n", sig)
+			termout.Errorf("\n[running-man] Received %v, stopping all processes...\n", sig)
 			if err := m.Stop(); err != nil {
-				fmt.Fprintf(os.Stderr, "[running-man] Error stopping processes on signal: %v\n", err)
+				termout.Errorf("[running-man] Error stopping processes on signal: %v\n", err)
 			}
 		case <-m.ctx.Done():
 			// Cleanup on manager shutdown

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/elbeanio/the_running_man/internal/parser"
+	"github.com/elbeanio/the_running_man/internal/termout"
 	logspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	tracev1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	logsv1 "go.opentelemetry.io/proto/otlp/logs/v1"
@@ -83,12 +84,12 @@ func (r *Receiver) Start() error {
 
 	go func() {
 		if err := r.server.Serve(ln); err != nil && err != http.ErrServerClosed {
-			fmt.Printf("[tracing] OTLP receiver stopped: %v\n", err)
+			termout.Printf("[tracing] OTLP receiver stopped: %v\n", err)
 		}
 	}()
 
 	r.started = true
-	fmt.Printf("[tracing] OTLP receiver listening on http://localhost:%d\n", r.port)
+	termout.Printf("[tracing] OTLP receiver listening on http://localhost:%d\n", r.port)
 	return nil
 }
 
@@ -244,10 +245,10 @@ func (r *Receiver) handleTraces(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(responseData); err != nil {
-		fmt.Printf("[tracing] Failed to write response: %v\n", err)
+		termout.Errorf("[tracing] Failed to write response: %v\n", err)
 	}
 
-	fmt.Printf("[tracing] Processed %d spans from OTLP request\n", spansProcessed)
+	termout.Debugf("[tracing] Processed %d spans from OTLP request\n", spansProcessed)
 }
 
 // processTraceRequest extracts spans from OTLP request and stores them
@@ -376,10 +377,10 @@ func (r *Receiver) handleLogs(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(responseData); err != nil {
-		fmt.Printf("[tracing] Failed to write logs response: %v\n", err)
+		termout.Errorf("[tracing] Failed to write logs response: %v\n", err)
 	}
 
-	fmt.Printf("[tracing] Processed %d log records from OTLP request\n", processed)
+	termout.Debugf("[tracing] Processed %d log records from OTLP request\n", processed)
 }
 
 // processLogsRequest converts OTLP log records to log entries and buffers them.

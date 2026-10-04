@@ -28,6 +28,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/elbeanio/the_running_man/internal/instance"
+	"github.com/elbeanio/the_running_man/internal/termout"
 )
 
 // crashLogName is the file panics are recorded in, beside the instance marker.
@@ -36,12 +37,9 @@ const crashLogName = "crash.log"
 // debugLogName receives Bubble Tea's own trace when debugging is on.
 const debugLogName = "tui-debug.log"
 
-// debugEnvVar turns on Bubble Tea's internal logging.
-//
-// Off by default because it is verbose, and on demand rather than always-on
-// because the point of it is to be running the next time something esoteric
-// happens, not to pay for it the rest of the time.
-const debugEnvVar = "RUNNING_MAN_DEBUG"
+// debugEnvVar is shared with internal/termout, so one switch turns on both the
+// TUI's own trace and the high-frequency diagnostics elsewhere.
+const debugEnvVar = termout.DebugEnvVar
 
 var (
 	crashLogMu   sync.Mutex

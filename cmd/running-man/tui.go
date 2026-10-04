@@ -20,6 +20,7 @@ import (
 	"github.com/elbeanio/the_running_man/internal/instance"
 	"github.com/elbeanio/the_running_man/internal/parser"
 	"github.com/elbeanio/the_running_man/internal/process"
+	"github.com/elbeanio/the_running_man/internal/termout"
 )
 
 const (
@@ -1975,6 +1976,12 @@ func TuiCommandWithManager(args []string, manager *process.Manager) {
 	// under the temp directory, which is not where anyone would look for it.
 	installCrashLog(projectDir)
 	defer installDebugLog(projectDir)()
+
+	// The TUI owns the screen from here. Everything else that writes to the
+	// terminal stops, because a diagnostic printed over a full-height frame
+	// scrolls it, and an escape sequence in one can clear it outright.
+	// Restored on the way out so shutdown messages are visible again.
+	defer termout.Silence()()
 
 	// Create and run the TUI
 	p := tea.NewProgram(initialModel(apiURL, manager), tea.WithAltScreen())

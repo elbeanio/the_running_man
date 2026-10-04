@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/moby/moby/client"
+
+	"github.com/elbeanio/the_running_man/internal/termout"
 )
 
 // LineHandler is called for each line of output from a container
@@ -86,7 +88,7 @@ func (s *ContainerStreamer) streamLogs(stream io.ReadCloser) {
 		_, err := io.ReadFull(reader, header)
 		if err != nil {
 			if err != io.EOF {
-				fmt.Fprintf(os.Stderr, "[running-man] Error reading container log header: %v\n", err)
+				termout.Errorf("[running-man] Error reading container log header: %v\n", err)
 			}
 			return
 		}
@@ -100,7 +102,7 @@ func (s *ContainerStreamer) streamLogs(stream io.ReadCloser) {
 		_, err = io.ReadFull(reader, payload)
 		if err != nil {
 			if err != io.EOF {
-				fmt.Fprintf(os.Stderr, "[running-man] Error reading container log payload: %v\n", err)
+				termout.Errorf("[running-man] Error reading container log payload: %v\n", err)
 			}
 			return
 		}

@@ -30,6 +30,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/elbeanio/the_running_man/internal/termout"
 )
 
 // LineHandler is called for each line of output
@@ -307,7 +309,7 @@ func (w *ProcessWrapper) captureStream(stream io.ReadCloser, isStderr bool) {
 
 		if err != nil {
 			if err != io.EOF && !w.silent {
-				fmt.Fprintf(os.Stderr, "[running-man] Error reading %s stream: %v\n", w.name, err)
+				termout.Errorf("[running-man] Error reading %s stream: %v\n", w.name, err)
 			}
 			return
 		}
@@ -399,7 +401,7 @@ func (w *ProcessWrapper) Stop() error {
 
 			// Check if process is still running
 			if w.cmd.Process != nil && w.IsRunning() {
-				fmt.Fprintf(os.Stderr, "[running-man] Process didn't stop gracefully, sending SIGKILL...\n")
+				termout.Errorf("[running-man] Process didn't stop gracefully, sending SIGKILL...\n")
 				// Re-get PID and PGID since they might have changed
 				currentPid := w.cmd.Process.Pid
 				currentPgid, err := syscall.Getpgid(currentPid)
@@ -490,7 +492,7 @@ func startTimeOf(pid int) string {
 func findAndKillChildProcesses(parentPid int) {
 	entries, err := listProcesses()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[running-man] Warning: failed to list processes: %v\n", err)
+		termout.Errorf("[running-man] Warning: failed to list processes: %v\n", err)
 		return
 	}
 
