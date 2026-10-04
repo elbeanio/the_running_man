@@ -12,6 +12,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/elbeanio/the_running_man/internal/termout"
 )
 
 // ProcessConfig represents a process configuration
@@ -61,17 +63,17 @@ type Manager struct {
 	otelEndpoint string
 	otelPort     int
 	otelEnabled  bool
-	silent       bool // When true, wrappers won't print to stdout/stderr (for TUI mode)
 }
 
 // NewManager creates a new Manager for multiple processes
 func NewManager(configs []ProcessConfig, handler LineHandler) *Manager {
-	return NewManagerWithOTEL(configs, handler, "", 0, false, false)
+	return NewManagerWithOTEL(configs, handler, "", 0, false)
 }
 
 // NewManagerWithOTEL creates a new Manager with OpenTelemetry support
-// If silent is true, process wrappers won't print to stdout/stderr (for TUI mode)
-func NewManagerWithOTEL(configs []ProcessConfig, handler LineHandler, otelEndpoint string, otelPort int, otelEnabled bool, silent bool) *Manager {
+// Terminal pass-through is suppressed via internal/termout when something else
+// owns the screen.
+func NewManagerWithOTEL(configs []ProcessConfig, handler LineHandler, otelEndpoint string, otelPort int, otelEnabled bool) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	m := &Manager{
@@ -84,7 +86,6 @@ func NewManagerWithOTEL(configs []ProcessConfig, handler LineHandler, otelEndpoi
 		otelEndpoint: otelEndpoint,
 		otelPort:     otelPort,
 		otelEnabled:  otelEnabled,
-		silent:       silent,
 	}
 
 	// Store configs for later restart
@@ -112,18 +113,18 @@ func (m *Manager) Start() error {
 			}
 
 			// Start recurring process
-			wrapper := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled, m.silent)
+			wrapper := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled)
 			m.processes[name] = wrapper
 
 			// Start the recurring execution in a goroutine
 			go m.startRecurringProcess(name, cfg, interval)
 		} else {
 			// Start regular (non-recurring) process
-			wrapper := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled, m.silent)
+			wrapper := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled)
 			if err := wrapper.Start(); err != nil {
 				// If any process fails to start, stop all started processes
 				if err := m.stopAllLocked(); err != nil {
-					fmt.Printf("[running-man] Failed to stop processes during cleanup: %v\n", err)
+					termout.Errorf("[running-man] Failed to stop processes during cleanup: %v\n", err)
 				}
 				// Clear the processes map since all have been stopped
 				m.processes = make(map[string]*ProcessWrapper)
@@ -162,11 +163,11 @@ func (m *Manager) startRecurringProcess(name string, cfg ProcessConfig, interval
 // runRecurringProcess executes a single instance of a recurring process
 func (m *Manager) runRecurringProcess(name string, cfg ProcessConfig) {
 	// Create a new wrapper for this execution
-	wrapper := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled, m.silent)
+	wrapper := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled)
 
 	// Start the process
 	if err := wrapper.Start(); err != nil {
-		fmt.Printf("[running-man] Failed to start recurring process %s: %v\n", name, err)
+		termout.Errorf("[running-man] Failed to start recurring process %s: %v\n", name, err)
 		if m.handler != nil {
 			m.handler(name, fmt.Sprintf("Process %q failed to start: %v", name, err), time.Now(), true)
 		}
@@ -187,7 +188,7 @@ func (m *Manager) runRecurringProcess(name string, cfg ProcessConfig) {
 	// Wait for the process to complete
 	err := wrapper.Wait()
 	if err != nil {
-		fmt.Printf("[running-man] Recurring process %s exited with error: %v\n", name, err)
+		termout.Errorf("[running-man] Recurring process %s exited with error: %v\n", name, err)
 	}
 	// A recurring process that fails every run would otherwise be invisible in
 	// the logs, since each run exits and is replaced by the next.
@@ -271,7 +272,7 @@ func (m *Manager) Wait() error {
 				m.handler(processName, fmt.Sprintf("Process crashed with exit code %d, restarting...", exitCode), time.Now(), true)
 
 				// Create new wrapper and restart
-				newWrapper := NewWithOTEL(processName, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled, m.silent)
+				newWrapper := NewWithOTEL(processName, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled)
 				if err := newWrapper.Start(); err != nil {
 					m.handler(processName, fmt.Sprintf("Failed to restart: %v", err), time.Now(), true)
 					mu.Lock()
@@ -378,7 +379,7 @@ func (m *Manager) Restart(processName string) error {
 	}
 
 	// Start new instance
-	wrapper := NewWithOTEL(cfg.Name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled, m.silent)
+	wrapper := NewWithOTEL(cfg.Name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled)
 	if err := wrapper.Start(); err != nil {
 		return fmt.Errorf("failed to restart process %s: %w", processName, err)
 	}
@@ -526,9 +527,9 @@ func (m *Manager) setupSignalHandlers() {
 	go func() {
 		select {
 		case sig := <-m.sigChan:
-			fmt.Fprintf(os.Stderr, "\n[running-man] Received %v, stopping all processes...\n", sig)
+			termout.Errorf("\n[running-man] Received %v, stopping all processes...\n", sig)
 			if err := m.Stop(); err != nil {
-				fmt.Fprintf(os.Stderr, "[running-man] Error stopping processes on signal: %v\n", err)
+				termout.Errorf("[running-man] Error stopping processes on signal: %v\n", err)
 			}
 		case <-m.ctx.Done():
 			// Cleanup on manager shutdown

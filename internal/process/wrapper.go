@@ -30,6 +30,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/elbeanio/the_running_man/internal/termout"
 )
 
 // LineHandler is called for each line of output
@@ -100,7 +102,6 @@ type ProcessWrapper struct {
 	wg        sync.WaitGroup
 	killTimer *time.Timer
 	timerMu   sync.Mutex
-	silent    bool // When true, don't print to stdout/stderr (for TUI mode)
 
 	// State below is owned by the wrapper and guarded by stateMu.
 	//
@@ -138,13 +139,14 @@ type ProcessWrapper struct {
 //	New("frontend", "cd frontend && npm start", []string{}, "/bin/bash", handler)
 //	Executes: /bin/bash -c "cd frontend && npm start"
 func New(name string, command string, args []string, shell string, handler LineHandler) *ProcessWrapper {
-	return NewWithOTEL(name, command, args, shell, handler, "", 0, false, false)
+	return NewWithOTEL(name, command, args, shell, handler, "", 0, false)
 }
 
 // NewWithOTEL creates a new ProcessWrapper with OpenTelemetry environment variable injection.
 // If otelEndpoint is not empty and otelEnabled is true, OTEL environment variables will be injected.
-// If silent is true, the wrapper will not print to stdout/stderr (for TUI mode).
-func NewWithOTEL(name string, command string, args []string, shell string, handler LineHandler, otelEndpoint string, otelPort int, otelEnabled bool, silent bool) *ProcessWrapper {
+// Terminal pass-through is suppressed via internal/termout when something else
+// owns the screen; the wrapper has no opinion about it.
+func NewWithOTEL(name string, command string, args []string, shell string, handler LineHandler, otelEndpoint string, otelPort int, otelEnabled bool) *ProcessWrapper {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Default to /bin/sh if no shell specified
@@ -220,7 +222,6 @@ func NewWithOTEL(name string, command string, args []string, shell string, handl
 		handler: handler,
 		ctx:     ctx,
 		cancel:  cancel,
-		silent:  silent,
 	}
 }
 
@@ -290,13 +291,12 @@ func (w *ProcessWrapper) captureStream(stream io.ReadCloser, isStderr bool) {
 				line += fmt.Sprintf(" [running-man: line truncated at %d bytes]", MaxLineBytes)
 			}
 
-			// Pass-through to terminal with process name prefix (only when not silent)
-			if !w.silent {
-				if isStderr {
-					fmt.Fprintf(os.Stderr, "[%s] %s\n", w.name, line)
-				} else {
-					fmt.Printf("[%s] %s\n", w.name, line)
-				}
+			// Pass-through to terminal with process name prefix. Suppressed
+			// by termout while something else owns the screen.
+			if isStderr {
+				termout.Errorf("[%s] %s\n", w.name, line)
+			} else {
+				termout.Printf("[%s] %s\n", w.name, line)
 			}
 
 			// Call handler if provided
@@ -306,8 +306,8 @@ func (w *ProcessWrapper) captureStream(stream io.ReadCloser, isStderr bool) {
 		}
 
 		if err != nil {
-			if err != io.EOF && !w.silent {
-				fmt.Fprintf(os.Stderr, "[running-man] Error reading %s stream: %v\n", w.name, err)
+			if err != io.EOF {
+				termout.Errorf("[running-man] Error reading %s stream: %v\n", w.name, err)
 			}
 			return
 		}
@@ -342,12 +342,10 @@ func (w *ProcessWrapper) Wait() error {
 	select {
 	case <-drained:
 	case <-time.After(outputDrainTimeout):
-		if !w.silent {
-			fmt.Fprintf(os.Stderr,
-				"[running-man] %s: output readers still active after %s, "+
-					"reaping anyway (a child process may still hold the pipe open)\n",
-				w.name, outputDrainTimeout)
-		}
+		termout.Errorf(
+			"[running-man] %s: output readers still active after %s, "+
+				"reaping anyway (a child process may still hold the pipe open)\n",
+			w.name, outputDrainTimeout)
 	}
 
 	// Reap the process. Safe now: the readers have finished (or we have given up
@@ -399,7 +397,7 @@ func (w *ProcessWrapper) Stop() error {
 
 			// Check if process is still running
 			if w.cmd.Process != nil && w.IsRunning() {
-				fmt.Fprintf(os.Stderr, "[running-man] Process didn't stop gracefully, sending SIGKILL...\n")
+				termout.Errorf("[running-man] Process didn't stop gracefully, sending SIGKILL...\n")
 				// Re-get PID and PGID since they might have changed
 				currentPid := w.cmd.Process.Pid
 				currentPgid, err := syscall.Getpgid(currentPid)
@@ -490,7 +488,7 @@ func startTimeOf(pid int) string {
 func findAndKillChildProcesses(parentPid int) {
 	entries, err := listProcesses()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[running-man] Warning: failed to list processes: %v\n", err)
+		termout.Errorf("[running-man] Warning: failed to list processes: %v\n", err)
 		return
 	}
 

@@ -3,13 +3,16 @@ package docker
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
-	"os"
+	"net"
 	"sync"
 	"time"
 
 	"github.com/moby/moby/client"
+
+	"github.com/elbeanio/the_running_man/internal/termout"
 )
 
 // LineHandler is called for each line of output from a container
@@ -85,8 +88,8 @@ func (s *ContainerStreamer) streamLogs(stream io.ReadCloser) {
 		header := make([]byte, 8)
 		_, err := io.ReadFull(reader, header)
 		if err != nil {
-			if err != io.EOF {
-				fmt.Fprintf(os.Stderr, "[running-man] Error reading container log header: %v\n", err)
+			if !s.stopping(err) {
+				termout.Errorf("[running-man] Error reading container log header: %v\n", err)
 			}
 			return
 		}
@@ -99,8 +102,8 @@ func (s *ContainerStreamer) streamLogs(stream io.ReadCloser) {
 		payload := make([]byte, size)
 		_, err = io.ReadFull(reader, payload)
 		if err != nil {
-			if err != io.EOF {
-				fmt.Fprintf(os.Stderr, "[running-man] Error reading container log payload: %v\n", err)
+			if !s.stopping(err) {
+				termout.Errorf("[running-man] Error reading container log payload: %v\n", err)
 			}
 			return
 		}
@@ -115,11 +118,17 @@ func (s *ContainerStreamer) streamLogs(stream io.ReadCloser) {
 		timestamp := time.Now()
 		isStderr := streamType == 2
 
-		// Pass-through to terminal with container name prefix
+		// Pass-through to terminal with container name prefix.
+		//
+		// Through termout, because this had no gate of any kind: unlike
+		// internal/process, which took a silent flag, the container streamer
+		// echoed every line unconditionally -- including while the TUI owned the
+		// screen. With a Compose stack that is a continuous stream of writes
+		// over the frame, which is exactly how it was reported.
 		if isStderr {
-			fmt.Fprintf(os.Stderr, "[%s] %s\n", s.name, line)
+			termout.Errorf("[%s] %s\n", s.name, line)
 		} else {
-			fmt.Printf("[%s] %s\n", s.name, line)
+			termout.Printf("[%s] %s\n", s.name, line)
 		}
 
 		// Call handler if provided
@@ -139,4 +148,24 @@ func (s *ContainerStreamer) Stop() error {
 func (s *ContainerStreamer) Wait() error {
 	s.wg.Wait()
 	return nil
+}
+
+// stopping reports whether a read error is just the stream being shut down.
+//
+// The loop checks the context before each read, but the read itself blocks: on
+// quit the context is cancelled under it and the HTTP body fails with
+// context.Canceled. Reported as an error, that printed a line per container
+// after "Shutting down processes..." -- seven of them on a Compose stack, all
+// saying nothing had gone wrong.
+func (s *ContainerStreamer) stopping(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	// The context going away during the read is the same situation even when
+	// the error does not say so: a cancelled request can surface as a transport
+	// error of its own.
+	return s.ctx.Err() != nil
 }

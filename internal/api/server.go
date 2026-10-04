@@ -14,6 +14,7 @@ import (
 	"github.com/elbeanio/the_running_man/internal/parser"
 	"github.com/elbeanio/the_running_man/internal/process"
 	"github.com/elbeanio/the_running_man/internal/storage"
+	"github.com/elbeanio/the_running_man/internal/termout"
 	"github.com/elbeanio/the_running_man/internal/tracing"
 )
 
@@ -97,9 +98,9 @@ func NewServer(buffer *storage.RingBuffer, projectDir string, lineHandler LineHa
 func (s *Server) log(message string, isError bool) {
 	// Also print to terminal for visibility
 	if isError {
-		fmt.Fprintf(os.Stderr, "[running-man] %s\n", message)
+		termout.Errorf("[running-man] %s\n", message)
 	} else {
-		fmt.Printf("[running-man] %s\n", message)
+		termout.Printf("[running-man] %s\n", message)
 	}
 
 	// Capture in buffer if handler is available
@@ -289,7 +290,7 @@ func (s *Server) writeError(w http.ResponseWriter, code int, message string) {
 	if err := json.NewEncoder(w).Encode(map[string]string{
 		"error": message,
 	}); err != nil {
-		fmt.Printf("[api] Failed to write error response: %v\n", err)
+		termout.Errorf("[api] Failed to write error response: %v\n", err)
 	}
 }
 
@@ -565,7 +566,7 @@ func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 	// Serve the embedded OpenAPI spec file
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
 	if _, err := w.Write(openapiSpec); err != nil {
-		fmt.Printf("[api] Failed to write OpenAPI spec: %v\n", err)
+		termout.Errorf("[api] Failed to write OpenAPI spec: %v\n", err)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"time"
@@ -17,7 +18,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/elbeanio/the_running_man/internal/api"
 	"github.com/elbeanio/the_running_man/internal/instance"
+	"github.com/elbeanio/the_running_man/internal/parser"
 	"github.com/elbeanio/the_running_man/internal/process"
+	"github.com/elbeanio/the_running_man/internal/termout"
 )
 
 const (
@@ -74,6 +77,11 @@ type model struct {
 
 	// Internal state
 	tickCount int // Count of tick messages received
+
+	// lastPanic holds the summary of a recovered panic, shown in the footer so a
+	// render bug is visible rather than silent. Empty when nothing has gone
+	// wrong.
+	lastPanic string
 }
 
 type logEntry struct {
@@ -137,13 +145,67 @@ type tickMsg time.Time
 
 func (e errMsg) Error() string { return e.err.Error() }
 
+// currentSource returns the selected source name, or "" when there is nothing
+// to select.
+//
+// Every read of m.sources goes through here. The direct indexing it replaces was
+// the cause of the crash that hit an unattended instance: the sources list is
+// rebuilt from whatever is in the ring buffer, so a quiet source disappears once
+// its entries age out past the retention limits, the list gets shorter, and
+// selectedSource is left pointing past the end. A `len(m.sources) > 0` test does
+// not help -- it was present at two of the call sites and guarded nothing, since
+// the problem is the index, not emptiness.
+func (m model) currentSource() string {
+	if m.selectedSource < 0 || m.selectedSource >= len(m.sources) {
+		return ""
+	}
+	return m.sources[m.selectedSource]
+}
+
+// clampSelectedSource brings the selection back into range after the sources
+// list changes. Called wherever m.sources is assigned.
+func (m *model) clampSelectedSource() {
+	if len(m.sources) == 0 {
+		m.selectedSource = 0
+		return
+	}
+	if m.selectedSource >= len(m.sources) {
+		m.selectedSource = len(m.sources) - 1
+	}
+	if m.selectedSource < 0 {
+		m.selectedSource = 0
+	}
+}
+
+// clampSelectedTrace brings the trace selection back into range after the trace
+// list changes.
+func (m *model) clampSelectedTrace() {
+	if len(m.traces) == 0 {
+		m.selectedTraceIdx = 0
+		return
+	}
+	if m.selectedTraceIdx >= len(m.traces) {
+		m.selectedTraceIdx = len(m.traces) - 1
+	}
+	if m.selectedTraceIdx < 0 {
+		m.selectedTraceIdx = 0
+	}
+}
+
+// selectedTrace returns the highlighted trace, or false when there is none.
+func (m model) selectedTrace() (traceSummary, bool) {
+	if m.selectedTraceIdx < 0 || m.selectedTraceIdx >= len(m.traces) {
+		return traceSummary{}, false
+	}
+	return m.traces[m.selectedTraceIdx], true
+}
+
 // fetchForSelectedSource returns the appropriate command based on selected tab
 func (m model) fetchForSelectedSource() (model, tea.Cmd) {
-	if len(m.sources) == 0 {
+	source := m.currentSource()
+	if source == "" {
 		return m, nil
 	}
-
-	source := m.sources[m.selectedSource]
 	if source == "Traces" {
 		return m, fetchTraces(m.apiURL)
 	}
@@ -152,7 +214,7 @@ func (m model) fetchForSelectedSource() (model, tea.Cmd) {
 
 // isTraceView returns true if the currently selected tab is "Traces"
 func (m model) isTraceView() bool {
-	return len(m.sources) > 0 && m.sources[m.selectedSource] == "Traces"
+	return m.currentSource() == "Traces"
 }
 
 func fetchTraces(apiURL string) tea.Cmd {
@@ -387,7 +449,23 @@ func (m model) Init() tea.Cmd {
 	)
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+// Update is a recovering wrapper around updateModel.
+//
+// Bubble Tea would otherwise catch a panic here and end the session; recovering
+// first means a bad message degrades into a footer warning and a crash-log
+// entry. The model returned on panic is the one from *before* the message, so a
+// message that corrupts state is discarded rather than kept.
+func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
+	defer func() {
+		if r := recover(); r != nil {
+			m.lastPanic = recordPanic("Update", r, debug.Stack())
+			next, cmd = m, nil
+		}
+	}()
+	return m.updateModel(msg)
+}
+
+func (m model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		// Global quit works in any mode
@@ -416,8 +494,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sourceTypes = make(map[string]string)
 		}
 		m.sourceTypes["Traces"] = "traces"
-		if len(m.sources) > 0 {
-			return m, fetchLogs(m.apiURL, m.sources[m.selectedSource])
+		// The list was just replaced and may be shorter than before.
+		m.clampSelectedSource()
+		if source := m.currentSource(); source != "" {
+			return m, fetchLogs(m.apiURL, source)
 		}
 
 	case logsMsg:
@@ -431,6 +511,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.traces = msg
 		// Reset trace scroll offset
 		m.traceScrollOffset = 0
+		// Same hazard as the sources list: spans age out past max_span_age, so
+		// this list shrinks on its own and the selection can be left past the
+		// end.
+		m.clampSelectedTrace()
 
 	case traceSpansMsg:
 		m.traceSpans = msg
@@ -446,7 +530,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{tickCmd(), fetchSources(m.apiURL)}
 
 		if len(m.sources) > 0 {
-			source := m.sources[m.selectedSource]
+			source := m.currentSource()
 			if source == "Traces" {
 				cmds = append(cmds, fetchTraces(m.apiURL))
 			} else {
@@ -463,7 +547,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) View() string {
+// View is a recovering wrapper around viewModel.
+//
+// A panic while rendering is the most likely kind here -- it is where the width
+// and height arithmetic lives -- and it would otherwise kill the program on the
+// next frame after a resize. A fallback frame keeps the session alive and says
+// where to look.
+func (m model) View() (out string) {
+	defer func() {
+		if r := recover(); r != nil {
+			summary := recordPanic("View", r, debug.Stack())
+			out = errorStyle.Render(fmt.Sprintf(
+				"Could not draw this frame: %s\n\nThe details are in %s\n"+
+					"Try resizing the window, or press q to quit.",
+				summary, crashLogName))
+		}
+	}()
+	return m.viewModel()
+}
+
+func (m model) viewModel() string {
 	if m.err != nil {
 		return errorStyle.Render(fmt.Sprintf("Error: %v\n\nPress q to quit", m.err))
 	}
@@ -506,7 +609,7 @@ func (m model) View() string {
 		help = helpStyle.Render("\n" + baseHelp)
 	case ModeNormal:
 		// Check if we're in trace view
-		isTraceView := len(m.sources) > 0 && m.sources[m.selectedSource] == "Traces"
+		isTraceView := m.currentSource() == "Traces"
 
 		// Build help text with styled components
 		baseHelp := "←/→ Tab: Switch source"
@@ -549,6 +652,13 @@ func (m model) View() string {
 		// Add quit command
 		baseHelp += " | q: Quit"
 
+		// A recovered panic is stated rather than swallowed: the session
+		// survived, but something is wrong and the user should know where to
+		// look.
+		if m.lastPanic != "" {
+			baseHelp += errorStyle.Render(fmt.Sprintf(" | ⚠ %s (see %s)", m.lastPanic, crashLogName))
+		}
+
 		help = helpStyle.Render("\n" + baseHelp)
 	}
 
@@ -575,7 +685,7 @@ func (m model) View() string {
 		content = renderTraceDetail(m.selectedTraceID, m.traceSpans, m.traceLogs, contentHeight, contentWidth, m.traceDetailScrollOffset)
 	case ModeNormal:
 		// Check if we're in Traces tab
-		if len(m.sources) > 0 && m.sources[m.selectedSource] == "Traces" {
+		if m.currentSource() == "Traces" {
 			// Render trace list
 			content = renderTraceList(m.traces, contentHeight, contentWidth, m.traceScrollOffset, m.selectedTraceIdx)
 		} else {
@@ -652,28 +762,19 @@ func renderTraceList(traces []traceSummary, height, width, scrollOffset, selecte
 
 	for i, trace := range traces {
 		// Truncate trace ID if needed
-		displayTraceID := trace.TraceID
-		if len(displayTraceID) > traceIDWidth {
-			displayTraceID = displayTraceID[:traceIDWidth-3] + "..."
-		}
+		displayTraceID := truncate(trace.TraceID, traceIDWidth)
 
 		// Format duration
 		durationStr := trace.Duration.String()
-		if len(durationStr) > durationWidth {
-			durationStr = durationStr[:durationWidth-3] + "..."
-		}
+		durationStr = truncate(durationStr, durationWidth)
 
 		// Format status
 		statusStr := trace.Status
-		if len(statusStr) > statusWidth {
-			statusStr = statusStr[:statusWidth-3] + "..."
-		}
+		statusStr = truncate(statusStr, statusWidth)
 
 		// Format services (comma-separated)
 		servicesStr := strings.Join(trace.Services, ", ")
-		if len(servicesStr) > servicesWidth {
-			servicesStr = servicesStr[:servicesWidth-3] + "..."
-		}
+		servicesStr = truncate(servicesStr, servicesWidth)
 
 		// Apply selection style
 		lineStyle := logStyle
@@ -806,14 +907,9 @@ func renderTraceDetail(traceID string, spans []spanDetail, logs []logEntry, heig
 	if len(logs) > 0 {
 		infoLines = append(infoLines, fmt.Sprintf("Correlated Logs (%d):", len(logs)))
 		for _, log := range logs {
-			timestamp := log.Timestamp
-			if len(timestamp) > 19 {
-				timestamp = timestamp[11:19] // HH:MM:SS
-			}
-			line := fmt.Sprintf("[%s] [%s] %s", timestamp, log.Level, log.Message)
-			if len(line) > width-2 {
-				line = line[:width-5] + "..."
-			}
+			line := fmt.Sprintf("[%s] [%s] %s",
+				clockTime(log.Timestamp), log.Level, parser.SanitiseLine(log.Message))
+			line = truncate(line, width-2)
 			infoLines = append(infoLines, line)
 		}
 	} else {
@@ -917,10 +1013,8 @@ func renderSpanNode(span spanDetail, children map[string][]spanDetail, prefix st
 	spanInfo := fmt.Sprintf("%s %s (%s) %s", statusSymbol, span.Name, span.Duration, span.ServiceName)
 
 	// Truncate if needed
-	maxLineWidth := width - len(nodePrefix) - 2
-	if len(spanInfo) > maxLineWidth {
-		spanInfo = spanInfo[:maxLineWidth-3] + "..."
-	}
+	maxLineWidth := width - displayWidth(nodePrefix) - 2
+	spanInfo = truncate(spanInfo, maxLineWidth)
 
 	*lines = append(*lines, nodePrefix+spanInfo)
 
@@ -1130,43 +1224,34 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 			style = errorLogStyle
 		}
 
-		// Format: [timestamp] [level] message
-		timestamp := log.Timestamp
-		if len(timestamp) > 19 {
-			timestamp = timestamp[:19] // Trim to HH:MM:SS
-		}
-
-		// Split message on newlines to handle multiline output
-		messageLines := strings.Split(log.Message, "\n")
+		// Sanitised again at the point of drawing. Entries are cleaned on
+		// capture, but this is the last line of defence for the symptom that
+		// started this: one escape sequence reaching the terminal clears the
+		// screen, and the renderer's line diffing never repaints it.
+		messageLines := strings.Split(parser.SanitiseLine(log.Message), "\n")
 
 		for i, msgLine := range messageLines {
 			var line string
 			if i == 0 {
 				// First line gets full prefix
-				baseLine := fmt.Sprintf("[%s] [%s] %s", timestamp[11:19], log.Level, msgLine)
+				baseLine := fmt.Sprintf("[%s] [%s] %s",
+					clockTime(log.Timestamp), log.Level, msgLine)
 
 				// Add trace indicator if enabled and trace_id exists
 				if showTraceIDs && log.TraceID != "" {
-					// Truncate trace ID if too long
-					displayTraceID := log.TraceID
-					if len(displayTraceID) > maxTraceIDDisplayLength {
-						displayTraceID = displayTraceID[:maxTraceIDDisplayLength-3] + "..."
-					}
+					displayTraceID := truncate(log.TraceID, maxTraceIDDisplayLength)
 					traceIndicator := fmt.Sprintf("[trace:%s]", displayTraceID)
 
-					// Calculate available space for message after trace indicator
-					// We need to account for the styled width, not just string length
+					// The styled indicator's own width, since the style may add
+					// escape sequences that occupy no columns.
 					traceIndicatorStyled := traceIndicatorStyle.Render(traceIndicator)
-					indicatorWidth := lipgloss.Width(traceIndicatorStyled) + 1 // +1 for space
+					indicatorWidth := displayWidth(traceIndicatorStyled) + 1 // +1 for space
 
-					// Available width for the base line (message + timestamp + level)
-					// width is terminal width, we need to leave room for indicator
-					maxBaseLineWidth := width - indicatorWidth
-
-					if len(baseLine) > maxBaseLineWidth {
-						// Truncate message to make room for trace indicator
-						baseLine = baseLine[:maxBaseLineWidth-3] + "..."
-					}
+					// Whatever is left is for the message. In a narrow window
+					// there is nothing left, and truncate says so by returning
+					// "" -- where subtracting from the width used to produce a
+					// negative slice bound and take the whole program down.
+					baseLine = truncate(baseLine, width-indicatorWidth)
 
 					line = fmt.Sprintf("%s %s", baseLine, traceIndicatorStyled)
 				} else {
@@ -1180,16 +1265,9 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 			// Truncate long lines (only if trace indicator wasn't added above)
 			// When trace indicator is added, we've already handled truncation
 			// Use width-10 to ensure plenty of room for right border
-			if !(i == 0 && showTraceIDs && log.TraceID != "") && lipgloss.Width(line) > width-10 {
-				// Need to truncate the unstyled string, not the styled one
-				// Find how many characters to keep
-				charsToKeep := width - 13 // Leave room for "..."
-				if charsToKeep < 0 {
-					charsToKeep = 0
-				}
-				if len(line) > charsToKeep {
-					line = line[:charsToKeep] + "..."
-				}
+			if !(i == 0 && showTraceIDs && log.TraceID != "") {
+				// -2 for the box's left and right borders.
+				line = truncate(line, width-2)
 			}
 
 			// Apply highlighting if search query exists
@@ -1261,7 +1339,20 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 // buildMatchLineIndex returns a slice where each element is the rendered-line index
 // (in the flat allLines array that renderLogs would produce) for each global match
 // occurrence of query across all logs. Used to compute scrollOffset for n/p navigation.
-func buildMatchLineIndex(logs []logEntry, width int, query string) []int {
+// buildMatchLineIndex returns the display-line index of every search match.
+//
+// Deliberately takes no width. It used to truncate each line to the terminal
+// width before searching it, which had three consequences: a match beyond the
+// cut was never found, the result disagreed with countMatches (which passed a
+// huge width to disable truncation) and with the renderer (which was given
+// width-2), and the truncation itself panicked on a narrow window. Truncation
+// cannot change how many display lines an entry occupies -- only the newlines in
+// its message can -- so the width was never relevant to the answer.
+//
+// A match past the visible edge of a long line is therefore counted and can be
+// jumped to, but will not be visibly highlighted. That is the better way round:
+// the alternative was not finding it at all.
+func buildMatchLineIndex(logs []logEntry, query string) []int {
 	if query == "" {
 		return nil
 	}
@@ -1270,21 +1361,14 @@ func buildMatchLineIndex(logs []logEntry, width int, query string) []int {
 	lineIdx := 0
 
 	for _, log := range logs {
-		timestamp := log.Timestamp
-		if len(timestamp) > 19 {
-			timestamp = timestamp[:19]
-		}
 		messageLines := strings.Split(log.Message, "\n")
 
 		for i, msgLine := range messageLines {
 			var line string
 			if i == 0 {
-				line = fmt.Sprintf("[%s] [%s] %s", timestamp[11:19], log.Level, msgLine)
+				line = fmt.Sprintf("[%s] [%s] %s", clockTime(log.Timestamp), log.Level, msgLine)
 			} else {
 				line = fmt.Sprintf("                    %s", msgLine)
-			}
-			if len(line) > width-2 {
-				line = line[:width-5] + "..."
 			}
 
 			lowerLine := strings.ToLower(line)
@@ -1453,10 +1537,9 @@ func tickCmd() tea.Cmd {
 }
 
 func countMatches(logs []logEntry, query string) int {
-	// Delegate to buildMatchLineIndex so the count matches exactly what is
-	// highlighted in the rendered output (full line including timestamp/level prefix).
-	// Use a large width so truncation never fires and no matches are cut off.
-	return len(buildMatchLineIndex(logs, 1<<20, query))
+	// Delegates to buildMatchLineIndex so the count and the positions can never
+	// disagree -- they used to, by being given different widths.
+	return len(buildMatchLineIndex(logs, query))
 }
 
 // Styles
@@ -1775,10 +1858,10 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case "enter":
 		// Select trace in trace view (for Phase 3)
-		if m.isTraceView() && len(m.traces) > 0 {
+		if trace, ok := m.selectedTrace(); ok && m.isTraceView() {
 			// Switch to trace detail view
 			m.mode = ModeTraceDetail
-			m.selectedTraceID = m.traces[m.selectedTraceIdx].TraceID
+			m.selectedTraceID = trace.TraceID
 			m.traceDetailScrollOffset = 0
 			// Clear previous trace data
 			m.traceSpans = []spanDetail{}
@@ -1799,7 +1882,7 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "r":
 		// Restart current process (only in log view, not trace view)
 		if len(m.sources) > 0 && !m.isTraceView() {
-			processName := m.sources[m.selectedSource]
+			processName := m.currentSource()
 
 			// Make async HTTP call to restart
 			go func() {
@@ -1820,8 +1903,8 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 // scrollToMatch sets m.scrollOffset so that the line containing the current
 // searchMatchIdx is centered in the viewport. Disables autoScroll.
 func scrollToMatch(m model) model {
-	matchLineIndices := buildMatchLineIndex(m.logs, m.width, m.searchQuery)
-	if m.searchMatchIdx >= len(matchLineIndices) {
+	matchLineIndices := buildMatchLineIndex(m.logs, m.searchQuery)
+	if m.searchMatchIdx < 0 || m.searchMatchIdx >= len(matchLineIndices) {
 		return m
 	}
 	targetLineIdx := matchLineIndices[m.searchMatchIdx]
@@ -1864,17 +1947,18 @@ func TuiCommandWithManager(args []string, manager *process.Manager) {
 		os.Exit(1)
 	}
 
+	projectDir, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not determine working directory: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Default to this project's socket, which is the only one a TUI launched
 	// here should be looking at.
 	if *socketPath == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Could not determine working directory: %v\n", err)
-			os.Exit(1)
-		}
 		// instance.SocketPath resolves the path itself, so a symlinked route to
 		// the project finds the same socket `running-man run` created.
-		*socketPath = instance.SocketPath(cwd)
+		*socketPath = instance.SocketPath(projectDir)
 	}
 
 	if _, err := os.Stat(*socketPath); err != nil {
@@ -1886,10 +1970,24 @@ func TuiCommandWithManager(args []string, manager *process.Manager) {
 	apiClient = api.NewSocketClient(*socketPath)
 	apiURL := apiBaseURL
 
+	// Crash reports go in the working directory's .running-man, beside the
+	// marker, so they are found where someone is already looking. Deliberately
+	// not derived from the socket path: a long project path puts the socket
+	// under the temp directory, which is not where anyone would look for it.
+	installCrashLog(projectDir)
+	defer installDebugLog(projectDir)()
+
+	// The TUI owns the screen from here. Everything else that writes to the
+	// terminal stops, because a diagnostic printed over a full-height frame
+	// scrolls it, and an escape sequence in one can clear it outright.
+	// Restored on the way out so shutdown messages are visible again.
+	defer termout.Silence()()
+
 	// Create and run the TUI
 	p := tea.NewProgram(initialModel(apiURL, manager), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Any crash report is in %s\n", crashLogName)
 		os.Exit(1)
 	}
 }

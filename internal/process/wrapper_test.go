@@ -534,7 +534,6 @@ func TestProcessWrapper_WaitDoesNotHangOnLingeringChild(t *testing.T) {
 	// The backgrounded sleep inherits stdout and outlives the shell, so the
 	// read end never sees EOF even though the direct child has exited.
 	wrapper := New("lingering", "sleep 30 & echo started", []string{}, "", handler)
-	wrapper.silent = true
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start process: %v", err)
@@ -575,7 +574,6 @@ func TestProcessWrapper_LongLineDoesNotEndCapture(t *testing.T) {
 		MaxLineBytes+5000)
 
 	wrapper := New("longline", cmd, []string{}, "", handler)
-	wrapper.silent = true
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start process: %v", err)
@@ -637,7 +635,6 @@ func TestProcessWrapper_LineLongerThanReadBufferIsIntact(t *testing.T) {
 
 	cmd := fmt.Sprintf("head -c %d /dev/zero | tr '\\0' 'y'; echo", lineLen)
 	wrapper := New("bigline", cmd, []string{}, "", handler)
-	wrapper.silent = true
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("Failed to start process: %v", err)
@@ -669,7 +666,6 @@ func TestProcessWrapper_LineLongerThanReadBufferIsIntact(t *testing.T) {
 func TestProcessWrapper_StateAccessorsAreRaceFree(t *testing.T) {
 	handler := func(source, line string, ts time.Time, isStderr bool) {}
 	wrapper := New("racy", "echo hello; echo world", []string{}, "", handler)
-	wrapper.silent = true
 
 	if err := wrapper.Start(); err != nil {
 		t.Fatalf("start: %v", err)
