@@ -141,6 +141,12 @@ func main() {
 // keepAliveMode decides what happens in headless mode once every process has
 // exited.
 const (
+	// tracingPortSearchRange is how many consecutive ports to try for the OTLP
+	// receiver before giving up. Enough for every instance on one machine;
+	// small enough that an unbindable range reports a failure rather than
+	// grinding through thousands of ports.
+	tracingPortSearchRange = 20
+
 	keepAliveAuto   = "auto"
 	keepAliveAlways = "always"
 	keepAliveNever  = "never"
@@ -186,6 +192,52 @@ func waitForInterrupt() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigChan)
 	<-sigChan
+}
+
+// startTracingReceiver binds the OTLP receiver, moving aside from a busy port
+// unless the port was named.
+//
+// The three outcomes, which are deliberately different:
+//
+//	port named, taken      fatal. Someone chose that port; using another one
+//	                       silently is the substitution this guards against
+//	port unnamed, taken    move up until something binds. 4318 is the OTLP/HTTP
+//	                       default, so every collector wants it and one instance
+//	                       per project means several receivers per machine
+//	tracing unrequested,   warn and continue without tracing, rather than
+//	nothing binds          blocking the whole tool over a feature nobody asked
+//	                       for
+//
+// A nil return means the receiver is listening; an error means the caller should
+// carry on with tracing disabled.
+func startTracingReceiver(r *tracing.Receiver, port int, portNamed, requested bool) error {
+	var err error
+	if portNamed {
+		err = r.Start()
+	} else {
+		err = r.StartOnFreePort(tracingPortSearchRange)
+	}
+	if err == nil {
+		return nil
+	}
+
+	fmt.Fprintf(os.Stderr, "\n[running-man] Could not start the OTLP receiver: %v\n", err)
+	if portNamed {
+		fmt.Fprintf(os.Stderr, "[running-man] Port %d was requested explicitly, so it was not "+
+			"moved. Something else is probably on it -- Arize Phoenix, the OTel Collector and "+
+			"Jaeger all default to 4318.\n", port)
+	}
+	fmt.Fprintf(os.Stderr, "[running-man]   running-man run --tracing-port PORT   use a different port\n")
+	fmt.Fprintf(os.Stderr, "[running-man]   running-man run --tracing=false        silence this\n")
+
+	if requested {
+		// Tracing was asked for. Carrying on without it would be the silent
+		// failure this replaced.
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stderr, "[running-man] Continuing without tracing (it was not explicitly enabled).\n\n")
+	return err
 }
 
 func runCommand(args []string) {
@@ -275,9 +327,17 @@ func runCommand(args []string) {
 	// block the whole tool over a feature nobody requested, which is how
 	// Running Man behaves alongside any other collector on 4318.
 	tracingRequested := false
+	// Separately: was the *port* named? An unnamed port may move aside when it
+	// is taken, because one instance per project means several receivers on one
+	// machine. A named one may not -- quietly using a different port than the
+	// one asked for is the silent substitution this guards against.
+	tracingPortNamed := false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "tracing" || f.Name == "tracing-port" {
 			tracingRequested = true
+		}
+		if f.Name == "tracing-port" {
+			tracingPortNamed = true
 		}
 	})
 	if cfg != nil && cfg.Tracing.Enabled != nil {
@@ -285,6 +345,7 @@ func runCommand(args []string) {
 	}
 	if cfg != nil && cfg.Tracing.Port != 0 {
 		tracingRequested = true
+		tracingPortNamed = true
 	}
 
 	// Get tracing configuration
@@ -395,9 +456,20 @@ func runCommand(args []string) {
 	var tracingReceiver *tracing.Receiver
 	var spanStorage *tracing.SpanStorage
 	if finalTracingEnabled {
-		fmt.Printf("Tracing: OTLP receiver on http://localhost:%d\n", finalTracingPort)
 		spanStorage = tracing.NewSpanStorage(finalMaxSpans, finalMaxSpanAge)
 		tracingReceiver = tracing.NewReceiver(spanStorage, buffer, finalTracingPort)
+
+		// Bound here, before the process manager is built, because the port that
+		// is actually bound gets injected into every process Running Man starts.
+		// Settling it later would inject a port nothing is listening on.
+		if err := startTracingReceiver(tracingReceiver, finalTracingPort, tracingPortNamed, tracingRequested); err != nil {
+			tracingReceiver = nil
+			spanStorage = nil
+			finalTracingEnabled = false
+		} else {
+			finalTracingPort = tracingReceiver.Port()
+			fmt.Printf("Tracing: OTLP receiver on http://localhost:%d\n", finalTracingPort)
+		}
 	}
 
 	// Create parser
@@ -567,6 +639,9 @@ func runCommand(args []string) {
 		traceStorage = spanStorage
 	}
 	apiServer := api.NewServer(buffer, projectDir, systemLineHandler, manager, traceStorage)
+	if finalTracingEnabled {
+		apiServer.SetOTLPEndpoint(fmt.Sprintf("http://localhost:%d", finalTracingPort))
+	}
 
 	// Bind before starting anything else. The previous version served in a
 	// goroutine and only printed a bind failure to stderr, where the TUI hid
@@ -597,31 +672,6 @@ func runCommand(args []string) {
 			fmt.Fprintf(os.Stderr, "[running-man] API server error: %v\n", err)
 		}
 	}()
-
-	// Start tracing receiver and wait for it to be ready if enabled
-	if tracingReceiver != nil {
-		if err := tracingReceiver.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "\n[running-man] Could not start the OTLP receiver: %v\n", err)
-			fmt.Fprintf(os.Stderr, "[running-man] Something else is probably already on port %d. "+
-				"Other OTLP collectors default to it too -- Arize Phoenix, the OTel Collector, Jaeger.\n",
-				finalTracingPort)
-			fmt.Fprintf(os.Stderr, "[running-man]   running-man run --tracing-port PORT   use a different port\n")
-			fmt.Fprintf(os.Stderr, "[running-man]   running-man run --tracing=false        silence this\n")
-
-			if tracingRequested {
-				// Tracing was asked for. Carrying on without it would be the
-				// silent failure this replaced.
-				os.Exit(1)
-			}
-
-			// Tracing is on only because the default is on. Continue without
-			// it rather than blocking startup over an unrequested feature.
-			fmt.Fprintf(os.Stderr, "[running-man] Continuing without tracing (it was not explicitly enabled).\n\n")
-			tracingReceiver = nil
-			spanStorage = nil
-			finalTracingEnabled = false
-		}
-	}
 
 	if tracingReceiver != nil {
 
@@ -654,6 +704,9 @@ func runCommand(args []string) {
 		projectDir,
 		markerProcesses(processes),
 	)
+	if finalTracingEnabled {
+		marker.OTLPEndpoint = fmt.Sprintf("http://localhost:%d", finalTracingPort)
+	}
 	if err := marker.Write(projectDir); err != nil {
 		// Not fatal: the marker is a discovery aid, and losing it must not stop
 		// the tool doing its actual job.

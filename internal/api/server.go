@@ -69,6 +69,16 @@ type Server struct {
 	// projectDir is reported by /health so a caller can prove which project
 	// answered, rather than assuming.
 	projectDir string
+
+	// otlpEndpoint is reported by /health. The OTLP port is not fixed -- it
+	// moves aside when something else holds 4318 -- so anything exporting from
+	// outside this process needs somewhere to read it.
+	otlpEndpoint string
+}
+
+// SetOTLPEndpoint records where telemetry should be exported, for /health.
+func (s *Server) SetOTLPEndpoint(endpoint string) {
+	s.otlpEndpoint = endpoint
 }
 
 // NewServer creates a new API server for a project directory.
@@ -252,6 +262,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"started":        s.startTime,
 		"uptime":         time.Since(s.startTime).String(),
 		"uptime_seconds": int(time.Since(s.startTime).Seconds()),
+		"otlp_endpoint":  s.otlpEndpoint,
 		"buffer": map[string]interface{}{
 			"total_entries": stats.TotalEntries,
 			"total_bytes":   stats.TotalBytes,

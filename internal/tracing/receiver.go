@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/elbeanio/the_running_man/internal/parser"
@@ -88,6 +90,54 @@ func (r *Receiver) Start() error {
 	r.started = true
 	fmt.Printf("[tracing] OTLP receiver listening on http://localhost:%d\n", r.port)
 	return nil
+}
+
+// Port reports the port the receiver is listening on, which is not necessarily
+// the one it was constructed with: see StartOnFreePort.
+func (r *Receiver) Port() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.port
+}
+
+// StartOnFreePort starts the receiver on its configured port, or the first free
+// port above it.
+//
+// One instance per project means several receivers on one machine, and 4318 is
+// the OTLP/HTTP default that every collector reaches for -- Arize Phoenix, the
+// OTel Collector, Jaeger, Grafana Alloy, SigNoz. So a conflict is the ordinary
+// case rather than an error, as long as nobody named the port.
+//
+// Only for an unnamed port. A port given explicitly is a port someone meant, and
+// quietly using a different one is the class of silent substitution that made
+// the conflict fatal in the first place -- the caller keeps that decision.
+//
+// The port actually bound is injected into the processes Running Man starts, so
+// they follow it without being told. Anything exporting from outside -- a
+// browser, a container with a hardcoded endpoint -- does not, which is why the
+// chosen port is reported in the marker and on /health.
+func (r *Receiver) StartOnFreePort(attempts int) error {
+	first := r.port
+
+	var err error
+	for i := 0; i < attempts; i++ {
+		r.mu.Lock()
+		r.port = first + i
+		r.mu.Unlock()
+
+		err = r.Start()
+		if err == nil {
+			return nil
+		}
+		// Anything other than a busy port is a real failure: retrying a
+		// permissions error on 1000 consecutive ports would just be noise.
+		if !errors.Is(err, syscall.EADDRINUSE) {
+			return err
+		}
+	}
+
+	return fmt.Errorf("no free port for the OTLP receiver in %d-%d: %w",
+		first, first+attempts-1, err)
 }
 
 // Stop gracefully stops the receiver

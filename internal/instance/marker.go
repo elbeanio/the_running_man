@@ -78,7 +78,15 @@ type Marker struct {
 
 	// Socket is the Unix socket serving the API, as a path relative to nothing
 	// -- it is absolute, so a reader in any working directory can use it.
-	Socket    string    `json:"socket"`
+	Socket string `json:"socket"`
+	// OTLPEndpoint is where to export telemetry, when tracing is enabled.
+	//
+	// Recorded because the port is not fixed: it moves aside when something else
+	// holds 4318, and one instance per project means that is the ordinary case.
+	// Processes Running Man starts have it injected, but a browser or a container
+	// exporting from outside has to be told, and this is where it looks.
+	OTLPEndpoint string `json:"otlp_endpoint,omitempty"`
+
 	PID       int       `json:"pid"`
 	Started   time.Time `json:"started"`
 	Project   string    `json:"project"`
