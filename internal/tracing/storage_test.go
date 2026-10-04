@@ -107,30 +107,19 @@ func TestSpanStorage_GetTrace(t *testing.T) {
 }
 
 func TestSpanStorage_EvictionByAge(t *testing.T) {
-	storage := NewSpanStorage(100, 30*time.Minute)
+	// Age is measured from arrival. This used to backdate StartTime and expect
+	// the span gone on the next Add -- which is how any span longer than the
+	// retention window was discarded the moment it was exported. See
+	// retention_test.go.
+	storage := NewSpanStorage(100, 50*time.Millisecond)
 
-	// Create old span
-	oldSpan := &SpanEntry{
-		TraceID:     "old",
-		SpanID:      "span1",
-		Name:        "old-operation",
-		ServiceName: "service1",
-		StartTime:   time.Now().Add(-1 * time.Hour), // 1 hour old
-	}
+	storage.Add(&SpanEntry{TraceID: "old", SpanID: "span1", Name: "old-operation",
+		ServiceName: "service1", StartTime: time.Now()})
 
-	// Create new span
-	newSpan := &SpanEntry{
-		TraceID:     "new",
-		SpanID:      "span2",
-		Name:        "new-operation",
-		ServiceName: "service1",
-		StartTime:   time.Now(), // current time
-	}
+	time.Sleep(80 * time.Millisecond) // past retention
+	storage.Add(&SpanEntry{TraceID: "new", SpanID: "span2", Name: "new-operation",
+		ServiceName: "service1", StartTime: time.Now()})
 
-	storage.Add(oldSpan)
-	storage.Add(newSpan)
-
-	// Should only have the new span (old one evicted)
 	spans := storage.Query(SpanQueryFilters{})
 	assert.Len(t, spans, 1)
 	assert.Equal(t, "new", spans[0].TraceID)

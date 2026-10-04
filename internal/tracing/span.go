@@ -27,6 +27,13 @@ type SpanEntry struct {
 	Attributes   map[string]string `json:"attributes,omitempty"`
 	Events       []SpanEvent       `json:"events,omitempty"`
 	Links        []SpanLink        `json:"links,omitempty"`
+
+	// receivedAt is when Running Man received the span, and what retention is
+	// measured against. StartTime is the sender's account of when the span
+	// began: it is out of order across services and clocks, and a long span
+	// legitimately starts long before it is exported. Unexported, so it is not
+	// part of the API.
+	receivedAt time.Time
 }
 
 // MarshalJSON implements custom JSON marshaling for SpanEntry, rendering the

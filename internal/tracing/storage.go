@@ -31,24 +31,39 @@ func (s *SpanStorage) Add(span *SpanEntry) {
 	s.evictOldSpans()
 
 	// Add new span
+	span.receivedAt = time.Now()
 	s.spans = append(s.spans, span)
 
 	// Trim if over size limit
-	if len(s.spans) > s.maxSize {
-		s.spans = s.spans[len(s.spans)-s.maxSize:]
+	if over := len(s.spans) - s.maxSize; over > 0 {
+		s.dropOldest(over)
 	}
 }
 
 // evictOldSpans removes spans older than maxAge
+// evictOldSpans drops spans held for longer than maxAge.
+//
+// Measured from arrival, which is monotonic in this slice, so stopping at the
+// first span that is not old is correct. It used to compare StartTime, which is
+// not: one span from a client with a fast clock stopped all span eviction, and
+// a span that started before the cutoff was discarded on arrival.
 func (s *SpanStorage) evictOldSpans() {
 	cutoff := time.Now().Add(-s.maxAge)
 	i := 0
-	for i < len(s.spans) && s.spans[i].StartTime.Before(cutoff) {
+	for i < len(s.spans) && s.spans[i].receivedAt.Before(cutoff) {
 		i++
 	}
-	if i > 0 {
-		s.spans = s.spans[i:]
+	s.dropOldest(i)
+}
+
+// dropOldest removes the n oldest spans, clearing their slots so the backing
+// array does not keep them reachable after they are gone.
+func (s *SpanStorage) dropOldest(n int) {
+	if n <= 0 {
+		return
 	}
+	clear(s.spans[:n])
+	s.spans = s.spans[n:]
 }
 
 // Query retrieves spans matching the given filters
@@ -56,7 +71,8 @@ func (s *SpanStorage) Query(filters SpanQueryFilters) []*SpanEntry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var result []*SpanEntry
+	// Non-nil, so an empty result serialises as [] rather than null.
+	result := []*SpanEntry{}
 	cutoff := time.Now().Add(-filters.Since)
 
 	for _, span := range s.spans {
