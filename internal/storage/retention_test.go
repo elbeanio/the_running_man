@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"fmt"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,5 +41,23 @@ func TestRetentionKeepsRecentlyReceivedEntries(t *testing.T) {
 
 	if got := rb.Stats().TotalEntries; got != 2 {
 		t.Errorf("buffer holds %d entries; an old reported timestamp evicted something received a moment ago", got)
+	}
+}
+
+// /health listed sources in map order, so the same buffer gave a different
+// order on every call -- noise in any diff or comparison of two responses.
+func TestRingBuffer_GetSourcesIsSortedByName(t *testing.T) {
+	rb := NewRingBuffer(1000, time.Hour, 1<<20)
+	for i := 20; i > 0; i-- {
+		rb.Append(&parser.LogEntry{Source: fmt.Sprintf("svc-%02d", i), Timestamp: time.Now(), Raw: "x", Message: "x"})
+	}
+
+	got := rb.GetSources()
+	if !slices.IsSortedFunc(got, func(a, b SourceInfo) int { return strings.Compare(a.Name, b.Name) }) {
+		names := make([]string, len(got))
+		for i, s := range got {
+			names[i] = s.Name
+		}
+		t.Errorf("sources not sorted by name: %v", names)
 	}
 }

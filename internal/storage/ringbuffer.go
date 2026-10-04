@@ -2,6 +2,7 @@ package storage
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -294,11 +295,12 @@ func (rb *RingBuffer) GetSources() []SourceInfo {
 		}
 	}
 
-	// Convert map to slice
+	// Convert map to slice, in name order: map order differed on every call.
 	sources := make([]SourceInfo, 0, len(sourceMap))
 	for _, info := range sourceMap {
 		sources = append(sources, *info)
 	}
+	slices.SortFunc(sources, func(a, b SourceInfo) int { return strings.Compare(a.Name, b.Name) })
 
 	return sources
 }
@@ -323,8 +325,18 @@ func (rb *RingBuffer) removeFromTraceIndex(traceID string, entry *parser.LogEntr
 		// Find and remove the entry
 		for i, e := range entries {
 			if e == entry {
-				// Remove the entry from slice
-				rb.traceIndex[traceID] = append(entries[:i], entries[i+1:]...)
+				if i == 0 {
+					// Eviction is oldest-first, so this is the usual case.
+					// Resliced rather than shifted: shifting made each eviction
+					// from a busy trace cost the length of the trace. The slot
+					// is cleared first so the evicted entry is not kept alive
+					// by the backing array.
+					entries[0] = nil
+					rb.traceIndex[traceID] = entries[1:]
+				} else {
+					// slices.Delete also clears the vacated tail slot.
+					rb.traceIndex[traceID] = slices.Delete(entries, i, i+1)
+				}
 				// If slice is empty, delete the traceID from map
 				if len(rb.traceIndex[traceID]) == 0 {
 					delete(rb.traceIndex, traceID)

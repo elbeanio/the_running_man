@@ -122,3 +122,25 @@ func TestListeningPorts_UsesCache(t *testing.T) {
 	delete(portCache, pid)
 	portCacheMu.Unlock()
 }
+
+// The cache is keyed by pid and nothing removed entries, while every run of a
+// recurring process has a new pid: it grew for the life of the instance. An
+// entry past its TTL can never be served again, so writes sweep them out.
+func TestListeningPorts_ExpiredEntriesAreDropped(t *testing.T) {
+	const stale, probe = 0x7FFFFFF0, 0x7FFFFFF1
+	portCacheMu.Lock()
+	portCache[stale] = portCacheEntry{ports: []int{4242}, at: time.Now().Add(-2 * portCacheTTL)}
+	delete(portCache, probe) // so the lookup below misses, and writes
+	portCacheMu.Unlock()
+
+	ListeningPorts(probe)
+
+	portCacheMu.Lock()
+	_, kept := portCache[stale]
+	delete(portCache, stale)
+	delete(portCache, probe)
+	portCacheMu.Unlock()
+	if kept {
+		t.Error("an expired entry survived a cache write")
+	}
+}
