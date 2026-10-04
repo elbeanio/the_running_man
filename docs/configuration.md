@@ -137,7 +137,10 @@ Processes with an `interval` field run repeatedly at the specified interval unti
 #### `docker_compose` (string, optional)
 Path to Docker Compose file. Running Man will:
 - Parse the compose file to discover services
-- Stream logs from all containers
+- Stream logs from all containers, including those with `tty: true`. On attach it replays
+  up to `retention` of each container's existing log, so what happened just before you
+  started Running Man is there too. Replayed lines keep the time Docker recorded for them,
+  so `since` filters treat them by when they were written, not when they were read.
 - Show each service in TUI tabs
 - Handle container restarts automatically
 

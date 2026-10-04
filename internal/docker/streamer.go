@@ -1,15 +1,18 @@
 package docker
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/client"
 
 	"github.com/elbeanio/the_running_man/internal/termout"
@@ -17,6 +20,11 @@ import (
 
 // LineHandler is called for each line of output from a container
 type LineHandler func(source string, line string, timestamp time.Time, isStderr bool)
+
+// maxContainerLineBytes caps a single line, matching the cap the process
+// wrapper applies. A line longer than this is cut and marked rather than held
+// in memory indefinitely.
+const maxContainerLineBytes = 1024 * 1024
 
 // ContainerStreamer streams logs from a Docker container
 type ContainerStreamer struct {
@@ -27,10 +35,19 @@ type ContainerStreamer struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	wg          sync.WaitGroup
+
+	// history is how far back to replay when attaching. Zero replays nothing.
+	history time.Duration
 }
 
-// NewContainerStreamer creates a new streamer for the given container
-func NewContainerStreamer(client *Client, containerID, name string, handler LineHandler) *ContainerStreamer {
+// NewContainerStreamer creates a new streamer for the given container.
+//
+// history is how much of the container's existing log to replay on attach.
+// Replaying is useful -- what happened just before attaching is often the
+// point -- but it is bounded to the retention window, because replayed lines
+// arrive now and would otherwise be held for a full retention period however
+// old they were.
+func NewContainerStreamer(client *Client, containerID, name string, handler LineHandler, history time.Duration) *ContainerStreamer {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &ContainerStreamer{
@@ -40,18 +57,33 @@ func NewContainerStreamer(client *Client, containerID, name string, handler Line
 		handler:     handler,
 		ctx:         ctx,
 		cancel:      cancel,
+		history:     history,
 	}
 }
 
 // Start begins streaming logs from the container
 func (s *ContainerStreamer) Start() error {
-	// Get container logs
+	// A TTY container's log stream is the raw output, with none of the
+	// multiplex headers. Treating it as multiplexed read the first 8 bytes of
+	// real output as a header: "hello world" decodes to a frame of about
+	// 1.8 GB, which was allocated, and the read then waited forever for it. So
+	// the container is inspected first. If inspection fails it is assumed not to
+	// be a TTY, which is Compose's default.
+	tty := false
+	if info, err := s.client.cli.ContainerInspect(s.ctx, s.containerID, client.ContainerInspectOptions{}); err == nil &&
+		info.Container.Config != nil {
+		tty = info.Container.Config.Tty
+	}
+
 	options := client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     true,
-		Timestamps: false,
-		Since:      "0", // Stream from now
+		// Docker's own timestamps, so a replayed line carries when it was
+		// written. Without them every line was stamped on arrival, and history
+		// from before Running Man attached was reported as having just happened.
+		Timestamps: true,
+		Since:      replaySince(s.history),
 	}
 
 	logStream, err := s.client.cli.ContainerLogs(s.ctx, s.containerID, options)
@@ -59,82 +91,118 @@ func (s *ContainerStreamer) Start() error {
 		return fmt.Errorf("failed to attach to container logs: %w", err)
 	}
 
-	// Start goroutine to read logs
 	s.wg.Add(1)
-	go s.streamLogs(logStream)
+	go func() {
+		defer s.wg.Done()
+		defer logStream.Close()
+		s.consume(logStream, tty)
+	}()
 
 	return nil
 }
 
-// streamLogs reads from the log stream and forwards to handler
-func (s *ContainerStreamer) streamLogs(stream io.ReadCloser) {
-	defer s.wg.Done()
-	defer stream.Close()
+// replaySince renders the Since option for a replay window. It was "0" under
+// the comment "Stream from now", but "0" is the Unix epoch: it replayed the
+// container's entire history.
+func replaySince(history time.Duration) string {
+	if history <= 0 {
+		// Now: replay nothing.
+		return strconv.FormatInt(time.Now().Unix(), 10)
+	}
+	return strconv.FormatInt(time.Now().Add(-history).Unix(), 10)
+}
 
-	// Docker multiplexes stdout/stderr in a single stream with headers
-	// Header format: [8]byte{STREAM_TYPE, 0, 0, 0, SIZE1, SIZE2, SIZE3, SIZE4}
-	// STREAM_TYPE: 0=stdin, 1=stdout, 2=stderr
+// consume reads a container log stream until it ends, emitting one call to the
+// handler per line.
+//
+// Split out from Start so the format handling is testable without a daemon.
+func (s *ContainerStreamer) consume(stream io.Reader, tty bool) {
+	stdout := &lineWriter{emit: func(line string) { s.emit(line, false) }}
+	stderr := &lineWriter{emit: func(line string) { s.emit(line, true) }}
+	defer stdout.flush()
+	defer stderr.flush()
 
-	reader := bufio.NewReader(stream)
+	var err error
+	if tty {
+		// One raw stream. A TTY has no separate stderr.
+		_, err = io.Copy(stdout, stream)
+	} else {
+		// stdcopy rather than the hand-rolled demultiplexer this replaced: it is
+		// the Docker client's own implementation of the format, and it is
+		// already in the module graph.
+		_, err = stdcopy.StdCopy(stdout, stderr, stream)
+	}
+	if err != nil && !s.stopping(err) {
+		termout.Errorf("[running-man] Error reading container logs for %s: %v\n", s.name, err)
+	}
+}
 
+// emit passes one line to the handler, taking its time from the timestamp
+// Docker prefixed it with.
+func (s *ContainerStreamer) emit(line string, isStderr bool) {
+	at, text := splitDockerTimestamp(line)
+
+	// Pass-through to terminal with container name prefix. Suppressed by
+	// termout while the TUI owns the screen.
+	if isStderr {
+		termout.Errorf("[%s] %s\n", s.name, text)
+	} else {
+		termout.Printf("[%s] %s\n", s.name, text)
+	}
+
+	if s.handler != nil {
+		s.handler(s.name, text, at, isStderr)
+	}
+}
+
+// splitDockerTimestamp separates the RFC3339Nano timestamp Docker prefixes to
+// each line when Timestamps is requested. A line without one -- or with a
+// prefix that does not parse -- is returned whole and stamped on arrival rather
+// than mangled.
+func splitDockerTimestamp(line string) (time.Time, string) {
+	if i := strings.IndexByte(line, ' '); i > 0 {
+		if at, err := time.Parse(time.RFC3339Nano, line[:i]); err == nil {
+			return at, line[i+1:]
+		}
+	}
+	return time.Now(), line
+}
+
+// lineWriter turns a byte stream into lines, holding a partial line until the
+// rest of it arrives.
+//
+// Needed because a multiplexed frame boundary is not a line boundary: one line
+// can span frames, and one frame can hold several lines.
+type lineWriter struct {
+	buf  []byte
+	emit func(string)
+}
+
+func (w *lineWriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
 	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		default:
+		i := bytes.IndexByte(w.buf, '\n')
+		if i < 0 {
+			break
 		}
+		w.emit(string(bytes.TrimSuffix(w.buf[:i], []byte{'\r'})))
+		w.buf = w.buf[i+1:]
+	}
+	// A line with no end in sight is cut and marked, so one runaway writer
+	// cannot hold an unbounded buffer.
+	if len(w.buf) > maxContainerLineBytes {
+		w.emit(string(w.buf[:maxContainerLineBytes]) +
+			fmt.Sprintf(" [running-man: line truncated at %d bytes]", maxContainerLineBytes))
+		w.buf = w.buf[:0]
+	}
+	return len(p), nil
+}
 
-		// Read header (8 bytes)
-		header := make([]byte, 8)
-		_, err := io.ReadFull(reader, header)
-		if err != nil {
-			if !s.stopping(err) {
-				termout.Errorf("[running-man] Error reading container log header: %v\n", err)
-			}
-			return
-		}
-
-		// Parse header
-		streamType := header[0]
-		size := uint32(header[4])<<24 | uint32(header[5])<<16 | uint32(header[6])<<8 | uint32(header[7])
-
-		// Read payload
-		payload := make([]byte, size)
-		_, err = io.ReadFull(reader, payload)
-		if err != nil {
-			if !s.stopping(err) {
-				termout.Errorf("[running-man] Error reading container log payload: %v\n", err)
-			}
-			return
-		}
-
-		// Process line
-		line := string(payload)
-		// Remove trailing newline if present
-		if len(line) > 0 && line[len(line)-1] == '\n' {
-			line = line[:len(line)-1]
-		}
-
-		timestamp := time.Now()
-		isStderr := streamType == 2
-
-		// Pass-through to terminal with container name prefix.
-		//
-		// Through termout, because this had no gate of any kind: unlike
-		// internal/process, which took a silent flag, the container streamer
-		// echoed every line unconditionally -- including while the TUI owned the
-		// screen. With a Compose stack that is a continuous stream of writes
-		// over the frame, which is exactly how it was reported.
-		if isStderr {
-			termout.Errorf("[%s] %s\n", s.name, line)
-		} else {
-			termout.Printf("[%s] %s\n", s.name, line)
-		}
-
-		// Call handler if provided
-		if s.handler != nil {
-			s.handler(s.name, line, timestamp, isStderr)
-		}
+// flush emits whatever is left: output that ended without a newline.
+func (w *lineWriter) flush() {
+	if len(w.buf) > 0 {
+		w.emit(string(w.buf))
+		w.buf = nil
 	}
 }
 
@@ -152,11 +220,10 @@ func (s *ContainerStreamer) Wait() error {
 
 // stopping reports whether a read error is just the stream being shut down.
 //
-// The loop checks the context before each read, but the read itself blocks: on
-// quit the context is cancelled under it and the HTTP body fails with
-// context.Canceled. Reported as an error, that printed a line per container
-// after "Shutting down processes..." -- seven of them on a Compose stack, all
-// saying nothing had gone wrong.
+// On quit the context is cancelled under a blocking read and the HTTP body
+// fails with context.Canceled. Reported as an error, that printed a line per
+// container after "Shutting down processes..." -- seven of them on a Compose
+// stack, all saying nothing had gone wrong.
 func (s *ContainerStreamer) stopping(err error) bool {
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
