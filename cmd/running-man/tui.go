@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime/debug"
 	"sort"
@@ -77,6 +78,10 @@ type model struct {
 
 	// Internal state
 	tickCount int // Count of tick messages received
+
+	// notice is a one-line status shown in the footer, such as the outcome of a
+	// restart. Empty when there is nothing to say.
+	notice string
 
 	// lastPanic holds the summary of a recovered panic, shown in the footer so a
 	// render bug is visible rather than silent. Empty when nothing has gone
@@ -321,7 +326,7 @@ func fetchTraces(apiURL string) tea.Cmd {
 
 func fetchTraceSpans(apiURL, traceID string) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := apiClient.Get(fmt.Sprintf("%s/traces?trace_id=%s", apiURL, traceID))
+		resp, err := apiClient.Get(apiURL + "/traces?" + url.Values{"trace_id": {traceID}}.Encode())
 		if err != nil {
 			return errMsg{err}
 		}
@@ -380,7 +385,7 @@ func fetchTraceSpans(apiURL, traceID string) tea.Cmd {
 
 func fetchTraceLogs(apiURL, traceID string) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := apiClient.Get(fmt.Sprintf("%s/traces/%s/logs", apiURL, traceID))
+		resp, err := apiClient.Get(apiURL + "/traces/" + url.PathEscape(traceID) + "/logs")
 		if err != nil {
 			return errMsg{err}
 		}
@@ -505,6 +510,13 @@ func (m model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Reset scroll offset when auto-scroll is enabled (user is at bottom)
 		if m.autoScroll {
 			m.scrollOffset = 0
+		}
+
+	case restartMsg:
+		if msg.err != nil {
+			m.notice = fmt.Sprintf("restart %s failed: %v", msg.process, msg.err)
+		} else {
+			m.notice = fmt.Sprintf("restarted %s", msg.process)
 		}
 
 	case tracesMsg:
@@ -1486,8 +1498,11 @@ func fetchSources(apiURL string) tea.Cmd {
 
 func fetchLogs(apiURL, source string) tea.Cmd {
 	return func() tea.Msg {
-		url := fmt.Sprintf("%s/logs?source=%s", apiURL, source)
-		resp, err := apiClient.Get(url)
+		// Escaped: process names are validated, but an OTLP service name is
+		// whatever the sender chose, and "my app" or a stray & or # used to
+		// produce a broken request -- that source's tab simply never loaded.
+		endpoint := apiURL + "/logs?" + url.Values{"source": {source}}.Encode()
+		resp, err := apiClient.Get(endpoint)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -1858,23 +1873,42 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case "r":
 		// Restart current process (only in log view, not trace view)
-		if len(m.sources) > 0 && !m.isTraceView() {
-			processName := m.currentSource()
-
-			// Make async HTTP call to restart
-			go func() {
-				url := fmt.Sprintf("%s/processes/%s/restart", m.apiURL, processName)
-				resp, err := http.Post(url, "", nil)
-				if err != nil {
-					// Error will appear in logs via normal logging
-					return
-				}
-				resp.Body.Close()
-			}()
+		if source := m.currentSource(); source != "" && !m.isTraceView() {
+			return m, restartProcess(m.apiURL, source)
 		}
 	}
 
 	return m, nil
+}
+
+// restartMsg reports how a restart request went.
+type restartMsg struct {
+	process string
+	err     error
+}
+
+// restartProcess asks the instance to restart a process.
+//
+// A command rather than the goroutine it replaced, for three reasons. The
+// goroutine used http.Post -- the default client -- which since the API moved
+// to a Unix socket went to TCP localhost:80 and reached nothing. It dropped the
+// error under a comment claiming it "will appear in logs via normal logging",
+// which nothing did, so pressing r silently did nothing. And a goroutine
+// spawned from Update is outside Bubble Tea's panic recovery, and ours, so a
+// panic in it would have ended the program.
+func restartProcess(apiURL, process string) tea.Cmd {
+	return func() tea.Msg {
+		endpoint := apiURL + "/processes/" + url.PathEscape(process) + "/restart"
+		resp, err := apiClient.Post(endpoint, "", nil)
+		if err != nil {
+			return restartMsg{process: process, err: err}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			return restartMsg{process: process, err: fmt.Errorf("HTTP %d", resp.StatusCode)}
+		}
+		return restartMsg{process: process}
+	}
 }
 
 // scrollToMatch sets m.scrollOffset so that the line containing the current
