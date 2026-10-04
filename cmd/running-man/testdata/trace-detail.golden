@@ -1,0 +1,19 @@
+   ┌───────────────────┐┌──────────────┐┌──────────────┐                                            
+   │  🏃‍➡️  running-man  ││  🔧 backend  ││  🔍  Traces  │                                            
+┌──┴───────────────────┴┴──────────────┴┘              └───────────────────────────────────────────┐
+│ Trace: 4bf92f3577b34da6a3ce929d0e0e4736                                                          │
+│Duration: 0s | Status: OK | Spans: 2 | Services: backend, postgres                                │
+│                                                                                                  │
+│Spans:                                                                                            │
+│✓ GET /things (0s) backend                                                                        │
+│    └── ✓ SELECT things (0s) postgres                                                             │
+│                                                                                                  │
+│Correlated Logs (2):                                                                              │
+│[09:15:01] [info] listening on http://localhost:8080                                              │
+│[09:15:02] [warn] deprecated config key 'legacy_mode'                                             │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                                                    
+ESC: Back to trace list | ↑/↓ PgUp/PgDn Home/End: Scroll | q: Quit                                  

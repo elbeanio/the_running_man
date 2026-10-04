@@ -1,0 +1,14 @@
+   ┌──────────────┐┌──────────────┐     
+   │  🔧 backend  ││  🔍  Traces  │     
+┌──┘              └┴──────────────┴────┐
+│[09:15:01] [info] listening on ht...  │
+│[09:15:02] [warn] deprecated conf...  │
+│[09:15:03] [error] could not conn...  │
+│[09:15:04] [info] retrying in 5s      │
+│[09:15:05] [error] Traceback (mos...  │
+│                      File "app.p...  │
+│                        connect()     │
+│                    ConnectionErr...  │
+└──────────────────────────────────────┘
+                                        
+Tab | ↑/↓ | / | t | q                   

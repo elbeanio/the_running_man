@@ -26,12 +26,12 @@ import (
 const (
 	defaultPollInterval = 2 * time.Second
 
-	// Approximate UI element heights for scroll calculations
-	uiHeaderFooterHeight = 5 // Tab bar + help text + padding
+	// minMessageWidth is how much room the message needs before a trace
+	// indicator is worth adding alongside it.
+	minMessageWidth = 30
 
-	// Maximum length for trace ID part in UI display (truncated if longer)
-	// Does not include "[trace:" prefix and "]" suffix
-	// Total indicator max length is this + 8 (for "[trace:" and "]")
+	// maxTraceIDDisplayLength is the trace ID's share of a log line, excluding
+	// the "[trace:" prefix and "]" suffix, so the whole indicator is this plus 8.
 	maxTraceIDDisplayLength = 12
 )
 
@@ -571,111 +571,11 @@ func (m model) viewModel() string {
 		return errorStyle.Render(fmt.Sprintf("Error: %v\n\nPress q to quit", m.err))
 	}
 
-	// Header with source tabs
-	header := renderHeader(m.sources, m.selectedSource, m.width, m.sourceTypes)
-
-	// Search bar - use textinput when in search mode
-	var searchBar string
-	if m.mode == ModeSearch {
-		searchBarStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("15")).
-			Background(lipgloss.Color("235")).
-			Padding(0, 1)
-
-		matchCount := countMatches(m.logs, m.searchQuery)
-		var status string
-		if m.searchQuery == "" {
-			status = "Type to search..."
-		} else if matchCount == 0 {
-			status = "No matches"
-		} else {
-			status = fmt.Sprintf("%d of %d matches", m.searchMatchIdx+1, matchCount)
-		}
-
-		searchInput := m.searchInput.View()
-		searchBar = searchBarStyle.Render(" "+searchInput+" ") +
-			searchBarStyle.Width(40).Render(" "+status)
-	}
-
-	// Calculate help text based on mode
-	var help string
-	switch m.mode {
-	case ModeSearch:
-		help = helpStyle.Render("\nEsc: Exit search | Enter: Jump to first match")
-	case ModeTraceDetail:
-		// Trace detail view help
-		baseHelp := "ESC: Back to trace list | ↑/↓ PgUp/PgDn Home/End: Scroll"
-		baseHelp += " | q: Quit"
-		help = helpStyle.Render("\n" + baseHelp)
-	case ModeNormal:
-		// Check if we're in trace view
-		isTraceView := m.currentSource() == "Traces"
-
-		// Build help text with styled components
-		baseHelp := "←/→ Tab: Switch source"
-
-		if isTraceView {
-			// Trace view specific help
-			baseHelp += " | ↑/↓ PgUp/PgDn Home/End: Navigate traces"
-			if len(m.traces) > 0 {
-				baseHelp += fmt.Sprintf(" | Enter: View trace (%d of %d)", m.selectedTraceIdx+1, len(m.traces))
-			}
-		} else {
-			// Log view help
-			baseHelp += " | ↑/↓ PgUp/PgDn Home/End: Scroll"
-
-			// Add search navigation if there's a search query
-			if m.searchQuery != "" {
-				matchCount := countMatches(m.logs, m.searchQuery)
-				var matchStatus string
-				if matchCount == 0 {
-					matchStatus = "no matches"
-				} else {
-					matchStatus = fmt.Sprintf("%d of %d", m.searchMatchIdx+1, matchCount)
-				}
-				baseHelp += fmt.Sprintf(" | n/p: Match nav (%s)", matchStatus)
-			}
-
-			// Add search command
-			baseHelp += " | /: Search"
-
-			// Add trace toggle with highlighted status
-			var traceStatusStyled string
-			if m.showTraceIDs {
-				traceStatusStyled = traceStatusHighlightStyle.Render(" trace:on ")
-			} else {
-				traceStatusStyled = traceStatusOffStyle.Render(" trace:off ")
-			}
-			baseHelp += fmt.Sprintf(" | t: Toggle trace (%s)", traceStatusStyled)
-		}
-
-		// Add quit command
-		baseHelp += " | q: Quit"
-
-		// A recovered panic is stated rather than swallowed: the session
-		// survived, but something is wrong and the user should know where to
-		// look.
-		if m.lastPanic != "" {
-			baseHelp += errorStyle.Render(fmt.Sprintf(" | ⚠ %s (see %s)", m.lastPanic, crashLogName))
-		}
-
-		help = helpStyle.Render("\n" + baseHelp)
-	}
-
-	// Calculate available height for content
-	availableHeight := m.height - lipgloss.Height(header) - lipgloss.Height(searchBar) - lipgloss.Height(help) - 2
-
-	// Account for border (borders are added OUTSIDE content width)
-	// No top border since it connects with active tab
-	borderHeight := 1                               // Only bottom border
-	contentWidth := m.width - 2                     // Content is 2 chars narrower for left/right borders
-	contentHeight := availableHeight - borderHeight // Only subtract bottom border
-	if contentWidth < 0 {
-		contentWidth = 0
-	}
-	if contentHeight < 0 {
-		contentHeight = 0
-	}
+	// Built once and measured once; the scroll handlers use the same numbers.
+	c := m.chrome()
+	header, searchBar, help := c.header, c.searchBar, c.help
+	contentWidth := m.contentWidth()
+	contentHeight := m.contentHeight()
 
 	// Render content based on mode
 	var content string
@@ -1167,11 +1067,18 @@ func renderHeader(sources []string, selected int, width int, sourceTypes map[str
 		tabs = append(tabs, style.Render(fmt.Sprintf(" %s ", displayName)))
 	}
 
-	// Join tabs horizontally at top
-	row := lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
-
 	// Shift tabs right by 2 spaces
 	leftMargin := 2
+
+	// Only the tabs that fit. The row was previously built from all of them at
+	// full size, so three tabs came to 57 columns whatever the terminal was --
+	// and lipgloss then padded every other row of the frame to match, which is
+	// how a narrow window ended up with every row wider than the screen.
+	const cornerAndGap = 4 // "┌──" on the left, "┐" on the right
+	tabs = tabsThatFit(tabs, selected, width-cornerAndGap)
+
+	// Join tabs horizontally at top
+	row := lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
 
 	// Create gap style with neutral border color
 	gapStyle := lipgloss.NewStyle().
@@ -1194,7 +1101,71 @@ func renderHeader(sources []string, selected int, width int, sourceTypes map[str
 	corner := cornerStyle.Render("┐")
 
 	// Join left gap + tabs + right gap + corner with Bottom alignment
-	return lipgloss.JoinHorizontal(lipgloss.Bottom, leftGap, row, rightGap, corner)
+	header := lipgloss.JoinHorizontal(lipgloss.Bottom, leftGap, row, rightGap, corner)
+
+	// Clamp every row as a backstop. The arithmetic above should already fit,
+	// but a header one column too wide makes lipgloss pad the whole frame to
+	// match and the terminal wrap all of it, so this is worth not relying on
+	// arithmetic for.
+	return clampRows(header, width)
+}
+
+// tabsThatFit returns the tabs that will fit in the budget, keeping the selected
+// one and preferring its neighbours, in their original order.
+//
+// The selected tab is kept even when it alone does not fit, truncated instead:
+// knowing which source is being shown matters more than the border drawing
+// correctly at a width nobody can read anyway.
+func tabsThatFit(tabs []string, selected, budget int) []string {
+	if len(tabs) == 0 || budget <= 0 {
+		return nil
+	}
+	if selected < 0 || selected >= len(tabs) {
+		selected = 0
+	}
+
+	total := 0
+	for _, t := range tabs {
+		total += lipgloss.Width(t)
+	}
+	if total <= budget {
+		return tabs
+	}
+
+	used := lipgloss.Width(tabs[selected])
+	if used > budget {
+		return []string{clampRows(tabs[selected], budget)}
+	}
+
+	// Grow outwards from the selection so context on both sides is kept where
+	// there is room for it.
+	lo, hi := selected, selected
+	for {
+		grew := false
+		if hi+1 < len(tabs) && used+lipgloss.Width(tabs[hi+1]) <= budget {
+			hi++
+			used += lipgloss.Width(tabs[hi])
+			grew = true
+		}
+		if lo-1 >= 0 && used+lipgloss.Width(tabs[lo-1]) <= budget {
+			lo--
+			used += lipgloss.Width(tabs[lo])
+			grew = true
+		}
+		if !grew {
+			break
+		}
+	}
+	return tabs[lo : hi+1]
+}
+
+// clampRows truncates every row of a multi-row block to width.
+func clampRows(block string, width int) string {
+	rows := strings.Split(block, "\n")
+	for i, row := range rows {
+		rows[i] = truncate(row, width)
+	}
+	return strings.Join(rows, "\n")
 }
 
 func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery string, currentMatchIdx int, showTraceIDs bool) string {
@@ -1232,6 +1203,10 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 
 		for i, msgLine := range messageLines {
 			var line string
+			// Declared out here because the truncation below needs to know
+			// whether an indicator was actually added, not merely whether one
+			// was possible.
+			traceIndicatorStyled := ""
 			if i == 0 {
 				// First line gets full prefix
 				baseLine := fmt.Sprintf("[%s] [%s] %s",
@@ -1240,19 +1215,23 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 				// Add trace indicator if enabled and trace_id exists
 				if showTraceIDs && log.TraceID != "" {
 					displayTraceID := truncate(log.TraceID, maxTraceIDDisplayLength)
-					traceIndicator := fmt.Sprintf("[trace:%s]", displayTraceID)
-
 					// The styled indicator's own width, since the style may add
 					// escape sequences that occupy no columns.
-					traceIndicatorStyled := traceIndicatorStyle.Render(traceIndicator)
-					indicatorWidth := displayWidth(traceIndicatorStyled) + 1 // +1 for space
+					candidate := traceIndicatorStyle.Render(fmt.Sprintf("[trace:%s]", displayTraceID))
 
-					// Whatever is left is for the message. In a narrow window
-					// there is nothing left, and truncate says so by returning
-					// "" -- where subtracting from the width used to produce a
-					// negative slice bound and take the whole program down.
-					baseLine = truncate(baseLine, width-indicatorWidth)
+					// The indicator only earns its space if the message still
+					// has some. A 40-column window was spending 22 of them on a
+					// truncated trace ID and showing "[09:15:03] [er..." for the
+					// message, which is the wrong way round: the trace ID is
+					// recoverable from the entry, the message is why anyone is
+					// looking.
+					if width-displayWidth(candidate)-1 >= minMessageWidth {
+						traceIndicatorStyled = candidate
+					}
+				}
 
+				if traceIndicatorStyled != "" {
+					baseLine = truncate(baseLine, width-displayWidth(traceIndicatorStyled)-1)
 					line = fmt.Sprintf("%s %s", baseLine, traceIndicatorStyled)
 				} else {
 					line = baseLine
@@ -1262,11 +1241,9 @@ func renderLogs(logs []logEntry, height, width, scrollOffset int, searchQuery st
 				line = fmt.Sprintf("                    %s", msgLine)
 			}
 
-			// Truncate long lines (only if trace indicator wasn't added above)
-			// When trace indicator is added, we've already handled truncation
-			// Use width-10 to ensure plenty of room for right border
-			if !(i == 0 && showTraceIDs && log.TraceID != "") {
-				// -2 for the box's left and right borders.
+			if traceIndicatorStyled == "" {
+				// -2 for the box's left and right borders. Lines that got an
+				// indicator were fitted when it was added.
 				line = truncate(line, width-2)
 			}
 
@@ -1749,7 +1726,7 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.selectedTraceIdx < len(m.traces)-1 {
 				m.selectedTraceIdx++
 				// Adjust scroll offset to keep selected item visible
-				availableHeight := m.height - uiHeaderFooterHeight
+				availableHeight := m.pageSize()
 				if m.selectedTraceIdx >= m.traceScrollOffset+availableHeight {
 					m.traceScrollOffset = m.selectedTraceIdx - availableHeight + 1
 				}
@@ -1765,14 +1742,14 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "pgup":
 		if m.mode == ModeTraceDetail {
 			// Page up in trace detail view
-			availableHeight := m.height - uiHeaderFooterHeight
+			availableHeight := m.pageSize()
 			m.traceDetailScrollOffset -= availableHeight
 			if m.traceDetailScrollOffset < 0 {
 				m.traceDetailScrollOffset = 0
 			}
 		} else if m.isTraceView() {
 			// Page up in trace list
-			availableHeight := m.height - uiHeaderFooterHeight
+			availableHeight := m.pageSize()
 			m.selectedTraceIdx -= availableHeight
 			if m.selectedTraceIdx < 0 {
 				m.selectedTraceIdx = 0
@@ -1780,18 +1757,18 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.traceScrollOffset = m.selectedTraceIdx
 		} else {
 			m.autoScroll = false
-			availableHeight := m.height - uiHeaderFooterHeight
+			availableHeight := m.pageSize()
 			m.scrollOffset += availableHeight
 		}
 
 	case "pgdown":
 		if m.mode == ModeTraceDetail {
 			// Page down in trace detail view
-			availableHeight := m.height - uiHeaderFooterHeight
+			availableHeight := m.pageSize()
 			m.traceDetailScrollOffset += availableHeight
 		} else if m.isTraceView() {
 			// Page down in trace list
-			availableHeight := m.height - uiHeaderFooterHeight
+			availableHeight := m.pageSize()
 			m.selectedTraceIdx += availableHeight
 			if m.selectedTraceIdx >= len(m.traces) {
 				m.selectedTraceIdx = len(m.traces) - 1
@@ -1801,7 +1778,7 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.traceScrollOffset = m.selectedTraceIdx - availableHeight + 1
 			}
 		} else {
-			availableHeight := m.height - uiHeaderFooterHeight
+			availableHeight := m.pageSize()
 			m.scrollOffset -= availableHeight
 			if m.scrollOffset <= 0 {
 				m.scrollOffset = 0
@@ -1829,7 +1806,7 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if m.isTraceView() {
 			// Go to last trace
 			m.selectedTraceIdx = len(m.traces) - 1
-			availableHeight := m.height - uiHeaderFooterHeight
+			availableHeight := m.pageSize()
 			if m.selectedTraceIdx >= availableHeight {
 				m.traceScrollOffset = m.selectedTraceIdx - availableHeight + 1
 			}
@@ -1910,9 +1887,9 @@ func scrollToMatch(m model) model {
 	targetLineIdx := matchLineIndices[m.searchMatchIdx]
 	totalLines := countAllLines(m.logs, m.width)
 
-	// availableHeight mirrors the View() calculation (approx — uiHeaderFooterHeight
+	// availableHeight is the same number View() uses, so a jump lands where
 	// accounts for header, help, searchBar, padding)
-	availableHeight := m.height - uiHeaderFooterHeight
+	availableHeight := m.pageSize()
 	if availableHeight < 1 {
 		availableHeight = 1
 	}
