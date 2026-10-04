@@ -18,12 +18,19 @@ cat .running-man/instance.json 2>/dev/null
 ```
 
 If that file exists, a Running Man instance is supervising this project. It lists the API
-socket and every process the project is configured to run. For live state:
+socket and every process the project is configured to run.
+
+**Take the socket path from that file. Do not assume it.** It is usually
+`.running-man/api.sock`, but not always, and the exception is not something you can work
+out for yourself:
 
 ```bash
-SOCK=.running-man/api.sock
+SOCK=$(sed -n 's/.*"socket": "\(.*\)",*/\1/p' .running-man/instance.json)
 curl -s --unix-socket "$SOCK" http://localhost/processes
 ```
+
+Every example below assumes `$SOCK` was set that way. The file's `hints` are also complete,
+ready-to-run commands with the path already filled in, if you would rather copy one.
 
 If the process you were about to start is already there with `"status": "running"`, **use
 it**. Do not start a second copy.
@@ -48,24 +55,17 @@ and you can search across every process at once.
 
 ## Reading output
 
-**The API is a Unix socket, not a TCP port.** It is at `.running-man/api.sock` in the
-project, so `curl` needs `--unix-socket`; the host in the URL is ignored, and `localhost` is
-the convention. Every endpoint returns JSON.
+**The API is a Unix socket, not a TCP port**, so `curl` needs `--unix-socket`. The host in
+the URL is ignored; `localhost` is the convention. Every endpoint returns JSON.
 
-```bash
-SOCK=.running-man/api.sock
-```
-
-A socket path has a length limit, so a deeply nested project gets one under the temp
-directory instead. The `socket` field in `.running-man/instance.json` is always the truth,
-and the `hints` there are ready-to-run:
-
-```bash
-SOCK=$(sed -n 's/.*"socket": "\(.*\)",*/\1/p' .running-man/instance.json)
-```
+`$SOCK` comes from the marker, as above. The reason to read it rather than hardcode
+`.running-man/api.sock` is that a Unix socket path has a hard kernel length limit, and a
+deeply nested project therefore gets a short socket under the temp directory instead —
+named by a hash of the project path, which you cannot reconstruct and should not try to.
+The marker records whichever applies.
 
 The socket is why there is no port to guess and no wrong project to reach by accident: the
-path comes from the project directory, so an agent working in one project cannot read
+path derives from the project directory, so an agent working in one project cannot read
 another's logs.
 
 ```bash

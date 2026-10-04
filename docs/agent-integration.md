@@ -19,7 +19,8 @@ reasoning.
 Before starting a dev server, check whether one is already running:
 
 ```bash
-SOCK=.running-man/api.sock
+# Take the socket path from the marker rather than assuming it
+SOCK=$(sed -n 's/.*"socket": "\(.*\)",*/\1/p' .running-man/instance.json)
 curl -s --unix-socket "$SOCK" http://localhost/processes
 ```
 
@@ -32,8 +33,6 @@ see together.
 
 ### Quick Start
 ```bash
-SOCK=.running-man/api.sock
-
 # The full OpenAPI specification
 curl -s --unix-socket "$SOCK" http://localhost/openapi.yaml
 

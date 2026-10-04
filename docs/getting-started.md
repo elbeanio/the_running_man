@@ -124,7 +124,12 @@ running-man run --process "pytest" --no-tui
 
 While Running Man is running, the API is served on a Unix socket in the project directory
 rather than a TCP port. `curl` reaches it with `--unix-socket`, and the host in the URL is
-ignored:
+ignored.
+
+The path below is the usual one. A deeply nested project gets a short socket under the temp
+directory instead, because a Unix socket path has a hard length limit — the `socket` field
+of `.running-man/instance.json` always records which applies, and scripts and agents should
+read it from there rather than hardcoding:
 
 ```bash
 SOCK=.running-man/api.sock
