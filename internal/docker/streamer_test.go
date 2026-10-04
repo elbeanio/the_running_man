@@ -19,7 +19,7 @@ func TestNewContainerStreamer(t *testing.T) {
 	}
 	defer client.Close()
 
-	streamer := NewContainerStreamer(client, "test-container", "test", nil)
+	streamer := NewContainerStreamer(client, "test-container", "test", nil, 0)
 	if streamer == nil {
 		t.Fatal("NewContainerStreamer returned nil")
 	}
@@ -45,7 +45,7 @@ func TestContainerStreamer_StartStop(t *testing.T) {
 	defer client.Close()
 
 	// Try to start a streamer (will fail if no container exists, which is expected)
-	streamer := NewContainerStreamer(client, "nonexistent", "test", nil)
+	streamer := NewContainerStreamer(client, "nonexistent", "test", nil, 0)
 
 	// Start will return an error for nonexistent container
 	err = streamer.Start()
@@ -78,7 +78,7 @@ func TestContainerStreamer_WithHandler(t *testing.T) {
 		lines = append(lines, line)
 	}
 
-	streamer := NewContainerStreamer(client, "test", "test-container", handler)
+	streamer := NewContainerStreamer(client, "test", "test-container", handler, 0)
 	if streamer.handler == nil {
 		t.Error("Handler not set on streamer")
 	}
@@ -124,7 +124,7 @@ func TestContainerStreamer_Integration(t *testing.T) {
 	}
 
 	container := containers[0]
-	streamer := NewContainerStreamer(client, container.ID, container.Name, handler)
+	streamer := NewContainerStreamer(client, container.ID, container.Name, handler, 0)
 
 	err = streamer.Start()
 	if err != nil {

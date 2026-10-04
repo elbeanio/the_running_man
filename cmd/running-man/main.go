@@ -619,7 +619,10 @@ func runCommand(args []string) {
 
 		// Start log streamers for each container
 		for _, container := range containers {
-			streamer := docker.NewContainerStreamer(dockerClient, container.ID, container.Name, dockerLineHandler)
+			// Replays as much history as retention would keep, and no more:
+			// replayed lines arrive now, so anything older would otherwise be
+			// held for a full retention window regardless of its age.
+			streamer := docker.NewContainerStreamer(dockerClient, container.ID, container.Name, dockerLineHandler, finalRetention)
 			if err := streamer.Start(); err != nil {
 				fmt.Fprintf(os.Stderr, "[running-man] Failed to start log streamer for %s: %v\n", container.Name, err)
 				continue

@@ -627,9 +627,11 @@ func (s *Server) handleTraces(w http.ResponseWriter, r *http.Request) {
 	// Query the trace storage
 	spans := s.traceStorage.Query(filters)
 
-	// Apply limit if specified
+	// Apply limit if specified, keeping the most recent -- the same meaning
+	// /logs gives it. This took spans[:limit], the oldest N, which for a
+	// debugging tool is the least useful slice there is.
 	if filters.Limit > 0 && len(spans) > filters.Limit {
-		spans = spans[:filters.Limit]
+		spans = spans[len(spans)-filters.Limit:]
 	}
 
 	// Return JSON response

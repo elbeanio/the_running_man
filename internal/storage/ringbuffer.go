@@ -11,8 +11,21 @@ import (
 
 // RingBuffer stores log entries with size and time limits
 type RingBuffer struct {
-	mu          sync.RWMutex
-	entries     []*parser.LogEntry
+	mu      sync.RWMutex
+	entries []*parser.LogEntry
+
+	// received is when each entry arrived, index-aligned with entries.
+	//
+	// Retention is decided on this, not on entry.Timestamp. The reported
+	// timestamp is whatever the sender said -- an OTLP client picks its own --
+	// so the entries are not in timestamp order, and eviction stops at the first
+	// entry that is not old. One record from a client an hour fast froze
+	// retention for everything behind it for that hour; one from a client
+	// running slow was discarded the moment the next entry arrived. Arrival
+	// order is monotonic by construction, which is what a stop-at-first-young
+	// eviction needs. Timestamp still drives display and the `since` filter.
+	received []time.Time
+
 	maxSize     int
 	maxAge      time.Duration
 	currentSize int64
@@ -36,6 +49,7 @@ func NewRingBuffer(maxSize int, maxAge time.Duration, maxBytes int64) *RingBuffe
 	}
 	return &RingBuffer{
 		entries:    make([]*parser.LogEntry, 0, initialCap),
+		received:   make([]time.Time, 0, initialCap),
 		maxSize:    maxSize,
 		maxAge:     maxAge,
 		maxBytes:   maxBytes,
@@ -56,6 +70,7 @@ func (rb *RingBuffer) Append(entry *parser.LogEntry) {
 
 	// Add the new entry
 	rb.entries = append(rb.entries, entry)
+	rb.received = append(rb.received, time.Now())
 	rb.currentSize += entrySize
 
 	// Update trace index if entry has a trace_id
@@ -66,46 +81,44 @@ func (rb *RingBuffer) Append(entry *parser.LogEntry) {
 
 // evictIfNeeded removes old entries to make room for new ones
 func (rb *RingBuffer) evictIfNeeded(newEntrySize int64) {
-	now := time.Now()
-
-	// Remove entries that are too old
-	cutoffTime := now.Add(-rb.maxAge)
-	for len(rb.entries) > 0 && rb.entries[0].Timestamp.Before(cutoffTime) {
-		removed := rb.entries[0]
-		rb.entries = rb.entries[1:]
-		rb.currentSize -= int64(len(removed.Raw))
-		// Clean up trace index for removed entry
-		if removed.TraceID != "" {
-			rb.removeFromTraceIndex(removed.TraceID, removed)
-		}
+	// Age, by when each entry arrived.
+	cutoffTime := time.Now().Add(-rb.maxAge)
+	for len(rb.entries) > 0 && rb.received[0].Before(cutoffTime) {
+		rb.evictOldest()
 	}
 
-	// Remove oldest entries if we're over size limit
+	// Size.
 	for len(rb.entries) > 0 && rb.currentSize+newEntrySize > rb.maxBytes {
-		removed := rb.entries[0]
-		rb.entries = rb.entries[1:]
-		rb.currentSize -= int64(len(removed.Raw))
-		// Clean up trace index for removed entry
-		if removed.TraceID != "" {
-			rb.removeFromTraceIndex(removed.TraceID, removed)
-		}
+		rb.evictOldest()
 	}
 
-	// Remove oldest entries if we're over count limit.
+	// Count.
 	//
 	// The len > 0 guard matters: without it, a maxSize of 0 or less makes the
 	// condition permanently true and rb.entries[0] panics on an empty slice.
-	// The two loops above already guard this way. Config maps max_entries 0 to
-	// a default so the normal path cannot reach it, but NewRingBuffer is
-	// exported and the guard is free.
+	// Config maps max_entries 0 to a default so the normal path cannot reach it,
+	// but NewRingBuffer is exported and the guard is free.
 	for len(rb.entries) > 0 && len(rb.entries) >= rb.maxSize {
-		removed := rb.entries[0]
-		rb.entries = rb.entries[1:]
-		rb.currentSize -= int64(len(removed.Raw))
-		// Clean up trace index for removed entry
-		if removed.TraceID != "" {
-			rb.removeFromTraceIndex(removed.TraceID, removed)
-		}
+		rb.evictOldest()
+	}
+}
+
+// evictOldest removes the oldest entry, keeping the size, the trace index and
+// the arrival times in step.
+func (rb *RingBuffer) evictOldest() {
+	removed := rb.entries[0]
+
+	// Cleared before reslicing. Reslicing alone leaves the pointer in the
+	// backing array's prefix, so the entry stays reachable -- and its memory
+	// held -- until append next reallocates, which at this size can be a
+	// quarter of the buffer again on top of max_bytes.
+	rb.entries[0] = nil
+	rb.entries = rb.entries[1:]
+	rb.received = rb.received[1:]
+
+	rb.currentSize -= int64(len(removed.Raw))
+	if removed.TraceID != "" {
+		rb.removeFromTraceIndex(removed.TraceID, removed)
 	}
 }
 
@@ -114,7 +127,10 @@ func (rb *RingBuffer) Query(filters QueryFilters) []*parser.LogEntry {
 	rb.mu.RLock()
 	defer rb.mu.RUnlock()
 
-	var result []*parser.LogEntry
+	// Non-nil, so an empty result serialises as [] rather than null:
+	// `jq '.errors[]'` fails on null, and every documented example assumes an
+	// array.
+	result := []*parser.LogEntry{}
 	cutoffTime := time.Now().Add(-filters.Since)
 
 	for _, entry := range rb.entries {
@@ -331,6 +347,7 @@ func (rb *RingBuffer) Clear() {
 		initialCap = 0
 	}
 	rb.entries = make([]*parser.LogEntry, 0, initialCap)
+	rb.received = make([]time.Time, 0, initialCap)
 	rb.currentSize = 0
 	rb.traceIndex = make(map[string][]*parser.LogEntry)
 }
@@ -346,7 +363,8 @@ func (rb *RingBuffer) GetLogsByTraceID(traceID string) []*parser.LogEntry {
 		copy(result, entries)
 		return result
 	}
-	return nil
+	// Empty rather than nil, for the same reason as Query.
+	return []*parser.LogEntry{}
 }
 
 // QueryFilters specifies which logs to retrieve

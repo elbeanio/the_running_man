@@ -174,11 +174,22 @@ func (m model) chrome() chromeRows {
 	// result instead left "| ⚠ View..." -- the warning present but unreadable,
 	// which is the worst of both.
 	help := m.helpText()
-	if m.lastPanic != "" {
-		warning := fmt.Sprintf("⚠ %s (see %s)", m.lastPanic, crashLogName)
-		warning = truncate(warning, m.width)
 
-		hints := fitToWidth(m.width-displayWidth(warning)-3, m.helpText(), "q: quit")
+	// A notice, such as a restart's outcome, takes width the same way the panic
+	// warning does, but ranks below it.
+	status := ""
+	if m.notice != "" {
+		status = m.notice
+	}
+	if m.lastPanic != "" {
+		status = fmt.Sprintf("⚠ %s (see %s)", m.lastPanic, crashLogName)
+	}
+	if status != "" {
+		warning := truncate(status, m.width)
+
+		// The help already built, not a second helpText(): building it can
+		// scan every log for the search count.
+		hints := fitToWidth(m.width-displayWidth(warning)-3, help, "q: quit")
 		if hints == "" {
 			help = warning
 		} else {

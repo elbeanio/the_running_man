@@ -192,30 +192,22 @@ func TestRingBuffer_SizeEviction(t *testing.T) {
 }
 
 func TestRingBuffer_TimeEviction(t *testing.T) {
-	// Short retention: 1 second
-	rb := NewRingBuffer(100, 1*time.Second, 50*1024*1024)
+	// Retention is about how long an entry has been held, so age is measured
+	// from arrival. This test used to backdate the entry's reported timestamp
+	// and expect it gone on the next append -- which is the behaviour that
+	// discarded logs from any OTLP client whose clock ran slow. See
+	// retention_test.go.
+	rb := NewRingBuffer(100, 50*time.Millisecond, 50*1024*1024)
 
-	// Add old entry
-	rb.Append(&parser.LogEntry{
-		Timestamp: time.Now().Add(-2 * time.Second),
-		Message:   "old",
-		Raw:       "old",
-	})
+	rb.Append(&parser.LogEntry{Timestamp: time.Now(), Message: "old", Raw: "old"})
 
-	// Add recent entry
-	time.Sleep(10 * time.Millisecond)
-	rb.Append(&parser.LogEntry{
-		Timestamp: time.Now(),
-		Message:   "recent",
-		Raw:       "recent",
-	})
+	time.Sleep(80 * time.Millisecond) // past retention
+	rb.Append(&parser.LogEntry{Timestamp: time.Now(), Message: "recent", Raw: "recent"})
 
-	// Old entry should be evicted
 	result := rb.Query(QueryFilters{})
 	if len(result) != 1 {
-		t.Errorf("Expected 1 entry after time eviction, got %d", len(result))
+		t.Fatalf("Expected 1 entry after time eviction, got %d", len(result))
 	}
-
 	if result[0].Message != "recent" {
 		t.Errorf("Expected 'recent' entry, got %s", result[0].Message)
 	}
