@@ -43,21 +43,20 @@ running-man run --process "python server.py" --process "npm run dev"
 Then ask it what happened:
 
 ```bash
-curl -s 'http://localhost:9000/errors?since=10m'
-curl -s 'http://localhost:9000/logs?source=backend&since=5m&limit=50'
-curl -s http://localhost:9000/processes
+SOCK=.running-man/api.sock
+curl -s --unix-socket "$SOCK" 'http://localhost/errors?since=10m'
+curl -s --unix-socket "$SOCK" 'http://localhost/logs?source=backend&since=5m&limit=50'
+curl -s --unix-socket "$SOCK" http://localhost/processes
 ```
 
 `GET /` lists every endpoint; `/docs` serves interactive OpenAPI documentation.
 
 ## ⚠️ Read this before running it on a shared network
 
-Running Man binds **all interfaces** by default and has **no authentication**, so anyone
-who can reach port 9000 can read your captured logs — and dev servers routinely print
-tokens and connection strings. Process control is restricted to this machine.
-
-`running-man run --listen 127.0.0.1` restricts everything to the local machine. Full
-detail in [network exposure](api-reference.md#network-exposure).
+The query API is a Unix socket at `.running-man/api.sock`, mode 0600, so it is not on the
+network at all. The OTLP receiver still is — it binds 4318 (or the next free port) so
+containers and browsers can export to it — and it is unauthenticated, write-only ingest.
+Full detail in [network exposure](api-reference.md#network-exposure).
 
 ---
 

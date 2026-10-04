@@ -405,14 +405,14 @@ go tool pprof cpu.prof
 
 ### Best Practices
 
-1. **The API is bound to all interfaces by default** (`0.0.0.0`), so anyone on the network
-   can read captured logs — which often contain secrets printed by dev servers. Use
-   `--listen 127.0.0.1` to restrict it. See
+1. **The query API is not on the network.** It is a Unix socket at
+   `.running-man/api.sock`, mode 0600, so reaching it means being this user on this
+   machine. Do not add a TCP listener for it: the socket is both the access control and
+   the reason an agent can find the right project. See
    [api-reference.md → Network exposure](api-reference.md#network-exposure).
-2. **State-changing endpoints are loopback-only.** `POST /processes/{name}/restart` and
-   `POST /processes/stop-all` return 403 for non-loopback callers unless
-   `--allow-remote-control` is set. New state-changing endpoints must call
-   `requireLocalControl` — do not add one without it.
+2. **No caller checks are needed, and none should be added.** The loopback 403 guard and
+   `requireLocalControl` are gone with the TCP port. A new state-changing endpoint needs no
+   permission check — the filesystem already performed it.
 3. **OTLP ingestion is unauthenticated input.** `/v1/logs` takes the source name and
    timestamp from the sender, so `otlp` entries cannot be trusted as to origin.
 4. **Process isolation**: Each process runs with its environment

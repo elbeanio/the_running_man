@@ -221,9 +221,8 @@ func TestProcessFlags(t *testing.T) {
 }
 
 // parseFlagsAndValidate extracts flag parsing and validation for testing
-func parseFlagsAndValidate(args []string) (procs []string, dockerCompose string, apiPort int, err error) {
+func parseFlagsAndValidate(args []string) (procs []string, dockerCompose string, err error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	apiPortFlag := fs.Int("api-port", defaultAPIPort, "API server port")
 	dockerComposeFlag := fs.String("docker-compose", "", "Path to docker-compose.yml file")
 
 	var pf processFlags
@@ -231,15 +230,15 @@ func parseFlagsAndValidate(args []string) (procs []string, dockerCompose string,
 
 	// Parse flags
 	if err := fs.Parse(args); err != nil {
-		return nil, "", 0, err
+		return nil, "", err
 	}
 
 	// Validate
 	if len(pf) == 0 && *dockerComposeFlag == "" {
-		return nil, "", 0, fmt.Errorf("at least one --process flag or --docker-compose is required")
+		return nil, "", fmt.Errorf("at least one --process flag or --docker-compose is required")
 	}
 
-	return pf, *dockerComposeFlag, *apiPortFlag, nil
+	return pf, *dockerComposeFlag, nil
 }
 
 func TestParseFlagsAndValidate(t *testing.T) {
@@ -248,7 +247,6 @@ func TestParseFlagsAndValidate(t *testing.T) {
 		args        []string
 		wantProcs   []string
 		wantCompose string
-		wantPort    int
 		wantErr     bool
 		errContains string
 	}{
@@ -257,7 +255,6 @@ func TestParseFlagsAndValidate(t *testing.T) {
 			args:        []string{"--process", "echo hello"},
 			wantProcs:   []string{"echo hello"},
 			wantCompose: "",
-			wantPort:    9000,
 			wantErr:     false,
 		},
 		{
@@ -265,7 +262,6 @@ func TestParseFlagsAndValidate(t *testing.T) {
 			args:        []string{"--process", "echo hello", "--process", "echo world"},
 			wantProcs:   []string{"echo hello", "echo world"},
 			wantCompose: "",
-			wantPort:    9000,
 			wantErr:     false,
 		},
 		{
@@ -273,7 +269,6 @@ func TestParseFlagsAndValidate(t *testing.T) {
 			args:        []string{"--docker-compose", "./docker-compose.yml"},
 			wantProcs:   []string{},
 			wantCompose: "./docker-compose.yml",
-			wantPort:    9000,
 			wantErr:     false,
 		},
 		{
@@ -281,15 +276,6 @@ func TestParseFlagsAndValidate(t *testing.T) {
 			args:        []string{"--process", "echo test", "--docker-compose", "./compose.yml"},
 			wantProcs:   []string{"echo test"},
 			wantCompose: "./compose.yml",
-			wantPort:    9000,
-			wantErr:     false,
-		},
-		{
-			name:        "custom api port",
-			args:        []string{"--process", "echo test", "--api-port", "8080"},
-			wantProcs:   []string{"echo test"},
-			wantCompose: "",
-			wantPort:    8080,
 			wantErr:     false,
 		},
 		{
@@ -298,17 +284,11 @@ func TestParseFlagsAndValidate(t *testing.T) {
 			wantErr:     true,
 			errContains: "at least one",
 		},
-		{
-			name:        "only api-port - error",
-			args:        []string{"--api-port", "8080"},
-			wantErr:     true,
-			errContains: "at least one",
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			procs, compose, port, err := parseFlagsAndValidate(tt.args)
+			procs, compose, err := parseFlagsAndValidate(tt.args)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("parseFlagsAndValidate() error = %v, wantErr %v", err, tt.wantErr)
@@ -337,9 +317,6 @@ func TestParseFlagsAndValidate(t *testing.T) {
 				t.Errorf("dockerCompose = %v, want %v", compose, tt.wantCompose)
 			}
 
-			if port != tt.wantPort {
-				t.Errorf("apiPort = %v, want %v", port, tt.wantPort)
-			}
 		})
 	}
 }

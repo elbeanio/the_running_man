@@ -17,7 +17,6 @@ processes:
     command: npm start
   - name: api
     command: go run main.go
-api_port: 8080
 retention: 1h
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
@@ -36,9 +35,6 @@ retention: 1h
 	}
 	if cfg.Processes[0].Name != "web" {
 		t.Errorf("expected process name 'web', got '%s'", cfg.Processes[0].Name)
-	}
-	if cfg.GetAPIPort() != 8080 {
-		t.Errorf("expected api_port 8080, got %d", cfg.GetAPIPort())
 	}
 }
 
@@ -323,7 +319,6 @@ func TestLoadConfig_WithDockerCompose(t *testing.T) {
 
 	content := `
 docker_compose: docker-compose.yml
-api_port: 9000
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write test config: %v", err)

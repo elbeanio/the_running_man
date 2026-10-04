@@ -119,18 +119,26 @@ processes:
 
 ### Port Already in Use
 
-**Problem:** Port 9000 (API) or 4318 (tracing) is occupied.
+**Problem:** port 4318 (the OTLP receiver) is occupied. The API has no port — it is a Unix
+socket — so this only ever concerns tracing.
+
+**Normally nothing to do:** the receiver takes the next free port above 4318 by itself, and
+reports which one on startup. 4318 is the OTLP/HTTP default so every other collector wants
+it too, and one instance per project means several receivers on one machine.
+
+It fails instead of moving only when the port was named explicitly, with `--tracing-port`
+or `tracing.port` in config — a named port is one somebody meant.
 
 **Solutions:**
 ```bash
-# Check what's using the port
-lsof -i :9000
+# Check what's using it
 lsof -i :4318
 
-# Change API port
-running-man run --api-port 9001
+# See which port the receiver actually took
+SOCK=.running-man/api.sock
+curl -s --unix-socket "$SOCK" http://localhost/health | jq -r .otlp_endpoint
 
-# Change tracing port
+# Pin a different one
 running-man run --tracing-port 4321
 
 # Kill conflicting process (if safe)
@@ -353,14 +361,16 @@ tracing:
 
 **Solutions:**
 ```bash
+SOCK=.running-man/api.sock
+
 # Verify Running Man is running and reachable
-curl http://localhost:9000/health
+curl --unix-socket "$SOCK" http://localhost/health
 
 # Confirm it can see what's running
-curl http://localhost:9000/processes
+curl --unix-socket "$SOCK" http://localhost/processes
 
 # Confirm the endpoint list is discoverable
-curl http://localhost:9000/
+curl --unix-socket "$SOCK" http://localhost/
 ```
 
 If the API responds but the agent still ignores it, the problem is discovery rather than
@@ -373,72 +383,55 @@ skill is installed (see `skills/running-man/`) and that `AGENTS.md` points at it
 
 **Solutions:**
 ```bash
-# Is something else on the port?
-lsof -i :9000
+# Is the socket there at all?
+ls -l .running-man/api.sock
 
-# Run on a different port
-running-man run --api-port 9001
+# Does it answer, and for which project?
+curl -s --unix-socket .running-man/api.sock http://localhost/health | jq '{pid, project}'
 ```
+
+A socket file with nothing behind it means the instance died without cleaning up; the next
+`running-man run` takes it over. A deeply nested project keeps its socket under the temp
+directory instead, and `.running-man/instance.json` records the real path.
 
 ## API Issues
 
-### 403 when restarting or stopping a process
+### Cannot restart or stop a process
 
-**Problem:** `POST /processes/{name}/restart` or `POST /processes/stop-all` returns HTTP
-403 with `"process control is restricted to local requests"`, even though `GET` endpoints
-on the same port work fine.
+**Problem:** `POST /processes/{name}/restart` or `POST /processes/stop-all` does not work.
 
-**Cause:** this is deliberate, not a bug. Running Man binds all interfaces so containers
-and browsers can reach it, but the two endpoints that *change process state* are served
-only to loopback callers — nothing legitimate needs to stop another machine's dev
-processes.
+**Cause:** these used to return 403 to any caller that was not on loopback, because the API
+was on a TCP port open to the network. That guard is gone along with the port: the API is a
+Unix socket at mode 0600, so reaching it at all means being this user on this machine.
+`--allow-remote-control` and `--listen` no longer exist.
 
-**Solutions:**
-```bash
-# Check what address the server saw you as -- this is the usual surprise
-curl -s -X POST http://localhost:9000/processes/stop-all | jq .remote_addr
-
-# Call it from the machine running running-man, over loopback
-curl -X POST http://127.0.0.1:9000/processes/stop-all
-
-# Or open the endpoints deliberately
-running-man run --allow-remote-control
-```
-
-If you thought you *were* local, check the `remote_addr` field in the response. Common
-causes:
-
-- You used the machine's LAN IP (`http://192.168.x.x:9000`) instead of `localhost`.
-- The request came from inside a Docker container, so it arrived from the bridge address.
-- A VPN or proxy rewrote the source address.
-
-`GET /` marks the restricted endpoints with `"local_only": true`, so you can check before
-calling:
+If the call fails now, it is an ordinary failure — the process name is wrong, or no process
+manager is attached:
 
 ```bash
-curl -s http://localhost:9000/ | jq '.endpoints[] | select(.local_only)'
+SOCK=.running-man/api.sock
+
+# What is actually running, and under what names
+curl -s --unix-socket "$SOCK" http://localhost/processes | jq '.processes[].name'
+
+# Restart one of them
+curl -s -X POST --unix-socket "$SOCK" http://localhost/processes/backend/restart
 ```
 
 See [api-reference.md → Network exposure](api-reference.md#network-exposure).
 
 ### API Not Responding
 
-**Problem:** `curl http://localhost:9000/health` fails.
+**Problem:** `curl --unix-socket "$SOCK" http://localhost/health` fails.
 
 **Solutions:**
 ```bash
 # Check if Running Man is running
 ps aux | grep running-man
 
-# Check port
-netstat -an | grep 9000
-
-# Try different port
-running-man run --api-port 9001
-curl http://localhost:9001/health
-
-# Check firewall
-sudo ufw status
+# Check the socket
+ls -l .running-man/api.sock
+curl -s --unix-socket .running-man/api.sock http://localhost/health
 ```
 
 ### Invalid Query Parameters
@@ -452,11 +445,11 @@ sudo ufw status
 # level: comma-separated (error,warn,info)
 
 # Correct:
-curl "http://localhost:9000/logs?since=5m&level=error,warn"
+curl --unix-socket "$SOCK" "http://localhost/logs?since=5m&level=error,warn"
 
 # Incorrect:
-curl "http://localhost:9000/logs?since=5"  # Missing unit
-curl "http://localhost:9000/logs?level=error warn"  # Space instead of comma
+curl --unix-socket "$SOCK" "http://localhost/logs?since=5"  # Missing unit
+curl --unix-socket "$SOCK" "http://localhost/logs?level=error warn"  # Space instead of comma
 ```
 
 ### No Logs in Response
@@ -467,16 +460,16 @@ curl "http://localhost:9000/logs?level=error warn"  # Space instead of comma
 ```bash
 # Check time window
 # since=0s means "since startup"
-curl "http://localhost:9000/logs?since=0s"
+curl --unix-socket "$SOCK" "http://localhost/logs?since=0s"
 
 # Check if processes are producing output
 # Some processes may buffer output
 
 # Increase limit
-curl "http://localhost:9000/logs?limit=1000"
+curl --unix-socket "$SOCK" "http://localhost/logs?limit=1000"
 
 # Check all sources
-curl "http://localhost:9000/logs?source=*"
+curl --unix-socket "$SOCK" "http://localhost/logs?source=*"
 ```
 
 ## Docker-Specific Issues
@@ -602,7 +595,7 @@ captures its own output as the `running-man` source, so its decisions are querya
 anything else:
 
 ```bash
-curl -s 'http://localhost:9000/logs?source=running-man&since=5m'
+curl -s --unix-socket "$SOCK" 'http://localhost/logs?source=running-man&since=5m'
 ```
 
 Startup prints the API address and network posture, the Compose files, profiles and
@@ -625,8 +618,8 @@ dmesg | tail -20      # Kernel messages
 
 ```bash
 # Test API without processes
-running-man run --api-port 9000 --no-tui
-curl http://localhost:9000/health
+running-man run --docker-compose ./docker-compose.yml --no-tui
+curl --unix-socket "$SOCK" http://localhost/health
 
 # Test process wrapper
 cd internal/process
@@ -641,16 +634,16 @@ go test -v
 
 ```bash
 # Health check
-curl http://localhost:9000/health
+curl --unix-socket "$SOCK" http://localhost/health
 
 # Process status
-curl http://localhost:9000/processes
+curl --unix-socket "$SOCK" http://localhost/processes
 
 # Buffer statistics
-curl http://localhost:9000/health | jq '.buffer'
+curl --unix-socket "$SOCK" http://localhost/health | jq '.buffer'
 
 # Trace statistics
-curl http://localhost:9000/health | jq '.tracing'
+curl --unix-socket "$SOCK" http://localhost/health | jq '.tracing'
 ```
 
 ## Performance Issues
@@ -734,7 +727,7 @@ cat running-man.yml
 running-man run --process "test" 2>&1
 
 # API test
-curl -v http://localhost:9000/health
+curl -v --unix-socket .running-man/api.sock http://localhost/health
 ```
 
 ### GitHub Issues
@@ -772,7 +765,7 @@ docker ps
 python -c "import opentelemetry; print('OK')"
 
 # Test API
-curl http://localhost:9000/health
+curl --unix-socket "$SOCK" http://localhost/health
 ```
 
 4. **Checking logs**:

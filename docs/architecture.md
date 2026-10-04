@@ -251,7 +251,7 @@ control restricted to loopback — see
 - Read-only tools by default
 - Destructive operations require explicit confirmation
 - Error handling for invalid process names
-- Local-only access (localhost:9000)
+- Local-only access by construction (Unix socket, mode 0600)
 
 ## File Structure
 

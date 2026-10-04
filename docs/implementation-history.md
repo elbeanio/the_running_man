@@ -4,6 +4,11 @@
 
 ---
 
+> **This page is a record of what was built and when.** Its examples show the API as it was
+> at the time, so some no longer work — notably `http://localhost:9000`, from before the
+> API moved to a Unix socket, and the MCP server, which was removed in phase 2. For how
+> things work now, see [API reference](api-reference.md).
+
 ## Project Status
 
 This is a **weekend project** for building dev observability tooling focused on AI-assisted development.

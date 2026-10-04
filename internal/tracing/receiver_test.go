@@ -647,3 +647,54 @@ func freePort(t *testing.T) int {
 	_ = ln.Close()
 	return port
 }
+
+// 4318 is the OTLP/HTTP default, so every other collector wants it too and one
+// instance per project means several receivers on one machine. An unnamed port
+// must therefore move aside rather than fail.
+func TestStartOnFreePort_MovesAsideWhenBusy(t *testing.T) {
+	blocker, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatalf("occupying a port: %v", err)
+	}
+	defer blocker.Close()
+	busy := blocker.Addr().(*net.TCPAddr).Port
+
+	r := NewReceiver(NewSpanStorage(10, time.Minute), nil, busy)
+	if err := r.StartOnFreePort(5); err != nil {
+		t.Fatalf("StartOnFreePort should have found a free port: %v", err)
+	}
+	defer r.Stop(context.Background())
+
+	if got := r.Port(); got == busy {
+		t.Errorf("bound the busy port %d", got)
+	} else if got < busy || got > busy+4 {
+		t.Errorf("port = %d, want something in %d-%d", got, busy, busy+4)
+	}
+}
+
+// Walking up forever would be worse than failing: the caller asked for a small
+// range and deserves to hear that none of it was free.
+func TestStartOnFreePort_GivesUpWithTheRange(t *testing.T) {
+	first, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatalf("occupying a port: %v", err)
+	}
+	defer first.Close()
+	busy := first.Addr().(*net.TCPAddr).Port
+
+	second, err := net.Listen("tcp", fmt.Sprintf(":%d", busy+1))
+	if err != nil {
+		t.Skipf("could not occupy the adjacent port %d: %v", busy+1, err)
+	}
+	defer second.Close()
+
+	r := NewReceiver(NewSpanStorage(10, time.Minute), nil, busy)
+	err = r.StartOnFreePort(2)
+	if err == nil {
+		r.Stop(context.Background())
+		t.Fatal("StartOnFreePort should have given up")
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("%d-%d", busy, busy+1)) {
+		t.Errorf("error should name the range tried: %v", err)
+	}
+}

@@ -26,10 +26,13 @@ package instance
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -40,6 +43,21 @@ const DirName = ".running-man"
 
 // FileName is the marker file within DirName.
 const FileName = "instance.json"
+
+// SocketName is the Unix socket within DirName that serves the API.
+//
+// The path is derived from the project directory, which is the whole point: an
+// agent working in project-b cannot reach project-a's instance by accident, and
+// there is no port to allocate, collide over or scan for.
+const SocketName = "api.sock"
+
+// socketPathLimit is a conservative ceiling on a Unix socket path.
+//
+// sun_path is a fixed-size field in the sockaddr_un struct: 104 bytes on macOS,
+// 108 on Linux. Exceed it and bind() fails with EINVAL -- reported by Go as the
+// splendidly unhelpful "bind: invalid argument". 100 leaves room under the
+// smaller of the two.
+const socketPathLimit = 100
 
 // Process describes one configured process, as a stable fact about the instance
 // rather than a live status report.
@@ -58,7 +76,17 @@ type Marker struct {
 	// learns what to do with it before parsing anything else.
 	Note string `json:"note"`
 
-	API       string    `json:"api"`
+	// Socket is the Unix socket serving the API, as a path relative to nothing
+	// -- it is absolute, so a reader in any working directory can use it.
+	Socket string `json:"socket"`
+	// OTLPEndpoint is where to export telemetry, when tracing is enabled.
+	//
+	// Recorded because the port is not fixed: it moves aside when something else
+	// holds 4318, and one instance per project means that is the ordinary case.
+	// Processes Running Man starts have it injected, but a browser or a container
+	// exporting from outside has to be told, and this is where it looks.
+	OTLPEndpoint string `json:"otlp_endpoint,omitempty"`
+
 	PID       int       `json:"pid"`
 	Started   time.Time `json:"started"`
 	Project   string    `json:"project"`
@@ -70,30 +98,50 @@ type Marker struct {
 }
 
 // New builds a marker for a live instance.
-func New(apiURL string, projectDir string, processes []Process) *Marker {
+//
+// socketPath is where the API is served. The hints are built from it rather
+// than from a port, so they stay correct and copy-pasteable: the host in the URL
+// is ignored by curl once --unix-socket is given, and "localhost" is the
+// conventional placeholder.
+func New(socketPath string, projectDir string, processes []Process) *Marker {
+	// A URL carrying a query string is single-quoted, because '&' would
+	// otherwise background the command in a shell. The whole URL is quoted, not
+	// part of it -- the point of a hint is that it can be pasted as-is.
+	curl := func(method, path string) string {
+		url := "http://localhost" + path
+		if strings.ContainsAny(path, "?&") {
+			url = "'" + url + "'"
+		}
+		if method != "" {
+			return fmt.Sprintf("curl -s -X %s --unix-socket %s %s", method, socketPath, url)
+		}
+		return fmt.Sprintf("curl -s --unix-socket %s %s", socketPath, url)
+	}
+
 	return &Marker{
 		Note: "A Running Man instance is supervising this project. Before starting a dev " +
 			"server, test runner or other long-running process, check whether it is already " +
-			"running here -- and if it is, use it instead of starting a second copy. Live " +
-			"status and listening ports are at the /processes endpoint; this file lists only " +
-			"what was configured. If the API does not respond, this file is stale and can be " +
-			"ignored.",
-		API:       apiURL,
+			"running here -- and if it is, use it instead of starting a second copy. The API " +
+			"is served on the Unix socket named below, not on a TCP port: use curl's " +
+			"--unix-socket, as the hints show. Live status and listening ports are at the " +
+			"/processes endpoint; this file lists only what was configured. If the socket " +
+			"does not respond, this file is stale and can be ignored.",
+		Socket:    socketPath,
 		PID:       os.Getpid(),
 		Started:   time.Now(),
 		Project:   projectDir,
 		Processes: processes,
 		Hints: map[string]string{
-			"is_it_running":  fmt.Sprintf("curl -s %s/processes", apiURL),
-			"is_it_alive":    fmt.Sprintf("curl -s %s/health", apiURL),
-			"recent_errors":  fmt.Sprintf("curl -s '%s/errors?since=10m&limit=50'", apiURL),
-			"search_logs":    fmt.Sprintf("curl -s '%s/logs?contains=TEXT&since=10m&limit=50'", apiURL),
-			"one_source":     fmt.Sprintf("curl -s '%s/logs?source=NAME&since=5m&limit=50'", apiURL),
-			"restart_one":    fmt.Sprintf("curl -s -X POST %s/processes/NAME/restart", apiURL),
-			"all_endpoints":  fmt.Sprintf("curl -s %s/", apiURL),
-			"api_docs":       fmt.Sprintf("%s/docs", apiURL),
-			"traces":         fmt.Sprintf("curl -s '%s/traces?since=10m'", apiURL),
-			"logs_for_trace": fmt.Sprintf("curl -s %s/traces/TRACE_ID/logs", apiURL),
+			"is_it_running":  curl("", "/processes"),
+			"is_it_alive":    curl("", "/health"),
+			"recent_errors":  curl("", "/errors?since=10m&limit=50"),
+			"search_logs":    curl("", "/logs?contains=TEXT&since=10m&limit=50"),
+			"one_source":     curl("", "/logs?source=NAME&since=5m&limit=50"),
+			"restart_one":    curl("POST", "/processes/NAME/restart"),
+			"all_endpoints":  curl("", "/"),
+			"api_spec":       curl("", "/openapi.yaml"),
+			"traces":         curl("", "/traces?since=10m"),
+			"logs_for_trace": curl("", "/traces/TRACE_ID/logs"),
 		},
 	}
 }
@@ -169,4 +217,64 @@ func Remove(projectDir string) error {
 // Path returns where the marker lives, for logging and error messages.
 func Path(projectDir string) string {
 	return filepath.Join(projectDir, DirName, FileName)
+}
+
+// SocketPath returns where the API socket lives for a project.
+//
+// Normally inside the project, beside the marker: short, stable, and writable in
+// documentation as a literal. A deeply nested project directory can push that
+// past socketPathLimit, though, and refusing to start over a long pathname would
+// be absurd -- so such a project gets a short socket under the temp directory
+// instead, keyed by a hash of its own path so it stays deterministic and still
+// cannot collide with another project's.
+//
+// Either way the marker records the result, so discovery is unaffected: a reader
+// that takes the path from .running-man/instance.json is always right.
+func SocketPath(projectDir string) string {
+	// Resolved first, because the fallback below hashes the directory *string*.
+	// Two spellings of one project -- a symlinked route, /tmp vs /private/tmp on
+	// macOS -- would otherwise hash differently and hand the same project two
+	// sockets, each instance believing it was alone. Worse, a short symlink to a
+	// deep project skips the fallback entirely and lands on the in-project path.
+	// Resolving makes the derivation depend on the directory rather than on how
+	// the caller happened to spell it.
+	//
+	// An unresolvable path (not least in tests, which pass directories that do
+	// not exist) falls through unchanged: it cannot be aliased if it is not
+	// there.
+	if resolved, err := filepath.EvalSymlinks(projectDir); err == nil {
+		projectDir = resolved
+	}
+
+	inProject := filepath.Join(projectDir, DirName, SocketName)
+	if len(inProject) <= socketPathLimit {
+		return inProject
+	}
+
+	// Hashed rather than sanitised: the point is a short name, and a hash is the
+	// only thing guaranteed to be both short and unique to this project.
+	sum := sha256.Sum256([]byte(projectDir))
+	return filepath.Join(
+		os.TempDir(),
+		fmt.Sprintf("running-man-%d", os.Getuid()),
+		hex.EncodeToString(sum[:6])+".sock",
+	)
+}
+
+// Read loads an existing marker.
+//
+// Used when refusing to start beside a live instance: the socket proves someone
+// is listening, and the marker is what can name them. A marker that is missing
+// or unparseable is not fatal to that path -- the refusal just loses the PID --
+// so callers are expected to tolerate the error.
+func Read(projectDir string) (*Marker, error) {
+	data, err := os.ReadFile(Path(projectDir))
+	if err != nil {
+		return nil, err
+	}
+	var m Marker
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", Path(projectDir), err)
+	}
+	return &m, nil
 }

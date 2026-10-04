@@ -15,6 +15,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/elbeanio/the_running_man/internal/api"
+	"github.com/elbeanio/the_running_man/internal/instance"
 	"github.com/elbeanio/the_running_man/internal/process"
 )
 
@@ -155,7 +157,7 @@ func (m model) isTraceView() bool {
 
 func fetchTraces(apiURL string) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := http.Get(apiURL + "/traces")
+		resp, err := apiClient.Get(apiURL + "/traces")
 		if err != nil {
 			return errMsg{err}
 		}
@@ -257,7 +259,7 @@ func fetchTraces(apiURL string) tea.Cmd {
 
 func fetchTraceSpans(apiURL, traceID string) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := http.Get(fmt.Sprintf("%s/traces?trace_id=%s", apiURL, traceID))
+		resp, err := apiClient.Get(fmt.Sprintf("%s/traces?trace_id=%s", apiURL, traceID))
 		if err != nil {
 			return errMsg{err}
 		}
@@ -316,7 +318,7 @@ func fetchTraceSpans(apiURL, traceID string) tea.Cmd {
 
 func fetchTraceLogs(apiURL, traceID string) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := http.Get(fmt.Sprintf("%s/traces/%s/logs", apiURL, traceID))
+		resp, err := apiClient.Get(fmt.Sprintf("%s/traces/%s/logs", apiURL, traceID))
 		if err != nil {
 			return errMsg{err}
 		}
@@ -1394,7 +1396,7 @@ func highlightMatchesWithCurrent(line, query string, lineMatchOffset, currentMat
 // Commands
 func fetchSources(apiURL string) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := http.Get(apiURL + "/health")
+		resp, err := apiClient.Get(apiURL + "/health")
 		if err != nil {
 			return errMsg{err}
 		}
@@ -1424,7 +1426,7 @@ func fetchSources(apiURL string) tea.Cmd {
 func fetchLogs(apiURL, source string) tea.Cmd {
 	return func() tea.Msg {
 		url := fmt.Sprintf("%s/logs?source=%s", apiURL, source)
-		resp, err := http.Get(url)
+		resp, err := apiClient.Get(url)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -1841,16 +1843,48 @@ func TuiCommand(args []string) {
 	TuiCommandWithManager(args, nil)
 }
 
+// apiClient reaches the instance's API over its Unix socket.
+//
+// Package-level because there is exactly one TUI per process, and the fetch
+// commands are closures built deep in the update loop -- threading a client
+// through every tea.Cmd would be noise for no gain.
+var apiClient = http.DefaultClient
+
+// apiBaseURL is a placeholder host. The socket dialler ignores it; curl's
+// --unix-socket behaves the same way.
+const apiBaseURL = "http://localhost"
+
 func TuiCommandWithManager(args []string, manager *process.Manager) {
 	// Parse flags
 	fs := flag.NewFlagSet("tui", flag.ExitOnError)
-	apiPort := fs.Int("api-port", defaultAPIPort, "API server port")
+	socketPath := fs.String("socket", "",
+		"Path to the instance's API socket (default: "+instance.DirName+"/"+instance.SocketName+" here)")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
 		os.Exit(1)
 	}
 
-	apiURL := fmt.Sprintf("http://localhost:%d", *apiPort)
+	// Default to this project's socket, which is the only one a TUI launched
+	// here should be looking at.
+	if *socketPath == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Could not determine working directory: %v\n", err)
+			os.Exit(1)
+		}
+		// instance.SocketPath resolves the path itself, so a symlinked route to
+		// the project finds the same socket `running-man run` created.
+		*socketPath = instance.SocketPath(cwd)
+	}
+
+	if _, err := os.Stat(*socketPath); err != nil {
+		fmt.Fprintf(os.Stderr, "No Running Man instance is serving %s\n", *socketPath)
+		fmt.Fprintf(os.Stderr, "Start one with `running-man run`, or pass --socket PATH.\n")
+		os.Exit(1)
+	}
+
+	apiClient = api.NewSocketClient(*socketPath)
+	apiURL := apiBaseURL
 
 	// Create and run the TUI
 	p := tea.NewProgram(initialModel(apiURL, manager), tea.WithAltScreen())

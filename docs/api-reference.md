@@ -6,18 +6,41 @@
 
 ## Overview
 
-The Running Man exposes a REST API on `http://localhost:9000` (configurable via `--api-port` or `api_port` in config). All endpoints return JSON responses.
+The Running Man exposes a REST API on a **Unix socket**, not a TCP port. All endpoints
+return JSON responses.
 
 ## Base URL
 
+The socket lives in the project directory:
+
 ```
-http://localhost:9000
+.running-man/api.sock
 ```
 
-Or if you've configured a different port:
+`curl` reaches it with `--unix-socket`. The host in the URL is ignored, so `localhost` is
+just a convention:
+
+```bash
+SOCK=.running-man/api.sock
+curl -s --unix-socket "$SOCK" http://localhost/health
 ```
-http://localhost:<your-port>
+
+Every example below assumes `$SOCK` is set that way.
+
+A Unix socket path has a hard length limit (`sun_path`: 104 bytes on macOS, 108 on Linux),
+so a deeply nested project gets a short socket under the temp directory instead. The
+`socket` field of `.running-man/instance.json` is always authoritative:
+
+```bash
+SOCK=$(sed -n 's/.*"socket": "\(.*\)",*/\1/p' .running-man/instance.json)
 ```
+
+**Why a socket and not a port.** One instance per project, and a port gives an agent no way
+to find *its* project's instance: `:9000` may answer from a different project entirely, and
+the only fallback is scanning. A path derived from the project directory removes the
+question — there is nothing to allocate, nothing to collide over, and an agent in one
+project cannot read another's logs. It also replaces the access-control problem: the socket
+is mode 0600, so reaching it means being this user on this machine.
 
 ---
 
@@ -44,13 +67,13 @@ never implemented.
 
 **Example:**
 ```bash
-curl "http://localhost:9000/logs?since=30s&level=error&source=backend"
+curl --unix-socket "$SOCK" "http://localhost/logs?since=30s&level=error&source=backend"
 
 # The 20 most recent entries
-curl "http://localhost:9000/logs?limit=20"
+curl --unix-socket "$SOCK" "http://localhost/logs?limit=20"
 
 # Everything in the buffer, deliberately
-curl "http://localhost:9000/logs?limit=0"
+curl --unix-socket "$SOCK" "http://localhost/logs?limit=0"
 ```
 
 **Response:**
@@ -86,7 +109,7 @@ Recent error entries (convenience endpoint, equivalent to `/logs?level=error`).
 
 **Example:**
 ```bash
-curl "http://localhost:9000/errors?since=1h&context=5"
+curl --unix-socket "$SOCK" "http://localhost/errors?since=1h&context=5"
 ```
 
 **Response:** Same format as `/logs`
@@ -101,7 +124,7 @@ System status and buffer statistics.
 
 **Example:**
 ```bash
-curl "http://localhost:9000/health"
+curl --unix-socket "$SOCK" "http://localhost/health"
 ```
 
 **Response:**
@@ -144,7 +167,7 @@ Status of managed processes.
 
 **Example:**
 ```bash
-curl "http://localhost:9000/processes"
+curl --unix-socket "$SOCK" "http://localhost/processes"
 ```
 
 **Response:**
@@ -182,9 +205,9 @@ Query distributed traces (OTEL spans).
 
 **Example:**
 ```bash
-curl "http://localhost:9000/traces?since=10m&status=error"
-curl "http://localhost:9000/traces?service_name=database&limit=20"
-curl "http://localhost:9000/traces?span_name=http.request&since=5m"
+curl --unix-socket "$SOCK" "http://localhost/traces?since=10m&status=error"
+curl --unix-socket "$SOCK" "http://localhost/traces?service_name=database&limit=20"
+curl --unix-socket "$SOCK" "http://localhost/traces?span_name=http.request&since=5m"
 ```
 
 **Response:**
@@ -217,7 +240,7 @@ Get detailed information about a specific trace including all spans.
 
 **Example:**
 ```bash
-curl "http://localhost:9000/traces/abc123def456"
+curl --unix-socket "$SOCK" "http://localhost/traces/abc123def456"
 ```
 
 **Response:**
@@ -291,89 +314,76 @@ All endpoints return standard HTTP error codes:
 
 ## Network exposure
 
-**There is no authentication.** No credentials, no tokens, no sessions. Access control is
-by network location only, described below. There is no rate limiting either — this is a
-local development tool.
+**The query API is not on the network.** It is served on a Unix socket at
+`.running-man/api.sock` (mode 0600), so there is no port, no bind address and no caller-IP
+check. Reaching it requires permission to open a file in the project directory, which is
+the same thing as being this user on this machine. There is no authentication because the
+filesystem already is the authentication.
 
-CORS uses a wildcard origin (`Access-Control-Allow-Origin: *`) on both the API and the OTLP
-receiver, because browser-based OTLP export depends on it.
+This replaced a TCP listener on all interfaces with no authentication at all. It also
+removed the loopback guard on `POST /processes/{name}/restart` and `POST /processes/stop-all`
+— those used to return 403 to non-loopback callers, and the flags `--listen` and
+`--allow-remote-control` that configured it are gone.
 
-Running Man binds **all interfaces** (`0.0.0.0`) by default, on both the API port (9000)
-and the OTLP receiver port (4318). This is deliberate: Docker containers exporting to
-`host.docker.internal`, browsers exporting telemetry, and other devices on the network all
-need to reach it, and none of them can use a loopback-only listener.
+### The OTLP receiver is still on TCP
 
-What that means in practice:
+It has to be: containers exporting to `host.docker.internal`, browsers exporting telemetry
+and other devices all need a real port, and none of them can use a Unix socket.
 
 | | Reachable from | Notes |
 |---|---|---|
-| All `GET` endpoints | anywhere on the network | No authentication |
+| Everything on `.running-man/api.sock` | this machine, this user | Mode 0600 |
 | `POST /v1/traces`, `POST /v1/logs` (:4318) | anywhere on the network | Accepts data into the buffer |
-| `POST /processes/{name}/restart` | **this machine only** | 403 otherwise |
-| `POST /processes/stop-all` | **this machine only** | 403 otherwise |
 
-### Read this if you run it on a shared network
-
-- **Captured logs are readable by anyone who can reach port 9000.** Dev servers routinely
-  print API keys, tokens, connection strings and request bodies. Those end up in the
-  buffer and are served without authentication.
-- **Anyone who can reach port 4318 can write into the buffer.** `/v1/logs` accepts log
+- **Anyone who can reach the OTLP port can write into the buffer.** `/v1/logs` accepts log
   records and takes both the source name and the timestamp from the sender, so an entry
   attributed to `backend` is *not* evidence that it came from `backend`. Treat OTLP-sourced
   entries (source type `otlp`) as unauthenticated input.
-- **Process control is the exception.** `restart` and `stop-all` are refused unless the
-  request comes from loopback (`127.0.0.0/8` or `::1`), because nothing legitimate needs to
-  stop another machine's dev processes.
+- **The receiver serves nothing.** It is an ingest endpoint; queries are socket-only.
+- CORS uses a wildcard origin (`Access-Control-Allow-Origin: *`) on the receiver, because
+  browser-based OTLP export depends on it. The query API no longer sets CORS headers at
+  all — a browser cannot reach a Unix socket.
 
-### Changing the defaults
+### The OTLP port is not fixed
+
+4318 is the OTLP/HTTP default, so every other collector wants it too — Arize Phoenix, the
+OTel Collector, Jaeger, Grafana Alloy, SigNoz — and one Running Man instance per project
+means several receivers on one machine. So the receiver takes 4318 or the next free port
+above it.
+
+Processes Running Man starts have the chosen endpoint injected, so they follow it without
+being told. Anything exporting from outside does not, and should read the port from:
 
 ```bash
-# Restrict everything to this machine
-running-man run --listen 127.0.0.1
-
-# Allow process control from anywhere (think before using this)
-running-man run --allow-remote-control
+SOCK=.running-man/api.sock
+curl -s --unix-socket "$SOCK" http://localhost/health | jq -r .otlp_endpoint
 ```
 
-### 403 from a state-changing endpoint
+or from the `otlp_endpoint` field of `.running-man/instance.json`.
 
-The refusal explains itself and names the address it saw:
-
-```json
-{
-  "error": "process control is restricted to local requests",
-  "detail": "POST /processes/stop-all changes process state, so it is only served to loopback callers. This request arrived from 192.168.1.42.",
-  "remote_addr": "192.168.1.42",
-  "allow": "Call it from the machine running running-man, or restart running-man with --allow-remote-control.",
-  "docs": "/docs"
-}
-```
-
-If you believe you *are* local, check `remote_addr`. The usual causes are a Docker bridge
-address, a VPN, or connecting to the machine's LAN IP rather than `localhost`.
-`GET /` marks these endpoints with `"local_only": true`.
-
----
-
+**Naming the port turns the conflict back into an error.** `--tracing-port` or
+`tracing.port` in config means someone chose that port, and quietly using a different one
+is the silent substitution this behaviour exists to avoid — so a conflict on a named port
+fails at startup instead.
 ## Examples
 
 ### Complete Debugging Workflow
 
 ```bash
 # 1. Check system health
-curl "http://localhost:9000/health"
+curl --unix-socket "$SOCK" "http://localhost/health"
 
 # 2. Look for recent errors
-curl "http://localhost:9000/errors?since=5m"
+curl --unix-socket "$SOCK" "http://localhost/errors?since=5m"
 
 # 3. If trace_id found in errors, investigate trace
-curl "http://localhost:9000/traces/abc123def456"
+curl --unix-socket "$SOCK" "http://localhost/traces/abc123def456"
 
 # 4. Check process status
-curl "http://localhost:9000/processes"
+curl --unix-socket "$SOCK" "http://localhost/processes"
 
 # 5. Search for related logs
-curl "http://localhost:9000/logs?since=10m&contains=database&source=backend"
+curl --unix-socket "$SOCK" "http://localhost/logs?since=10m&contains=database&source=backend"
 ```
 
 ### Using with Scripts
@@ -383,11 +393,11 @@ curl "http://localhost:9000/logs?since=10m&contains=database&source=backend"
 
 # Monitor for errors
 while true; do
-  ERROR_COUNT=$(curl -s "http://localhost:9000/errors?since=1m" | jq '.count')
+  ERROR_COUNT=$(curl -s --unix-socket "$SOCK" "http://localhost/errors?since=1m" | jq '.count')
   
   if [ "$ERROR_COUNT" -gt 0 ]; then
     echo "Found $ERROR_COUNT error(s) in the last minute"
-    curl -s "http://localhost:9000/errors?since=1m" | jq '.logs[] | .message'
+    curl -s --unix-socket "$SOCK" "http://localhost/errors?since=1m" | jq '.errors[] | .message'
   fi
   
   sleep 60
@@ -397,37 +407,63 @@ done
 ### Python Integration
 
 ```python
-import requests
+import http.client
 import json
+import socket
+
 
 class RunningManClient:
-    def __init__(self, base_url="http://localhost:9000"):
-        self.base_url = base_url
-    
+    """Talks to a Running Man instance over its Unix socket.
+
+    http.client is used directly because requests has no Unix-socket support.
+    httpx does (``httpx.HTTPTransport(uds=path)``) if you would rather have it.
+    """
+
+    def __init__(self, socket_path=".running-man/api.sock"):
+        self.socket_path = socket_path
+
+    def _get(self, path, params=None):
+        if params:
+            from urllib.parse import urlencode
+            path = f"{path}?{urlencode(params)}"
+
+        conn = http.client.HTTPConnection("localhost")
+        conn.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        conn.sock.connect(self.socket_path)
+        try:
+            conn.request("GET", path)
+            response = conn.getresponse()
+            if response.status >= 400:
+                raise RuntimeError(f"{path} returned {response.status}")
+            return json.load(response)
+        finally:
+            conn.close()
+
+    def health(self):
+        return self._get("/health")
+
     def get_errors(self, since="5m"):
-        response = requests.get(f"{self.base_url}/errors", params={"since": since})
-        response.raise_for_status()
-        return response.json()
-    
+        return self._get("/errors", {"since": since})
+
     def get_trace(self, trace_id):
-        response = requests.get(f"{self.base_url}/traces/{trace_id}")
-        response.raise_for_status()
-        return response.json()
-    
+        return self._get(f"/traces/{trace_id}")
+
     def search_logs(self, **filters):
-        response = requests.get(f"{self.base_url}/logs", params=filters)
-        response.raise_for_status()
-        return response.json()
+        return self._get("/logs", filters)
+
 
 # Usage
 client = RunningManClient()
+
+# Confirm which instance answered before trusting anything it says.
+print(client.health()["project"])
+
 errors = client.get_errors(since="10m")
-if errors["count"] > 0:
-    for error in errors["logs"]:
-        print(f"Error: {error['message']}")
-        if error.get("trace_id"):
-            trace = client.get_trace(error["trace_id"])
-            print(f"Trace duration: {trace['duration_ms']}ms")
+for error in errors["errors"]:
+    print(f"Error: {error['message']}")
+    if error.get("trace_id"):
+        spans = client.get_trace(error["trace_id"])
+        print(f"  {spans['count']} span(s) in that trace")
 ```
 
 ---

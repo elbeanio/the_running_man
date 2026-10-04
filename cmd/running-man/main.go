@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"syscall"
@@ -24,7 +26,6 @@ import (
 )
 
 const (
-	defaultAPIPort    = 9000
 	defaultRetention  = 30 * time.Minute
 	defaultMaxEntries = 10000
 	defaultMaxBytes   = 50 * 1024 * 1024 // 50MB
@@ -142,6 +143,12 @@ func main() {
 // keepAliveMode decides what happens in headless mode once every process has
 // exited.
 const (
+	// tracingPortSearchRange is how many consecutive ports to try for the OTLP
+	// receiver before giving up. Enough for every instance on one machine;
+	// small enough that an unbindable range reports a failure rather than
+	// grinding through thousands of ports.
+	tracingPortSearchRange = 20
+
 	keepAliveAuto   = "auto"
 	keepAliveAlways = "always"
 	keepAliveNever  = "never"
@@ -189,30 +196,58 @@ func waitForInterrupt() {
 	<-sigChan
 }
 
-// networkPostureNote summarises who can reach the API, for the startup banner.
-// This is the one moment the user is guaranteed to be looking, and "reachable
-// from the network" is worth knowing before logs start flowing through it.
-func networkPostureNote(listenAddr string, allowRemoteControl bool) string {
-	if ip := net.ParseIP(listenAddr); ip != nil && ip.IsLoopback() {
-		return " (this machine only)"
+// startTracingReceiver binds the OTLP receiver, moving aside from a busy port
+// unless the port was named.
+//
+// The three outcomes, which are deliberately different:
+//
+//	port named, taken      fatal. Someone chose that port; using another one
+//	                       silently is the substitution this guards against
+//	port unnamed, taken    move up until something binds. 4318 is the OTLP/HTTP
+//	                       default, so every collector wants it and one instance
+//	                       per project means several receivers per machine
+//	tracing unrequested,   warn and continue without tracing, rather than
+//	nothing binds          blocking the whole tool over a feature nobody asked
+//	                       for
+//
+// A nil return means the receiver is listening; an error means the caller should
+// carry on with tracing disabled.
+func startTracingReceiver(r *tracing.Receiver, port int, portNamed, requested bool) error {
+	var err error
+	if portNamed {
+		err = r.Start()
+	} else {
+		err = r.StartOnFreePort(tracingPortSearchRange)
 	}
-	if allowRemoteControl {
-		return " (reachable on all interfaces; process control OPEN to remote callers)"
+	if err == nil {
+		return nil
 	}
-	return " (reachable on all interfaces; process control local-only)"
+
+	fmt.Fprintf(os.Stderr, "\n[running-man] Could not start the OTLP receiver: %v\n", err)
+	if portNamed {
+		fmt.Fprintf(os.Stderr, "[running-man] Port %d was requested explicitly, so it was not "+
+			"moved. Something else is probably on it -- Arize Phoenix, the OTel Collector and "+
+			"Jaeger all default to 4318.\n", port)
+	}
+	fmt.Fprintf(os.Stderr, "[running-man]   running-man run --tracing-port PORT   use a different port\n")
+	fmt.Fprintf(os.Stderr, "[running-man]   running-man run --tracing=false        silence this\n")
+
+	if requested {
+		// Tracing was asked for. Carrying on without it would be the silent
+		// failure this replaced.
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stderr, "[running-man] Continuing without tracing (it was not explicitly enabled).\n\n")
+	return err
 }
 
 func runCommand(args []string) {
 	// Setup flags
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	configPath := fs.String("config", "", "Path to running-man.yml config file")
-	apiPort := fs.Int("api-port", 0, "API server port (overrides config file)")
 	dockerCompose := fs.String("docker-compose", "", "Path to docker-compose.yml file (overrides config file)")
 	noTUI := fs.Bool("no-tui", false, "Disable TUI and run in headless mode")
-	listenAddr := fs.String("listen", api.DefaultListenAddr,
-		"Address to bind the API to (use 127.0.0.1 to restrict to this machine)")
-	allowRemoteControl := fs.Bool("allow-remote-control", false,
-		"Serve process restart/stop endpoints to remote callers (default: loopback only)")
 	composeProfiles := &stringListFlag{}
 	fs.Var(composeProfiles, "compose-profile",
 		"Active Docker Compose profile (repeatable; overrides config)")
@@ -274,15 +309,6 @@ func runCommand(args []string) {
 	finalDockerCompose := finalCompose.PrimaryFile()
 
 	// Use config API port if not provided via CLI
-	finalAPIPort := *apiPort
-	if finalAPIPort == 0 {
-		if cfg != nil {
-			finalAPIPort = cfg.GetAPIPort()
-		} else {
-			finalAPIPort = defaultAPIPort
-		}
-	}
-
 	// Get retention, buffer, and shell settings from config (no CLI flags for these yet)
 	finalRetention := defaultRetention
 	finalMaxEntries := defaultMaxEntries
@@ -303,9 +329,17 @@ func runCommand(args []string) {
 	// block the whole tool over a feature nobody requested, which is how
 	// Running Man behaves alongside any other collector on 4318.
 	tracingRequested := false
+	// Separately: was the *port* named? An unnamed port may move aside when it
+	// is taken, because one instance per project means several receivers on one
+	// machine. A named one may not -- quietly using a different port than the
+	// one asked for is the silent substitution this guards against.
+	tracingPortNamed := false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "tracing" || f.Name == "tracing-port" {
 			tracingRequested = true
+		}
+		if f.Name == "tracing-port" {
+			tracingPortNamed = true
 		}
 	})
 	if cfg != nil && cfg.Tracing.Enabled != nil {
@@ -313,6 +347,7 @@ func runCommand(args []string) {
 	}
 	if cfg != nil && cfg.Tracing.Port != 0 {
 		tracingRequested = true
+		tracingPortNamed = true
 	}
 
 	// Get tracing configuration
@@ -397,6 +432,23 @@ func runCommand(args []string) {
 		os.Exit(1)
 	}
 
+	// The project directory is resolved before anything binds, because the socket
+	// path derives from it and the socket is what proves whether this project
+	// already has an instance.
+	projectDir, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[running-man] Could not determine working directory: %v\n", err)
+		projectDir = "."
+	}
+	// Canonical, so that two spellings of one project -- a symlinked route, or
+	// /tmp vs /private/tmp on macOS -- agree about which project this is. The
+	// socket derivation resolves independently; this keeps the marker and
+	// /health reporting the same directory it used.
+	if resolved, resolveErr := filepath.EvalSymlinks(projectDir); resolveErr == nil {
+		projectDir = resolved
+	}
+	socketPath := instance.SocketPath(projectDir)
+
 	fmt.Println("The Running Man - Dev Observability Tool")
 
 	// Show running processes
@@ -404,7 +456,7 @@ func runCommand(args []string) {
 		fmt.Printf("Running [%s]: %s %v\n", proc.Name, proc.Command, proc.Args)
 	}
 
-	fmt.Printf("API: http://localhost:%d%s\n\n", finalAPIPort, networkPostureNote(*listenAddr, *allowRemoteControl))
+	fmt.Printf("API: %s\n\n", socketPath)
 
 	// Create ring buffer
 	buffer := storage.NewRingBuffer(finalMaxEntries, finalRetention, finalMaxBytes)
@@ -413,9 +465,20 @@ func runCommand(args []string) {
 	var tracingReceiver *tracing.Receiver
 	var spanStorage *tracing.SpanStorage
 	if finalTracingEnabled {
-		fmt.Printf("Tracing: OTLP receiver on http://localhost:%d\n", finalTracingPort)
 		spanStorage = tracing.NewSpanStorage(finalMaxSpans, finalMaxSpanAge)
 		tracingReceiver = tracing.NewReceiver(spanStorage, buffer, finalTracingPort)
+
+		// Bound here, before the process manager is built, because the port that
+		// is actually bound gets injected into every process Running Man starts.
+		// Settling it later would inject a port nothing is listening on.
+		if err := startTracingReceiver(tracingReceiver, finalTracingPort, tracingPortNamed, tracingRequested); err != nil {
+			tracingReceiver = nil
+			spanStorage = nil
+			finalTracingEnabled = false
+		} else {
+			finalTracingPort = tracingReceiver.Port()
+			fmt.Printf("Tracing: OTLP receiver on http://localhost:%d\n", finalTracingPort)
+		}
 	}
 
 	// Create parser
@@ -584,39 +647,40 @@ func runCommand(args []string) {
 	if spanStorage != nil {
 		traceStorage = spanStorage
 	}
-	apiServer := api.NewServer(buffer, finalAPIPort, systemLineHandler, manager, traceStorage)
-	apiServer.SetListenAddr(*listenAddr)
-	apiServer.SetAllowRemoteControl(*allowRemoteControl)
+	apiServer := api.NewServer(buffer, projectDir, systemLineHandler, manager, traceStorage)
+	if finalTracingEnabled {
+		apiServer.SetOTLPEndpoint(fmt.Sprintf("http://localhost:%d", finalTracingPort))
+	}
+
+	// Bind before starting anything else. The previous version served in a
+	// goroutine and only printed a bind failure to stderr, where the TUI hid
+	// it -- so a second instance came up with no API and carried on as though
+	// it had one, while agents reading the marker talked to the first.
+	//
+	// This happens before manager.Start(), so a refused instance has not
+	// spawned a duplicate of anybody's dev server.
+	apiListener, err := api.Listen(socketPath)
+	if err != nil {
+		if errors.Is(err, api.ErrInstanceLive) {
+			fmt.Fprintf(os.Stderr, "\n[running-man] This project already has a Running Man instance.\n")
+			fmt.Fprintf(os.Stderr, "[running-man]   socket: %s\n", socketPath)
+			if m, readErr := instance.Read(projectDir); readErr == nil {
+				fmt.Fprintf(os.Stderr, "[running-man]   owner:  PID %d, started %s\n",
+					m.PID, m.Started.Format(time.RFC3339))
+			}
+			fmt.Fprintf(os.Stderr, "[running-man] Use it instead of starting a second copy:\n")
+			fmt.Fprintf(os.Stderr, "[running-man]   curl -s --unix-socket %s http://localhost/processes\n", socketPath)
+			fmt.Fprintf(os.Stderr, "[running-man] Or quit the other instance first.\n")
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "\n[running-man] Could not serve the API on %s: %v\n", socketPath, err)
+		os.Exit(1)
+	}
 	go func() {
-		if err := apiServer.Start(); err != nil {
+		if err := apiServer.Serve(apiListener); err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] API server error: %v\n", err)
 		}
 	}()
-
-	// Start tracing receiver and wait for it to be ready if enabled
-	if tracingReceiver != nil {
-		if err := tracingReceiver.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "\n[running-man] Could not start the OTLP receiver: %v\n", err)
-			fmt.Fprintf(os.Stderr, "[running-man] Something else is probably already on port %d. "+
-				"Other OTLP collectors default to it too -- Arize Phoenix, the OTel Collector, Jaeger.\n",
-				finalTracingPort)
-			fmt.Fprintf(os.Stderr, "[running-man]   running-man run --tracing-port PORT   use a different port\n")
-			fmt.Fprintf(os.Stderr, "[running-man]   running-man run --tracing=false        silence this\n")
-
-			if tracingRequested {
-				// Tracing was asked for. Carrying on without it would be the
-				// silent failure this replaced.
-				os.Exit(1)
-			}
-
-			// Tracing is on only because the default is on. Continue without
-			// it rather than blocking startup over an unrequested feature.
-			fmt.Fprintf(os.Stderr, "[running-man] Continuing without tracing (it was not explicitly enabled).\n\n")
-			tracingReceiver = nil
-			spanStorage = nil
-			finalTracingEnabled = false
-		}
-	}
 
 	if tracingReceiver != nil {
 
@@ -644,17 +708,14 @@ func runCommand(args []string) {
 	//
 	// Written after the processes start so it is never present without an
 	// instance behind it, and removed on every shutdown path below.
-	projectDir, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[running-man] Could not determine working directory: %v\n", err)
-		projectDir = "."
-	}
-
 	marker := instance.New(
-		fmt.Sprintf("http://localhost:%d", finalAPIPort),
+		socketPath,
 		projectDir,
 		markerProcesses(processes),
 	)
+	if finalTracingEnabled {
+		marker.OTLPEndpoint = fmt.Sprintf("http://localhost:%d", finalTracingPort)
+	}
 	if err := marker.Write(projectDir); err != nil {
 		// Not fatal: the marker is a discovery aid, and losing it must not stop
 		// the tool doing its actual job.
@@ -663,10 +724,19 @@ func runCommand(args []string) {
 		fmt.Printf("[running-man] Instance marker: %s\n", instance.Path(projectDir))
 	}
 
-	// Remove the marker however we leave: normal return, os.Exit paths below,
-	// and signals. A marker outliving its instance points an agent at a dead
-	// API, which is worse than no marker at all.
+	// Clean up however we leave: normal return, os.Exit paths below, and
+	// signals. A marker outliving its instance points an agent at a dead API,
+	// which is worse than no marker at all.
+	//
+	// The listener is closed first because Go unlinks a Unix socket when its
+	// listener closes, and instance.Remove cannot delete the directory while
+	// the socket is still sitting in it. Leaving a dead socket behind is not
+	// fatal -- the next instance takes it over -- but it makes a stale instance
+	// look live to anything that only checks whether the path exists.
 	removeMarker := func() {
+		if err := apiListener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			fmt.Fprintf(os.Stderr, "[running-man] Could not close the API socket: %v\n", err)
+		}
 		if err := instance.Remove(projectDir); err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] Could not remove instance marker: %v\n", err)
 		}
@@ -686,7 +756,7 @@ func runCommand(args []string) {
 	// Launch TUI or run in headless mode (don't wait for processes to finish first)
 	if *noTUI {
 		// Headless mode - print info and wait for processes
-		fmt.Printf("[running-man] API available at http://localhost:%d\n", finalAPIPort)
+		fmt.Printf("[running-man] API on %s\n", socketPath)
 		fmt.Printf("[running-man] Running in headless mode (--no-tui)\n")
 		fmt.Printf("[running-man] Press Ctrl+C to exit\n")
 
@@ -754,8 +824,8 @@ func runCommand(args []string) {
 		// someone wants. Gated so CI is not left hanging -- see shouldKeepAlive.
 		if failed && shouldKeepAlive(*keepAlive) {
 			fmt.Printf("\n[running-man] Processes have exited, but their logs are still available:\n")
-			fmt.Printf("[running-man]   http://localhost:%d/logs\n", finalAPIPort)
-			fmt.Printf("[running-man]   http://localhost:%d/errors\n", finalAPIPort)
+			fmt.Printf("[running-man]   curl -s --unix-socket %s http://localhost/logs\n", socketPath)
+			fmt.Printf("[running-man]   curl -s --unix-socket %s http://localhost/errors\n", socketPath)
 			fmt.Printf("[running-man] Press Ctrl+C to quit (--keep-alive=never to exit immediately).\n")
 			waitForInterrupt()
 			fmt.Printf("\n[running-man] Exiting.\n")
@@ -773,11 +843,11 @@ func runCommand(args []string) {
 	} else {
 		// TUI mode - launch interactive viewer immediately
 		fmt.Printf("[running-man] Starting TUI viewer...\n")
-		fmt.Printf("[running-man] API available at http://localhost:%d\n", finalAPIPort)
+		fmt.Printf("[running-man] API on %s\n", socketPath)
 		time.Sleep(200 * time.Millisecond) // Give API a moment to stabilize
 
 		// Run TUI with manager reference so it can stop processes on quit
-		TuiCommandWithManager([]string{fmt.Sprintf("--api-port=%d", finalAPIPort)}, manager)
+		TuiCommandWithManager([]string{"--socket=" + socketPath}, manager)
 
 		// TUI exited (user pressed 'q') - stop processes and clean up
 		fmt.Printf("\n[running-man] Shutting down processes...\n")
@@ -829,7 +899,7 @@ Usage:
   running-man run [--config PATH] [flags]
   running-man run --process "command" [--process "command" ...] [flags]
   running-man run --docker-compose PATH [--process "command" ...] [flags]
-  running-man tui [--api-port PORT]
+  running-man tui [--socket PATH]
   running-man version
   running-man help
 
@@ -845,11 +915,10 @@ Flags:
                            How long to wait for containers after starting the stack
                            (default: 30s; raise it for a stack that migrates a
                            database or starts services in sequence)
-  --api-port PORT          API server port (default: 9000, overrides config)
-  --listen ADDR            Address to bind the API to (default: 0.0.0.0, all
-                           interfaces). Use 127.0.0.1 to restrict to this machine.
-  --allow-remote-control   Serve process restart/stop endpoints to remote callers.
-                           By default they are loopback-only and return 403.
+  --tracing                Enable OTLP trace ingestion (default: true)
+  --tracing-port PORT      OTLP HTTP receiver port. Without this, the receiver
+                           takes 4318 or the next free port above it; with it,
+                           a conflict is a startup failure.
   --no-tui                 Disable TUI and run in headless mode
   --keep-alive MODE        After a process fails in headless mode, keep serving its
                            logs: auto|always|never (default: auto, which keeps them
@@ -871,13 +940,16 @@ Examples:
   # Headless mode for CI/automation (no TUI)
   running-man run --process "go run main.go" --no-tui
 
-  # Connect TUI to existing running instance
-  running-man tui --api-port 9000
+  # Connect the TUI to the instance running in this directory
+  running-man tui
 
-  # Query logs via API while TUI is running (separate terminal)
-  curl http://localhost:9000/logs?since=30s
-  curl http://localhost:9000/errors
-  curl http://localhost:9000/health
+  # Query the API while the TUI is running (separate terminal). The API is on a
+  # Unix socket in the project, not a TCP port -- .running-man/instance.json
+  # records the exact path.
+  SOCK=.running-man/api.sock
+  curl -s --unix-socket $SOCK 'http://localhost/logs?since=30s'
+  curl -s --unix-socket $SOCK http://localhost/errors
+  curl -s --unix-socket $SOCK http://localhost/health
 
 For more information, visit: github.com/elbeanio/the_running_man
 `)

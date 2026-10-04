@@ -19,7 +19,9 @@ reasoning.
 Before starting a dev server, check whether one is already running:
 
 ```bash
-curl -s http://localhost:9000/processes
+# Take the socket path from the marker rather than assuming it
+SOCK=$(sed -n 's/.*"socket": "\(.*\)",*/\1/p' .running-man/instance.json)
+curl -s --unix-socket "$SOCK" http://localhost/processes
 ```
 
 If Running Man is already supervising the process you were about to start, use it — the
@@ -31,14 +33,14 @@ see together.
 
 ### Quick Start
 ```bash
-# Interactive API documentation
-open http://localhost:9000/docs
+# The full OpenAPI specification
+curl -s --unix-socket "$SOCK" http://localhost/openapi.yaml
 
 # List all available endpoints
-curl http://localhost:9000/
+curl --unix-socket "$SOCK" http://localhost/
 
 # System health and buffer stats
-curl http://localhost:9000/health
+curl --unix-socket "$SOCK" http://localhost/health
 ```
 
 ### Common Debugging Patterns
@@ -46,37 +48,37 @@ curl http://localhost:9000/health
 #### 1. Error Investigation
 ```bash
 # Recent errors with context
-curl "http://localhost:9000/errors?since=10m"
+curl --unix-socket "$SOCK" "http://localhost/errors?since=10m"
 
 # Search for specific error patterns
-curl "http://localhost:9000/logs?contains='connection failed'&since=15m"
+curl --unix-socket "$SOCK" "http://localhost/logs?contains='connection failed'&since=15m"
 ```
 
 #### 2. Cross-Source Search
 ```bash
 # Search across all backend services
-curl "http://localhost:9000/logs?source=app-*&since=5m"
+curl --unix-socket "$SOCK" "http://localhost/logs?source=app-*&since=5m"
 
 # Compare multiple services
-curl "http://localhost:9000/logs?source=api,worker,database&since=2m"
+curl --unix-socket "$SOCK" "http://localhost/logs?source=api,worker,database&since=2m"
 ```
 
 #### 3. Trace-Log Correlation
 ```bash
 # Find traces with errors
-curl "http://localhost:9000/traces?status=error&since=5m"
+curl --unix-socket "$SOCK" "http://localhost/traces?status=error&since=5m"
 
 # Get all logs for a specific trace
-curl "http://localhost:9000/traces/{trace_id}/logs"
+curl --unix-socket "$SOCK" "http://localhost/traces/{trace_id}/logs"
 ```
 
 #### 4. Process Management
 ```bash
 # Check all processes
-curl http://localhost:9000/processes
+curl --unix-socket "$SOCK" http://localhost/processes
 
 # Restart a failing process
-curl -X POST http://localhost:9000/processes/{name}/restart
+curl -X POST --unix-socket "$SOCK" http://localhost/processes/{name}/restart
 ```
 
 ### The skill
@@ -106,21 +108,39 @@ While an instance is running, `.running-man/instance.json` exists in the project
 cat .running-man/instance.json
 ```
 
-It holds the API URL, the instance's pid and start time, every configured process, and
-ready-to-run `curl` hints. It is the cheap signal that makes the rest discoverable — one
-file read, in a directory agents already inspect.
+It holds the API socket path, the instance's pid and start time, the OTLP endpoint when
+tracing is on, every configured process, and ready-to-run `curl` hints. It is the cheap
+signal that makes the rest discoverable — one file read, in a directory agents already
+inspect.
+
+The `socket` field is authoritative. It is normally `.running-man/api.sock`, but a Unix
+socket path has a hard length limit, so a deeply nested project gets a short socket under
+the temp directory instead:
+
+```bash
+SOCK=$(sed -n 's/.*"socket": "\(.*\)",*/\1/p' .running-man/instance.json)
+```
+
+`otlp_endpoint` matters for anything exporting telemetry from outside — a browser, or a
+container with a hardcoded endpoint. The receiver takes the next free port above 4318 when
+something else holds it, so the port is not fixed. Processes Running Man starts have it
+injected and need no configuration.
 
 The marker records only **stable** facts. Anything live — status, listening ports, exit
 codes — comes from `/processes`, so the file cannot drift out of date about them. It is
 written after the processes start and removed on exit; if it exists but `/health` does not
 respond, the instance died without cleaning up and the file can be ignored.
 
+`/health` also returns `pid`, `project` and `started`, which is how an agent confirms
+*which* instance answered rather than assuming. If `project` is not the directory being
+worked in, the answer belongs to something else.
+
 ### API Features
 - **Glob pattern support**: Use `*` in source names (e.g., `app-*`)
 - **Flexible time filters**: `since` parameter accepts durations like "30s", "5m", "1h"
 - **Multi-source queries**: Comma-separated source lists
 - **Trace correlation**: Automatic trace ID extraction from logs
-- **OpenAPI documentation**: Interactive docs at `/docs`
+- **OpenAPI specification**: the full spec at `/openapi.yaml`
 
 See [api-reference.md](api-reference.md) for complete API documentation.
 ## Contributing

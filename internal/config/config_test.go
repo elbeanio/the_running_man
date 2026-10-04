@@ -16,7 +16,6 @@ func TestConfig_Validate_ValidConfig(t *testing.T) {
 			{Name: "web", Command: "npm start"},
 			{Name: "worker", Command: "python", Args: []string{"worker.py"}},
 		},
-		APIPort:    8080,
 		Retention:  "1h",
 		MaxEntries: 5000,
 		MaxBytes:   10000000,
@@ -31,7 +30,6 @@ func TestConfig_Validate_ValidConfig(t *testing.T) {
 func TestConfig_Validate_WithDockerCompose(t *testing.T) {
 	cfg := &Config{
 		DockerCompose: DockerComposeConfig{Files: []string{"docker-compose.yml"}},
-		APIPort:       9000,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -100,28 +98,25 @@ func TestConfig_Validate_EmptyProcessCommand(t *testing.T) {
 	}
 }
 
-func TestConfig_Validate_InvalidAPIPort(t *testing.T) {
-	tests := []struct {
-		port int
-		name string
-	}{
-		{-1, "negative port"},
-		{65536, "port too high"},
-		{99999, "port way too high"},
-	}
+// api_port named a TCP listener that no longer exists. yaml.v3 ignores unknown
+// keys, so dropping the field would leave an existing config believing it had
+// moved a port -- it has to be rejected, not disregarded.
+func TestConfig_Validate_RejectsAPIPort(t *testing.T) {
+	for _, port := range []int{9000, 8080, -1, 65536} {
+		cfg := &Config{
+			Processes: []ProcessConfig{{Name: "test", Command: "echo"}},
+			APIPort:   port,
+		}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{
-				Processes: []ProcessConfig{{Name: "test", Command: "echo"}},
-				APIPort:   tt.port,
-			}
-
-			err := cfg.Validate()
-			if err == nil {
-				t.Errorf("Invalid API port %d should error", tt.port)
-			}
-		})
+		err := cfg.Validate()
+		if err == nil {
+			t.Errorf("api_port: %d should be rejected", port)
+			continue
+		}
+		if !strings.Contains(err.Error(), "no longer supported") ||
+			!strings.Contains(err.Error(), "api.sock") {
+			t.Errorf("api_port: %d rejected without explaining the replacement: %v", port, err)
+		}
 	}
 }
 
@@ -207,27 +202,6 @@ func TestConfig_GetRetentionDuration(t *testing.T) {
 	}
 }
 
-func TestConfig_GetAPIPort(t *testing.T) {
-	tests := []struct {
-		name     string
-		port     int
-		expected int
-	}{
-		{"default", 0, 9000},
-		{"custom", 8080, 8080},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{APIPort: tt.port}
-			got := cfg.GetAPIPort()
-			if got != tt.expected {
-				t.Errorf("Expected %d, got %d", tt.expected, got)
-			}
-		})
-	}
-}
-
 func TestConfig_GetMaxEntries(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -303,7 +277,6 @@ processes:
       - worker.py
       - --verbose
 docker_compose: docker-compose.yml
-api_port: 8080
 retention: 1h
 max_entries: 5000
 max_bytes: 10000000
@@ -334,10 +307,6 @@ shell: /bin/bash
 
 	if got := cfg.DockerCompose.PrimaryFile(); got != "docker-compose.yml" {
 		t.Errorf("Expected docker_compose 'docker-compose.yml', got '%s'", got)
-	}
-
-	if cfg.APIPort != 8080 {
-		t.Errorf("Expected api_port 8080, got %d", cfg.APIPort)
 	}
 
 	if cfg.Retention != "1h" {
@@ -379,10 +348,6 @@ processes:
 	}
 
 	// Check defaults are applied via getters
-	if cfg.GetAPIPort() != 9000 {
-		t.Errorf("Expected default api_port 9000, got %d", cfg.GetAPIPort())
-	}
-
 	if cfg.GetRetentionDuration() != 30*time.Minute {
 		t.Errorf("Expected default retention 30m, got %v", cfg.GetRetentionDuration())
 	}

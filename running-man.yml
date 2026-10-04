@@ -68,8 +68,12 @@ processes:
 # `ask` needs a terminal, so CI behaves as `never`.
 
 # API server configuration
-# The API provides endpoints for querying logs, errors, and health
-api_port: 9000  # Default: 9000
+# The API provides endpoints for querying logs, errors and health. It is served on
+# a Unix socket at .running-man/api.sock inside the project, so there is nothing
+# to configure here -- the path is derived from the project directory.
+#
+# There is no api_port key. Setting one is rejected at startup rather than
+# ignored, because a port that is quietly disregarded is worse than an error.
 
 # Log retention settings
 retention: 30m       # How long to keep logs (e.g., "30m", "1h", "24h")
@@ -106,7 +110,6 @@ tracing:
 #   running-man run --config path.yml  # Use specific config file
 #   
 # CLI flags override config file values:
-#   running-man run --api-port 8080    # Overrides api_port from config
 #   running-man run --process "cmd"    # Ignores processes from config
 #   running-man run --tracing false    # Disables tracing (overrides config)
 #   running-man run --tracing-port 4321 # Changes tracing port

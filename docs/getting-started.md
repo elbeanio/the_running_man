@@ -122,39 +122,48 @@ running-man run --process "pytest" --no-tui
 
 ### REST API
 
-While Running Man is running, access the API at `http://localhost:9000`:
+While Running Man is running, the API is served on a Unix socket in the project directory
+rather than a TCP port. `curl` reaches it with `--unix-socket`, and the host in the URL is
+ignored.
+
+The path below is the usual one. A deeply nested project gets a short socket under the temp
+directory instead, because a Unix socket path has a hard length limit — the `socket` field
+of `.running-man/instance.json` always records which applies, and scripts and agents should
+read it from there rather than hardcoding:
 
 ```bash
+SOCK=.running-man/api.sock
+
 # Recent logs
-curl "http://localhost:9000/logs?since=30s"
+curl --unix-socket "$SOCK" "http://localhost/logs?since=30s"
 
 # Errors only
-curl "http://localhost:9000/errors?since=5m"
+curl --unix-socket "$SOCK" "http://localhost/errors?since=5m"
 
 # Filter by source and level
-curl "http://localhost:9000/logs?source=backend&level=error,warn"
+curl --unix-socket "$SOCK" "http://localhost/logs?source=backend&level=error,warn"
 
 # Search content
-curl "http://localhost:9000/logs?contains=database"
+curl --unix-socket "$SOCK" "http://localhost/logs?contains=database"
 
 # Health check
-curl "http://localhost:9000/health"
+curl --unix-socket "$SOCK" "http://localhost/health"
 
 # Process status
-curl "http://localhost:9000/processes"
+curl --unix-socket "$SOCK" "http://localhost/processes"
 ```
 
 ### Advanced Queries
 
 ```bash
 # Multiple filters
-curl "http://localhost:9000/logs?since=5m&source=backend&level=error&contains=timeout"
+curl --unix-socket "$SOCK" "http://localhost/logs?since=5m&source=backend&level=error&contains=timeout"
 
 # Pagination
-curl "http://localhost:9000/logs?limit=100&offset=0"
+curl --unix-socket "$SOCK" "http://localhost/logs?limit=100&offset=0"
 
 # Time ranges
-curl "http://localhost:9000/logs?since=2024-01-15T10:00:00Z&until=2024-01-15T11:00:00Z"
+curl --unix-socket "$SOCK" "http://localhost/logs?since=2024-01-15T10:00:00Z&until=2024-01-15T11:00:00Z"
 ```
 
 ## Point your agent at it
@@ -178,8 +187,8 @@ matching `OTEL_*` variables into the processes it starts, so an instrumented app
 without configuration.
 
 ```bash
-curl -s 'http://localhost:9000/traces?since=10m'
-curl -s http://localhost:9000/traces/TRACE_ID/logs   # logs correlated to a trace
+curl -s --unix-socket "$SOCK" 'http://localhost/traces?since=10m'
+curl -s --unix-socket "$SOCK" http://localhost/traces/TRACE_ID/logs   # logs correlated to a trace
 ```
 
 Setup for Python, Flask and Django: **[Tracing](tracing.md)**.
@@ -211,7 +220,7 @@ Profiles, multiple files and project names: **[Configuration](configuration.md#d
 
 3. **Query logs via API:**
    ```bash
-   curl "http://localhost:9000/errors?since=1m"
+   curl --unix-socket "$SOCK" "http://localhost/errors?since=1m"
    ```
 
 4. **Use AI agent for debugging:**
@@ -226,10 +235,10 @@ Profiles, multiple files and project names: **[Configuration](configuration.md#d
 running-man run --process "pytest" --no-tui
 
 # Capture test output
-curl "http://localhost:9000/logs?since=0s" > test-output.json
+curl --unix-socket "$SOCK" "http://localhost/logs?since=0s" > test-output.json
 
 # Check for errors
-ERROR_COUNT=$(curl -s "http://localhost:9000/errors?since=0s" | jq '.count')
+ERROR_COUNT=$(curl -s --unix-socket "$SOCK" "http://localhost/errors?since=0s" | jq '.count')
 if [ "$ERROR_COUNT" -gt 0 ]; then
     echo "Tests failed with $ERROR_COUNT errors"
     exit 1
@@ -260,7 +269,7 @@ running-man run
 
 # Trace a request across services
 # Ask an agent: "Show me traces for user ID 123"
-# Or directly: curl "http://localhost:9000/traces?since=2m"
+# Or directly: curl --unix-socket "$SOCK" "http://localhost/traces?since=2m"
 ```
 
 ## If something is wrong
@@ -268,8 +277,8 @@ running-man run
 Start with what Running Man captured:
 
 ```bash
-curl -s 'http://localhost:9000/errors?since=10m'
-curl -s http://localhost:9000/processes        # is anything not running?
+curl -s --unix-socket "$SOCK" 'http://localhost/errors?since=10m'
+curl -s --unix-socket "$SOCK" http://localhost/processes        # is anything not running?
 ```
 
 A process that exits non-zero is recorded as an error, so `/errors` tells you something
