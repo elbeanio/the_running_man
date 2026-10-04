@@ -18,17 +18,18 @@ cat .running-man/instance.json 2>/dev/null
 ```
 
 If that file exists, a Running Man instance is supervising this project. It lists the API
-URL and every process the project is configured to run. For live state:
+socket and every process the project is configured to run. For live state:
 
 ```bash
-curl -s http://localhost:9000/processes
+SOCK=.running-man/api.sock
+curl -s --unix-socket "$SOCK" http://localhost/processes
 ```
 
 If the process you were about to start is already there with `"status": "running"`, **use
 it**. Do not start a second copy.
 
-If the file does not exist, or the API does not respond, there is no instance — carry on as
-normal and start your own processes.
+If the file does not exist, or the socket does not respond, there is no instance — carry on
+as normal and start your own processes.
 
 ## Why this matters
 
@@ -47,25 +48,42 @@ and you can search across every process at once.
 
 ## Reading output
 
-The API is on port 9000 unless `.running-man/instance.json` says otherwise. Every endpoint
-returns JSON.
+**The API is a Unix socket, not a TCP port.** It is at `.running-man/api.sock` in the
+project, so `curl` needs `--unix-socket`; the host in the URL is ignored, and `localhost` is
+the convention. Every endpoint returns JSON.
+
+```bash
+SOCK=.running-man/api.sock
+```
+
+A socket path has a length limit, so a deeply nested project gets one under the temp
+directory instead. The `socket` field in `.running-man/instance.json` is always the truth,
+and the `hints` there are ready-to-run:
+
+```bash
+SOCK=$(sed -n 's/.*"socket": "\(.*\)",*/\1/p' .running-man/instance.json)
+```
+
+The socket is why there is no port to guess and no wrong project to reach by accident: the
+path comes from the project directory, so an agent working in one project cannot read
+another's logs.
 
 ```bash
 # What went wrong recently, across everything
-curl -s 'http://localhost:9000/errors?since=10m&limit=50'
+curl -s --unix-socket "$SOCK" 'http://localhost/errors?since=10m&limit=50'
 
 # One process
-curl -s 'http://localhost:9000/logs?source=backend&since=5m&limit=50'
+curl -s --unix-socket "$SOCK" 'http://localhost/logs?source=backend&since=5m&limit=50'
 
 # Search for something specific
-curl -s 'http://localhost:9000/logs?contains=connection%20refused&since=15m'
+curl -s --unix-socket "$SOCK" 'http://localhost/logs?contains=connection%20refused&since=15m'
 
 # Several processes, or a glob
-curl -s 'http://localhost:9000/logs?source=api,worker&since=5m'
-curl -s 'http://localhost:9000/logs?source=app-*&since=5m'
+curl -s --unix-socket "$SOCK" 'http://localhost/logs?source=api,worker&since=5m'
+curl -s --unix-socket "$SOCK" 'http://localhost/logs?source=app-*&since=5m'
 
 # Only errors and warnings
-curl -s 'http://localhost:9000/logs?level=error,warn&since=10m'
+curl -s --unix-socket "$SOCK" 'http://localhost/logs?level=error,warn&since=10m'
 ```
 
 Useful parameters on `/logs` and `/errors`: `since` (`30s`, `5m`, `1h`), `source`
@@ -81,7 +99,7 @@ error phrasing is recorded as `warn` rather than `info` — stderr is weak evide
 own, since plenty of tools write progress there, but it is still worth a look:
 
 ```bash
-curl -s 'http://localhost:9000/logs?level=warn,error&since=10m&limit=50'
+curl -s --unix-socket "$SOCK" 'http://localhost/logs?level=warn,error&since=10m&limit=50'
 ```
 
 Entries are snake_case: `timestamp`, `level`, `source`, `source_type`, `message`, `raw`,
@@ -93,22 +111,23 @@ whole trace in `stacktrace`, so you do not have to stitch lines together.
 You do not need to stop and re-start the stack yourself:
 
 ```bash
-curl -s -X POST http://localhost:9000/processes/backend/restart
+curl -s -X POST --unix-socket "$SOCK" http://localhost/processes/backend/restart
 ```
 
-This must be run **on the machine running Running Man**. It returns 403 from anywhere else,
-with an explanation — that is deliberate, not a bug.
+No permission check is needed any more: reaching the socket at all means being able to open
+a file in the project directory, which is the same thing as being on this machine as this
+user. The old loopback-only 403 went away with the TCP port.
 
 ## When something is wrong
 
-1. `curl -s 'http://localhost:9000/errors?since=10m&limit=50'` — what has actually failed.
-2. `curl -s http://localhost:9000/processes` — is anything not `running`? Check
+1. `curl -s --unix-socket "$SOCK" 'http://localhost/errors?since=10m&limit=50'` — what has actually failed.
+2. `curl -s --unix-socket "$SOCK" http://localhost/processes` — is anything not `running`? Check
    `exit_code`. For recurring processes, `waiting` is healthy (between runs); `failed`
    is not.
-3. `curl -s 'http://localhost:9000/logs?source=NAME&since=5m'` — the full context from
+3. `curl -s --unix-socket "$SOCK" 'http://localhost/logs?source=NAME&since=5m'` — the full context from
    whichever process looks implicated.
 4. If an entry has a `trace_id`, get everything correlated with it:
-   `curl -s http://localhost:9000/traces/TRACE_ID/logs`
+   `curl -s --unix-socket "$SOCK" http://localhost/traces/TRACE_ID/logs`
 
 ## Traces
 
@@ -116,21 +135,24 @@ Present when the app is OTEL-instrumented; Running Man injects the exporter conf
 into the processes it starts.
 
 ```bash
-curl -s 'http://localhost:9000/traces?since=10m'
-curl -s 'http://localhost:9000/traces?status=error&since=10m'
-curl -s http://localhost:9000/traces/TRACE_ID          # every span
-curl -s http://localhost:9000/traces/TRACE_ID/logs     # correlated log entries
+curl -s --unix-socket "$SOCK" 'http://localhost/traces?since=10m'
+curl -s --unix-socket "$SOCK" 'http://localhost/traces?status=error&since=10m'
+curl -s --unix-socket "$SOCK" http://localhost/traces/TRACE_ID          # every span
+curl -s --unix-socket "$SOCK" http://localhost/traces/TRACE_ID/logs     # correlated log entries
 ```
 
 ## Notes
 
-- **Discovering the API:** `curl -s http://localhost:9000/` lists every endpoint;
-  `http://localhost:9000/docs` serves interactive OpenAPI documentation.
+- **Discovering the API:** `curl -s --unix-socket "$SOCK" http://localhost/` lists every
+  endpoint with a description, and `/openapi.yaml` serves the full specification.
 - **Do not start Running Man yourself** unless asked. The developer normally starts it so
   they get the TUI; starting it yourself takes that away from them.
 - **A stale marker is possible.** If `.running-man/instance.json` exists but
-  `curl -s http://localhost:9000/health` fails, the instance died without cleaning up.
-  Ignore the file.
+  `curl -s --unix-socket "$SOCK" http://localhost/health` fails, the instance died without
+  cleaning up. Ignore the file.
+- **`/health` proves which instance answered.** It returns `pid`, `project` and `started`.
+  If `project` is not the directory you are working in, you are talking to something else —
+  stop and re-read the marker.
 - **Ports in `/processes` are observed**, not configured, so they are a strong hint rather
   than a guarantee. A process that has just started may not have bound yet.
 - **`otlp` sources are not evidence of origin.** Anything that can reach the OTLP receiver

@@ -95,28 +95,32 @@ Everything below works identically for a person at a terminal and for an agent w
 `curl`:
 
 ```bash
+# The API is a Unix socket in the project, not a TCP port
+SOCK=.running-man/api.sock
+
 # What has gone wrong anywhere in the stack, in the last ten minutes
-curl -s 'http://localhost:9000/errors?since=10m'
+curl -s --unix-socket "$SOCK" 'http://localhost/errors?since=10m'
 
 # One source
-curl -s 'http://localhost:9000/logs?source=backend&since=5m&limit=50'
+curl -s --unix-socket "$SOCK" 'http://localhost/logs?source=backend&since=5m&limit=50'
 
 # Several at once, or a glob
-curl -s 'http://localhost:9000/logs?source=frontend,worker&since=5m'
-curl -s 'http://localhost:9000/logs?source=*&contains=timeout'
+curl -s --unix-socket "$SOCK" 'http://localhost/logs?source=frontend,worker&since=5m'
+curl -s --unix-socket "$SOCK" 'http://localhost/logs?source=*&contains=timeout'
 
 # What is up, what it is listening on, what exited
-curl -s http://localhost:9000/processes
+curl -s --unix-socket "$SOCK" http://localhost/processes
 
 # Restart one thing after a code change, leaving the rest alone
-curl -s -X POST http://localhost:9000/processes/backend/restart
+curl -s -X POST --unix-socket "$SOCK" http://localhost/processes/backend/restart
 ```
 
 Python tracebacks arrive as a single entry with the whole trace attached, rather than
 forty lines to stitch back together. Container logs, process output and OpenTelemetry
 spans all land in the same buffer, correlated by `trace_id` where the app provides one.
 
-`GET /` lists every endpoint and `/docs` serves interactive OpenAPI documentation.
+`GET /` lists every endpoint with a description, and `/openapi.yaml` serves the full
+specification.
 
 ## Your agent finds it by itself
 
@@ -137,18 +141,18 @@ run `curl` can use it. Running Man has no opinion about which agent you use.
 
 ## ⚠️ Network exposure
 
-Running Man binds **all interfaces** by default, on the API port (9000) and the OTLP
-receiver (4318), so containers, browsers and other devices can reach it. **There is no
-authentication**, which means anyone on your network can read your captured logs — and dev
-servers routinely print tokens and connection strings.
+**The query API is not on the network at all.** It is a Unix socket at
+`.running-man/api.sock`, mode 0600, so reading your logs means being you on this machine.
 
-Process control is the exception: `/processes/{name}/restart` and `/processes/stop-all` are
-served to this machine only and return 403 otherwise.
+The OTLP receiver is the exception and has to be: it binds **all interfaces** on 4318 so
+containers, browsers and other devices can export to it. It is write-only — it accepts
+telemetry, it serves none — but anyone who can reach it can write into the buffer, and it
+takes the source name from the sender. An entry attributed to `backend` is therefore not
+evidence that it came from `backend`.
 
-```bash
-running-man run --listen 127.0.0.1       # restrict everything to this machine
-running-man run --allow-remote-control   # open process control (think first)
-```
+The receiver moves to the next free port above 4318 if something already holds it, which is
+common — every other OTLP collector defaults to the same port. The port it settled on is in
+`.running-man/instance.json` and on `/health`.
 
 Full detail: [Network exposure](https://elbeanio.github.io/the_running_man/api-reference#network-exposure).
 

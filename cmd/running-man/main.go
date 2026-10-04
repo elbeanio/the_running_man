@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"regexp"
@@ -715,10 +716,19 @@ func runCommand(args []string) {
 		fmt.Printf("[running-man] Instance marker: %s\n", instance.Path(projectDir))
 	}
 
-	// Remove the marker however we leave: normal return, os.Exit paths below,
-	// and signals. A marker outliving its instance points an agent at a dead
-	// API, which is worse than no marker at all.
+	// Clean up however we leave: normal return, os.Exit paths below, and
+	// signals. A marker outliving its instance points an agent at a dead API,
+	// which is worse than no marker at all.
+	//
+	// The listener is closed first because Go unlinks a Unix socket when its
+	// listener closes, and instance.Remove cannot delete the directory while
+	// the socket is still sitting in it. Leaving a dead socket behind is not
+	// fatal -- the next instance takes it over -- but it makes a stale instance
+	// look live to anything that only checks whether the path exists.
 	removeMarker := func() {
+		if err := apiListener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			fmt.Fprintf(os.Stderr, "[running-man] Could not close the API socket: %v\n", err)
+		}
 		if err := instance.Remove(projectDir); err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] Could not remove instance marker: %v\n", err)
 		}
@@ -881,7 +891,7 @@ Usage:
   running-man run [--config PATH] [flags]
   running-man run --process "command" [--process "command" ...] [flags]
   running-man run --docker-compose PATH [--process "command" ...] [flags]
-  running-man tui [--api-port PORT]
+  running-man tui [--socket PATH]
   running-man version
   running-man help
 
@@ -897,11 +907,10 @@ Flags:
                            How long to wait for containers after starting the stack
                            (default: 30s; raise it for a stack that migrates a
                            database or starts services in sequence)
-  --api-port PORT          API server port (default: 9000, overrides config)
-  --listen ADDR            Address to bind the API to (default: 0.0.0.0, all
-                           interfaces). Use 127.0.0.1 to restrict to this machine.
-  --allow-remote-control   Serve process restart/stop endpoints to remote callers.
-                           By default they are loopback-only and return 403.
+  --tracing                Enable OTLP trace ingestion (default: true)
+  --tracing-port PORT      OTLP HTTP receiver port. Without this, the receiver
+                           takes 4318 or the next free port above it; with it,
+                           a conflict is a startup failure.
   --no-tui                 Disable TUI and run in headless mode
   --keep-alive MODE        After a process fails in headless mode, keep serving its
                            logs: auto|always|never (default: auto, which keeps them
@@ -923,13 +932,16 @@ Examples:
   # Headless mode for CI/automation (no TUI)
   running-man run --process "go run main.go" --no-tui
 
-  # Connect TUI to existing running instance
-  running-man tui --api-port 9000
+  # Connect the TUI to the instance running in this directory
+  running-man tui
 
-  # Query logs via API while TUI is running (separate terminal)
-  curl http://localhost:9000/logs?since=30s
-  curl http://localhost:9000/errors
-  curl http://localhost:9000/health
+  # Query the API while the TUI is running (separate terminal). The API is on a
+  # Unix socket in the project, not a TCP port -- .running-man/instance.json
+  # records the exact path.
+  SOCK=.running-man/api.sock
+  curl -s --unix-socket $SOCK 'http://localhost/logs?since=30s'
+  curl -s --unix-socket $SOCK http://localhost/errors
+  curl -s --unix-socket $SOCK http://localhost/health
 
 For more information, visit: github.com/elbeanio/the_running_man
 `)

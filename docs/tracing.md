@@ -307,20 +307,22 @@ running-man run --config my-config.yml
 ### REST API
 
 ```bash
+SOCK=.running-man/api.sock
+
 # List recent traces
-curl "http://localhost:9000/traces?since=5m"
+curl --unix-socket "$SOCK" "http://localhost/traces?since=5m"
 
 # Get specific trace
-curl "http://localhost:9000/traces/abc123-def456"
+curl --unix-socket "$SOCK" "http://localhost/traces/abc123-def456"
 
 # Filter by service
-curl "http://localhost:9000/traces?service_name=backend&since=10m"
+curl --unix-socket "$SOCK" "http://localhost/traces?service_name=backend&since=10m"
 
 # Find slow traces
-curl "http://localhost:9000/traces?min_duration=1s&since=5m"
+curl --unix-socket "$SOCK" "http://localhost/traces?min_duration=1s&since=5m"
 
 # Traces with errors
-curl "http://localhost:9000/traces?status=error&since=30m"
+curl --unix-socket "$SOCK" "http://localhost/traces?status=error&since=30m"
 ```
 
 ### Trace Endpoints (AI Agent Integration)

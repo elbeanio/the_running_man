@@ -80,7 +80,8 @@ docker_compose: ./docker-compose.yml
 running-man run
 
 # from another terminal, or from your agent
-curl -s 'http://localhost:9000/errors?since=30s'
+SOCK=.running-man/api.sock
+curl -s --unix-socket "$SOCK" 'http://localhost/errors?since=30s'
 ```
 
 Next: **[Getting started](getting-started.md)** for a full walkthrough, or

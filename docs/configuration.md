@@ -39,7 +39,6 @@ processes:
 
 docker_compose: ./docker-compose.yml
 
-api_port: 9000
 retention: 30m
 max_entries: 10000
 max_bytes: 52428800
@@ -245,14 +244,15 @@ service names and their `profiles` are read, which are rarely interpolated.
 
 ### API Configuration
 
-#### `api_port` (integer, optional)
-Port for the HTTP API server (default: `9000`).
+**There is no API port key.** The API is served on a Unix socket at
+`.running-man/api.sock` inside the project, so there is nothing to configure: the path is
+derived from the project directory. See
+[Network exposure](api-reference.md#network-exposure).
 
-**Example:**
-```yaml
-api_port: 8080
-api_port: 9001
-```
+`api_port` was removed. A config that still sets it is **rejected at startup** with a
+message naming the replacement, rather than ignored — YAML parsing silently drops unknown
+keys, and quietly disregarding it would leave you believing you had moved a port that no
+longer exists.
 
 ### Log Retention
 
@@ -391,12 +391,6 @@ Only some settings have flags. Everything else is configuration-file only — th
 flags, despite earlier versions of this page claiming otherwise.
 
 ```bash
-# Override the API port
-running-man run --api-port 8080
-
-# Restrict the API to this machine
-running-man run --listen 127.0.0.1
-
 # Headless mode, for CI
 running-man run --no-tui
 
@@ -418,9 +412,6 @@ Every flag `running-man run` accepts:
 | `--compose-project NAME` | Compose project name | directory name |
 | `--compose-start MODE` | When the stack is down: `ask`, `never`, `always` | `ask` |
 | `--compose-start-timeout DURATION` | How long to wait for containers after starting the stack | `30s` |
-| `--api-port PORT` | API server port | 9000 |
-| `--listen ADDR` | Address to bind the API to | `0.0.0.0` |
-| `--allow-remote-control` | Serve process restart/stop to remote callers | false |
 | `--no-tui` | Run headless (no TUI) | false |
 | `--keep-alive MODE` | After a failure in headless mode: `auto`, `always`, `never` | `auto` |
 | `--tracing` | Enable OpenTelemetry tracing | true |
@@ -479,7 +470,6 @@ processes:
     description: "PostgreSQL database"
     command: docker-compose up postgres
 
-api_port: 9000
 retention: 1h
 shell: /bin/bash
 ```
@@ -515,7 +505,6 @@ tracing:
   max_spans: 20000
   max_span_age: 1h
 
-api_port: 9000
 retention: 2h
 ```
 
@@ -532,7 +521,6 @@ processes:
   - name: build
     command: docker build -t myapp:latest .
 
-api_port: 9000
 retention: 10m  # Shorter for CI runs
 max_entries: 1000
 no_tui: true  # Headless mode for CI
@@ -567,8 +555,7 @@ Running Man uses this precedence order (highest to lowest):
 ### Example
 ```bash
 # CLI flag overrides config file
-running-man run --api-port 8080
-# Uses port 8080 even if config says 9000
+running-man run --compose-start never   # even if config says start: ask
 
 # Environment variable in config
 export PORT=3000
@@ -589,8 +576,8 @@ processes:
 # Error: Invalid duration
 retention: 30  # Should be '30s', '30m', etc.
 
-# Error: Port in use
-api_port: 80  # Requires root privileges
+# Error: removed key
+api_port: 9000  # No longer supported; the API is a Unix socket
 
 # Error: File not found
 docker_compose: ./nonexistent.yml
@@ -609,7 +596,7 @@ as "30s" or "1m"
 ```
 
 To see what Running Man resolved, start it and read the banner and the startup lines: they
-report the API address and posture, the Compose files and profiles, the services being
+report the API socket path, the Compose project, files and profiles, the services being
 watched, and which are not.
 
 ## Multiple Configuration Files
@@ -632,7 +619,6 @@ processes:
   - name: app
     command: python app.py
 
-api_port: 9000
 retention: 30m
 ```
 
@@ -723,7 +709,6 @@ shell: /usr/bin/bash  # Instead of /bin/bash
 ```bash
 # Error: Address already in use
 # Solution: Change port or stop conflicting service
-api_port: 9001
 tracing_port: 4321
 ```
 
