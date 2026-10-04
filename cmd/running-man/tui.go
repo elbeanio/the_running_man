@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"time"
@@ -74,6 +75,11 @@ type model struct {
 
 	// Internal state
 	tickCount int // Count of tick messages received
+
+	// lastPanic holds the summary of a recovered panic, shown in the footer so a
+	// render bug is visible rather than silent. Empty when nothing has gone
+	// wrong.
+	lastPanic string
 }
 
 type logEntry struct {
@@ -137,13 +143,67 @@ type tickMsg time.Time
 
 func (e errMsg) Error() string { return e.err.Error() }
 
+// currentSource returns the selected source name, or "" when there is nothing
+// to select.
+//
+// Every read of m.sources goes through here. The direct indexing it replaces was
+// the cause of the crash that hit an unattended instance: the sources list is
+// rebuilt from whatever is in the ring buffer, so a quiet source disappears once
+// its entries age out past the retention limits, the list gets shorter, and
+// selectedSource is left pointing past the end. A `len(m.sources) > 0` test does
+// not help -- it was present at two of the call sites and guarded nothing, since
+// the problem is the index, not emptiness.
+func (m model) currentSource() string {
+	if m.selectedSource < 0 || m.selectedSource >= len(m.sources) {
+		return ""
+	}
+	return m.sources[m.selectedSource]
+}
+
+// clampSelectedSource brings the selection back into range after the sources
+// list changes. Called wherever m.sources is assigned.
+func (m *model) clampSelectedSource() {
+	if len(m.sources) == 0 {
+		m.selectedSource = 0
+		return
+	}
+	if m.selectedSource >= len(m.sources) {
+		m.selectedSource = len(m.sources) - 1
+	}
+	if m.selectedSource < 0 {
+		m.selectedSource = 0
+	}
+}
+
+// clampSelectedTrace brings the trace selection back into range after the trace
+// list changes.
+func (m *model) clampSelectedTrace() {
+	if len(m.traces) == 0 {
+		m.selectedTraceIdx = 0
+		return
+	}
+	if m.selectedTraceIdx >= len(m.traces) {
+		m.selectedTraceIdx = len(m.traces) - 1
+	}
+	if m.selectedTraceIdx < 0 {
+		m.selectedTraceIdx = 0
+	}
+}
+
+// selectedTrace returns the highlighted trace, or false when there is none.
+func (m model) selectedTrace() (traceSummary, bool) {
+	if m.selectedTraceIdx < 0 || m.selectedTraceIdx >= len(m.traces) {
+		return traceSummary{}, false
+	}
+	return m.traces[m.selectedTraceIdx], true
+}
+
 // fetchForSelectedSource returns the appropriate command based on selected tab
 func (m model) fetchForSelectedSource() (model, tea.Cmd) {
-	if len(m.sources) == 0 {
+	source := m.currentSource()
+	if source == "" {
 		return m, nil
 	}
-
-	source := m.sources[m.selectedSource]
 	if source == "Traces" {
 		return m, fetchTraces(m.apiURL)
 	}
@@ -152,7 +212,7 @@ func (m model) fetchForSelectedSource() (model, tea.Cmd) {
 
 // isTraceView returns true if the currently selected tab is "Traces"
 func (m model) isTraceView() bool {
-	return len(m.sources) > 0 && m.sources[m.selectedSource] == "Traces"
+	return m.currentSource() == "Traces"
 }
 
 func fetchTraces(apiURL string) tea.Cmd {
@@ -387,7 +447,23 @@ func (m model) Init() tea.Cmd {
 	)
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+// Update is a recovering wrapper around updateModel.
+//
+// Bubble Tea would otherwise catch a panic here and end the session; recovering
+// first means a bad message degrades into a footer warning and a crash-log
+// entry. The model returned on panic is the one from *before* the message, so a
+// message that corrupts state is discarded rather than kept.
+func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
+	defer func() {
+		if r := recover(); r != nil {
+			m.lastPanic = recordPanic("Update", r, debug.Stack())
+			next, cmd = m, nil
+		}
+	}()
+	return m.updateModel(msg)
+}
+
+func (m model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		// Global quit works in any mode
@@ -416,8 +492,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sourceTypes = make(map[string]string)
 		}
 		m.sourceTypes["Traces"] = "traces"
-		if len(m.sources) > 0 {
-			return m, fetchLogs(m.apiURL, m.sources[m.selectedSource])
+		// The list was just replaced and may be shorter than before.
+		m.clampSelectedSource()
+		if source := m.currentSource(); source != "" {
+			return m, fetchLogs(m.apiURL, source)
 		}
 
 	case logsMsg:
@@ -431,6 +509,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.traces = msg
 		// Reset trace scroll offset
 		m.traceScrollOffset = 0
+		// Same hazard as the sources list: spans age out past max_span_age, so
+		// this list shrinks on its own and the selection can be left past the
+		// end.
+		m.clampSelectedTrace()
 
 	case traceSpansMsg:
 		m.traceSpans = msg
@@ -446,7 +528,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{tickCmd(), fetchSources(m.apiURL)}
 
 		if len(m.sources) > 0 {
-			source := m.sources[m.selectedSource]
+			source := m.currentSource()
 			if source == "Traces" {
 				cmds = append(cmds, fetchTraces(m.apiURL))
 			} else {
@@ -463,7 +545,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) View() string {
+// View is a recovering wrapper around viewModel.
+//
+// A panic while rendering is the most likely kind here -- it is where the width
+// and height arithmetic lives -- and it would otherwise kill the program on the
+// next frame after a resize. A fallback frame keeps the session alive and says
+// where to look.
+func (m model) View() (out string) {
+	defer func() {
+		if r := recover(); r != nil {
+			summary := recordPanic("View", r, debug.Stack())
+			out = errorStyle.Render(fmt.Sprintf(
+				"Could not draw this frame: %s\n\nThe details are in %s\n"+
+					"Try resizing the window, or press q to quit.",
+				summary, crashLogName))
+		}
+	}()
+	return m.viewModel()
+}
+
+func (m model) viewModel() string {
 	if m.err != nil {
 		return errorStyle.Render(fmt.Sprintf("Error: %v\n\nPress q to quit", m.err))
 	}
@@ -506,7 +607,7 @@ func (m model) View() string {
 		help = helpStyle.Render("\n" + baseHelp)
 	case ModeNormal:
 		// Check if we're in trace view
-		isTraceView := len(m.sources) > 0 && m.sources[m.selectedSource] == "Traces"
+		isTraceView := m.currentSource() == "Traces"
 
 		// Build help text with styled components
 		baseHelp := "←/→ Tab: Switch source"
@@ -549,6 +650,13 @@ func (m model) View() string {
 		// Add quit command
 		baseHelp += " | q: Quit"
 
+		// A recovered panic is stated rather than swallowed: the session
+		// survived, but something is wrong and the user should know where to
+		// look.
+		if m.lastPanic != "" {
+			baseHelp += errorStyle.Render(fmt.Sprintf(" | ⚠ %s (see %s)", m.lastPanic, crashLogName))
+		}
+
 		help = helpStyle.Render("\n" + baseHelp)
 	}
 
@@ -575,7 +683,7 @@ func (m model) View() string {
 		content = renderTraceDetail(m.selectedTraceID, m.traceSpans, m.traceLogs, contentHeight, contentWidth, m.traceDetailScrollOffset)
 	case ModeNormal:
 		// Check if we're in Traces tab
-		if len(m.sources) > 0 && m.sources[m.selectedSource] == "Traces" {
+		if m.currentSource() == "Traces" {
 			// Render trace list
 			content = renderTraceList(m.traces, contentHeight, contentWidth, m.traceScrollOffset, m.selectedTraceIdx)
 		} else {
@@ -1775,10 +1883,10 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case "enter":
 		// Select trace in trace view (for Phase 3)
-		if m.isTraceView() && len(m.traces) > 0 {
+		if trace, ok := m.selectedTrace(); ok && m.isTraceView() {
 			// Switch to trace detail view
 			m.mode = ModeTraceDetail
-			m.selectedTraceID = m.traces[m.selectedTraceIdx].TraceID
+			m.selectedTraceID = trace.TraceID
 			m.traceDetailScrollOffset = 0
 			// Clear previous trace data
 			m.traceSpans = []spanDetail{}
@@ -1799,7 +1907,7 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "r":
 		// Restart current process (only in log view, not trace view)
 		if len(m.sources) > 0 && !m.isTraceView() {
-			processName := m.sources[m.selectedSource]
+			processName := m.currentSource()
 
 			// Make async HTTP call to restart
 			go func() {
@@ -1821,7 +1929,7 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 // searchMatchIdx is centered in the viewport. Disables autoScroll.
 func scrollToMatch(m model) model {
 	matchLineIndices := buildMatchLineIndex(m.logs, m.width, m.searchQuery)
-	if m.searchMatchIdx >= len(matchLineIndices) {
+	if m.searchMatchIdx < 0 || m.searchMatchIdx >= len(matchLineIndices) {
 		return m
 	}
 	targetLineIdx := matchLineIndices[m.searchMatchIdx]
@@ -1864,17 +1972,18 @@ func TuiCommandWithManager(args []string, manager *process.Manager) {
 		os.Exit(1)
 	}
 
+	projectDir, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not determine working directory: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Default to this project's socket, which is the only one a TUI launched
 	// here should be looking at.
 	if *socketPath == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Could not determine working directory: %v\n", err)
-			os.Exit(1)
-		}
 		// instance.SocketPath resolves the path itself, so a symlinked route to
 		// the project finds the same socket `running-man run` created.
-		*socketPath = instance.SocketPath(cwd)
+		*socketPath = instance.SocketPath(projectDir)
 	}
 
 	if _, err := os.Stat(*socketPath); err != nil {
@@ -1886,10 +1995,18 @@ func TuiCommandWithManager(args []string, manager *process.Manager) {
 	apiClient = api.NewSocketClient(*socketPath)
 	apiURL := apiBaseURL
 
+	// Crash reports go in the working directory's .running-man, beside the
+	// marker, so they are found where someone is already looking. Deliberately
+	// not derived from the socket path: a long project path puts the socket
+	// under the temp directory, which is not where anyone would look for it.
+	installCrashLog(projectDir)
+	defer installDebugLog(projectDir)()
+
 	// Create and run the TUI
 	p := tea.NewProgram(initialModel(apiURL, manager), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Any crash report is in %s\n", crashLogName)
 		os.Exit(1)
 	}
 }
