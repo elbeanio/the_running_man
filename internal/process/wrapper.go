@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/elbeanio/the_running_man/internal/termout"
+	"github.com/elbeanio/the_running_man/internal/tracing"
 )
 
 // LineHandler is called for each line of output
@@ -183,32 +184,10 @@ func NewWithOTEL(name string, command string, args []string, shell string, handl
 			endpoint = fmt.Sprintf("%s:%d", otelEndpoint, otelPort)
 		}
 
-		// Create OTEL env vars and inject
-		otelVars := map[string]string{
-			"OTEL_EXPORTER_OTLP_ENDPOINT": endpoint,
-			"OTEL_SERVICE_NAME":           name,
-			"OTEL_PROPAGATORS":            "tracecontext,baggage",
-			"OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
-			"OTEL_RESOURCE_ATTRIBUTES":    "deployment.environment=local",
-			"OTEL_TRACES_SAMPLER":         "always_on",
-			"OTEL_METRICS_SAMPLER":        "always_on",
-			"OTEL_LOGS_SAMPLER":           "always_on",
-		}
-
-		// Remove any existing OTEL vars first
-		var filteredEnv []string
-		for _, e := range env {
-			if !strings.HasPrefix(e, "OTEL_") {
-				filteredEnv = append(filteredEnv, e)
-			}
-		}
-
-		// Add OTEL vars (prepend so they take precedence)
-		for key, value := range otelVars {
-			filteredEnv = append([]string{fmt.Sprintf("%s=%s", key, value)}, filteredEnv...)
-		}
-
-		cmd.Env = filteredEnv
+		// Inherited OTEL_* variables are replaced, not merged: a project's own
+		// exporter settings would otherwise send its telemetry somewhere other
+		// than the receiver Running Man is showing.
+		cmd.Env = tracing.ProcessEnv(env, endpoint, name)
 	} else {
 		cmd.Env = env
 	}
