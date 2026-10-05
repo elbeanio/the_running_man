@@ -64,6 +64,11 @@ type Manager struct {
 	otelEndpoint string
 	otelPort     int
 	otelEnabled  bool
+
+	// order is the process names as configured. The processes and configs
+	// maps have no order, and iterating them started and listed processes in a
+	// different random order on every run.
+	order []string
 }
 
 // NewManager creates a new Manager for multiple processes
@@ -91,6 +96,9 @@ func NewManagerWithOTEL(configs []ProcessConfig, handler LineHandler, otelEndpoi
 
 	// Store configs for later restart
 	for _, cfg := range configs {
+		if _, dup := m.configs[cfg.Name]; !dup {
+			m.order = append(m.order, cfg.Name)
+		}
 		m.configs[cfg.Name] = cfg
 	}
 
@@ -112,13 +120,42 @@ func (m *Manager) newWrapper(name string, cfg ProcessConfig) *ProcessWrapper {
 	return w
 }
 
+// adopt makes a run that has just started the process's current one -- unless
+// the manager has been stopped meanwhile, in which case it reports false and
+// the caller must stop the run itself.
+//
+// Every run started after Start goes through here, because a run can fork
+// before Stop and register after it. Stop cancels the context, then takes the
+// lock and stops every registered run. A run registering before that sweep is
+// stopped by it; one registering after finds the context cancelled here. With
+// no check, it was registered after the sweep and never stopped, and outlived
+// Running Man.
+func (m *Manager) adopt(name string, w *ProcessWrapper) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ctx.Err() != nil {
+		return false
+	}
+	m.processes[name] = w
+	return true
+}
+
+// discard stops and reaps a run the manager would not adopt. Outside the lock:
+// Stop walks the process table.
+func discard(w *ProcessWrapper) {
+	_ = w.Stop()
+	_ = w.Wait()
+}
+
 // Start starts all managed processes
 func (m *Manager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Start each process
-	for name, cfg := range m.configs {
+	// Start each process, in the order configured: until depends_on exists,
+	// that order is the only statement of what needs to come up first.
+	for _, name := range m.order {
+		cfg := m.configs[name]
 		// Check if this is a recurring process
 		if cfg.Interval != "" {
 			// Parse interval duration
@@ -138,7 +175,11 @@ func (m *Manager) Start() error {
 			// Start regular (non-recurring) process
 			wrapper := m.newWrapper(name, cfg)
 			if err := wrapper.Start(); err != nil {
-				// If any process fails to start, stop all started processes
+				// If any process fails to start, stop all started processes.
+				// Cancelled first: a recurring process launched earlier in this
+				// loop runs on the context, and without this it kept firing
+				// after Start had returned the error.
+				m.cancel()
 				if err := m.stopAllLocked(); err != nil {
 					termout.Errorf("[running-man] Failed to stop processes during cleanup: %v\n", err)
 				}
@@ -178,6 +219,12 @@ func (m *Manager) startRecurringProcess(name string, cfg ProcessConfig, interval
 
 // runRecurringProcess executes a single instance of a recurring process
 func (m *Manager) runRecurringProcess(name string, cfg ProcessConfig) {
+	// The ticker and cancellation can be ready together, and select picks
+	// between them at random, so a tick can arrive after Stop.
+	if m.ctx.Err() != nil {
+		return
+	}
+
 	// Create a new wrapper for this execution
 	wrapper := m.newWrapper(name, cfg)
 
@@ -197,9 +244,10 @@ func (m *Manager) runRecurringProcess(name string, cfg ProcessConfig) {
 	// every recurring process, regardless of whether its runs were succeeding,
 	// because ProcessState stays nil on a wrapper whose Start() was never
 	// called.
-	m.mu.Lock()
-	m.processes[name] = wrapper
-	m.mu.Unlock()
+	if !m.adopt(name, wrapper) {
+		discard(wrapper)
+		return
+	}
 
 	// Wait for the process to complete
 	err := wrapper.Wait()
@@ -299,10 +347,10 @@ func (m *Manager) Wait() error {
 					return
 				}
 
-				// Update wrapper in map
-				m.mu.Lock()
-				m.processes[processName] = newWrapper
-				m.mu.Unlock()
+				if !m.adopt(processName, newWrapper) {
+					discard(newWrapper)
+					return
+				}
 
 				// Continue loop to wait for the restarted process
 			}
@@ -351,6 +399,10 @@ func (m *Manager) stopAllLocked() error {
 
 // Restart stops and restarts a specific process by name
 func (m *Manager) Restart(processName string) error {
+	if m.ctx.Err() != nil {
+		return fmt.Errorf("cannot restart process %s: the manager is stopped", processName)
+	}
+
 	m.mu.Lock()
 	cfg, exists := m.configs[processName]
 	if !exists {
@@ -400,9 +452,10 @@ func (m *Manager) Restart(processName string) error {
 		return fmt.Errorf("failed to restart process %s: %w", processName, err)
 	}
 
-	m.mu.Lock()
-	m.processes[processName] = wrapper
-	m.mu.Unlock()
+	if !m.adopt(processName, wrapper) {
+		discard(wrapper)
+		return fmt.Errorf("cannot restart process %s: the manager stopped during the restart", processName)
+	}
 
 	return nil
 }
@@ -422,10 +475,13 @@ func (m *Manager) ExitCodes() map[string]int {
 // ListProcesses returns information about all managed processes
 func (m *Manager) ListProcesses() []ProcessInfo {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 
 	infos := make([]ProcessInfo, 0, len(m.processes))
-	for name, p := range m.processes {
+	for _, name := range m.order {
+		p, ok := m.processes[name]
+		if !ok {
+			continue
+		}
 		config, hasConfig := m.configs[name]
 		info := ProcessInfo{
 			Name:      name,
@@ -443,12 +499,35 @@ func (m *Manager) ListProcesses() []ProcessInfo {
 			info.Interval = config.Interval
 			info.Status = recurringStatus(info.Status, config.Interval, info.ExitCode)
 		}
-		if info.Status == "running" {
-			info.Ports = ListeningPorts(info.PID)
-		}
 		infos = append(infos, info)
 	}
+	m.mu.RUnlock()
+
+	addPorts(infos)
 	return infos
+}
+
+// addPorts fills in the listening ports of the running processes in infos.
+//
+// Called after the manager's lock is released. Looking ports up shells out to
+// ps and lsof, and doing that under the lock made Restart and Stop, which need
+// it for writing, wait for every subprocess.
+func addPorts(infos []ProcessInfo) {
+	var pids []int
+	for _, info := range infos {
+		if info.Status == "running" {
+			pids = append(pids, info.PID)
+		}
+	}
+	if len(pids) == 0 {
+		return
+	}
+	ports := ListeningPortsFor(pids)
+	for i := range infos {
+		if infos[i].Status == "running" {
+			infos[i].Ports = ports[infos[i].PID]
+		}
+	}
 }
 
 // reportExit records a non-zero exit in the log buffer.
@@ -497,8 +576,10 @@ func (m *Manager) ProcessNames() []string {
 	defer m.mu.RUnlock()
 
 	names := make([]string, 0, len(m.processes))
-	for name := range m.processes {
-		names = append(names, name)
+	for _, name := range m.order {
+		if _, ok := m.processes[name]; ok {
+			names = append(names, name)
+		}
 	}
 	return names
 }
@@ -506,10 +587,9 @@ func (m *Manager) ProcessNames() []string {
 // GetProcess returns information about a specific process
 func (m *Manager) GetProcess(name string) (*ProcessInfo, error) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
 	p, exists := m.processes[name]
 	if !exists {
+		m.mu.RUnlock()
 		return nil, fmt.Errorf("process %s not found", name)
 	}
 
@@ -530,10 +610,11 @@ func (m *Manager) GetProcess(name string) (*ProcessInfo, error) {
 		info.Interval = config.Interval
 		info.Status = recurringStatus(info.Status, config.Interval, info.ExitCode)
 	}
-	if info.Status == "running" {
-		info.Ports = ListeningPorts(info.PID)
-	}
-	return info, nil
+	m.mu.RUnlock()
+
+	infos := []ProcessInfo{*info}
+	addPorts(infos)
+	return &infos[0], nil
 }
 
 // setupSignalHandlers configures graceful shutdown on SIGINT/SIGTERM
