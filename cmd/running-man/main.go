@@ -95,6 +95,27 @@ func slugify(s string) string {
 	return s
 }
 
+// processNamer names --process commands after their slug, adding -2, -3, ...
+// until the name is free.
+//
+// It tracks the names actually taken, not a count per slug. Counting gave
+// `foo`, `foo`, `foo 2` the names foo, foo-2 and foo-2: the manager keys
+// processes by name, so one of the two was silently dropped. CLI processes do
+// not pass through config validation, which is what catches duplicates in a
+// config file.
+type processNamer map[string]bool
+
+// next returns the name for one more command.
+func (n processNamer) next(cmdStr string) string {
+	base := slugify(cmdStr)
+	name := base
+	for i := 2; n[name]; i++ {
+		name = fmt.Sprintf("%s-%d", base, i)
+	}
+	n[name] = true
+	return name
+}
+
 // parseCommandString splits a command string into command and arguments
 // Uses shellquote to properly handle quoted arguments
 func parseCommandString(cmdStr string) (string, []string, error) {
@@ -387,14 +408,13 @@ func runCommand(args []string) {
 
 	// Parse process configurations
 	var processes []process.ProcessConfig
-	nameMap := make(map[string]int)
+	names := processNamer{}
 
 	// First, add processes from config file (if no --process flags provided)
 	if len(procs) == 0 && cfg != nil {
 		processes = cfg.ToProcessConfigs()
-		// Build nameMap for config processes to avoid collisions
 		for _, proc := range processes {
-			nameMap[proc.Name] = 1
+			names[proc.Name] = true
 		}
 	}
 
@@ -406,17 +426,7 @@ func runCommand(args []string) {
 			os.Exit(1)
 		}
 
-		// Generate slug name from the full command string
-		baseName := slugify(cmdStr)
-		name := baseName
-
-		// Handle collisions by appending counter
-		if count, exists := nameMap[baseName]; exists {
-			nameMap[baseName] = count + 1
-			name = fmt.Sprintf("%s-%d", baseName, count+1)
-		} else {
-			nameMap[baseName] = 1
-		}
+		name := names.next(cmdStr)
 
 		processes = append(processes, process.ProcessConfig{
 			Name:    name,

@@ -347,6 +347,14 @@ func TestProcessConfigCreation(t *testing.T) {
 			wantCommands: []string{"echo", "echo", "echo"},
 		},
 		{
+			// Counting by base name alone gave the third command "foo-2" too,
+			// and the manager's map silently kept only one of the two.
+			name:         "a generated name does not collide with a later slug",
+			wraps:        []string{"foo", "foo", "foo 2"},
+			wantNames:    []string{"foo", "foo-2", "foo-2-2"},
+			wantCommands: []string{"foo", "foo", "foo"},
+		},
+		{
 			name:         "complex commands",
 			wraps:        []string{`sh -c "echo test"`, "python -m http.server"},
 			wantNames:    []string{"sh-c-echo-test", "python-m-http-server"},
@@ -356,8 +364,7 @@ func TestProcessConfigCreation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Simulate the process config creation logic
-			nameMap := make(map[string]int)
+			names := processNamer{}
 			var configs []struct {
 				Name    string
 				Command string
@@ -369,15 +376,7 @@ func TestProcessConfigCreation(t *testing.T) {
 					t.Fatalf("parseCommandString(%q) failed: %v", cmdStr, err)
 				}
 
-				baseName := slugify(cmdStr)
-				name := baseName
-
-				if count, exists := nameMap[baseName]; exists {
-					nameMap[baseName] = count + 1
-					name = fmt.Sprintf("%s-%d", baseName, count+1)
-				} else {
-					nameMap[baseName] = 1
-				}
+				name := names.next(cmdStr)
 
 				configs = append(configs, struct {
 					Name    string
