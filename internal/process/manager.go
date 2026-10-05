@@ -64,6 +64,11 @@ type Manager struct {
 	otelEndpoint string
 	otelPort     int
 	otelEnabled  bool
+
+	// order is the process names as configured. The processes and configs
+	// maps have no order, and iterating them started and listed processes in a
+	// different random order on every run.
+	order []string
 }
 
 // NewManager creates a new Manager for multiple processes
@@ -91,6 +96,9 @@ func NewManagerWithOTEL(configs []ProcessConfig, handler LineHandler, otelEndpoi
 
 	// Store configs for later restart
 	for _, cfg := range configs {
+		if _, dup := m.configs[cfg.Name]; !dup {
+			m.order = append(m.order, cfg.Name)
+		}
 		m.configs[cfg.Name] = cfg
 	}
 
@@ -117,8 +125,10 @@ func (m *Manager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Start each process
-	for name, cfg := range m.configs {
+	// Start each process, in the order configured: until depends_on exists,
+	// that order is the only statement of what needs to come up first.
+	for _, name := range m.order {
+		cfg := m.configs[name]
 		// Check if this is a recurring process
 		if cfg.Interval != "" {
 			// Parse interval duration
@@ -425,7 +435,11 @@ func (m *Manager) ListProcesses() []ProcessInfo {
 	defer m.mu.RUnlock()
 
 	infos := make([]ProcessInfo, 0, len(m.processes))
-	for name, p := range m.processes {
+	for _, name := range m.order {
+		p, ok := m.processes[name]
+		if !ok {
+			continue
+		}
 		config, hasConfig := m.configs[name]
 		info := ProcessInfo{
 			Name:      name,
@@ -497,8 +511,10 @@ func (m *Manager) ProcessNames() []string {
 	defer m.mu.RUnlock()
 
 	names := make([]string, 0, len(m.processes))
-	for name := range m.processes {
-		names = append(names, name)
+	for _, name := range m.order {
+		if _, ok := m.processes[name]; ok {
+			names = append(names, name)
+		}
 	}
 	return names
 }

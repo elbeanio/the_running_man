@@ -57,7 +57,9 @@ tracing:
 ### Processes Configuration
 
 #### `processes` (array)
-List of processes to run and manage.
+List of processes to run and manage. They are started in the order listed, and
+`/processes` reports them in that order. A process is started without waiting
+for the one before it to be ready, so list order is a sequence, not a dependency.
 
 **Each process supports:**
 - `name` (string, required): Unique identifier for the process
