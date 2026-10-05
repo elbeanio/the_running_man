@@ -120,6 +120,33 @@ func (m *Manager) newWrapper(name string, cfg ProcessConfig) *ProcessWrapper {
 	return w
 }
 
+// adopt makes a run that has just started the process's current one -- unless
+// the manager has been stopped meanwhile, in which case it reports false and
+// the caller must stop the run itself.
+//
+// Every run started after Start goes through here, because a run can fork
+// before Stop and register after it. Stop cancels the context, then takes the
+// lock and stops every registered run. A run registering before that sweep is
+// stopped by it; one registering after finds the context cancelled here. With
+// no check, it was registered after the sweep and never stopped, and outlived
+// Running Man.
+func (m *Manager) adopt(name string, w *ProcessWrapper) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ctx.Err() != nil {
+		return false
+	}
+	m.processes[name] = w
+	return true
+}
+
+// discard stops and reaps a run the manager would not adopt. Outside the lock:
+// Stop walks the process table.
+func discard(w *ProcessWrapper) {
+	_ = w.Stop()
+	_ = w.Wait()
+}
+
 // Start starts all managed processes
 func (m *Manager) Start() error {
 	m.mu.Lock()
@@ -192,6 +219,12 @@ func (m *Manager) startRecurringProcess(name string, cfg ProcessConfig, interval
 
 // runRecurringProcess executes a single instance of a recurring process
 func (m *Manager) runRecurringProcess(name string, cfg ProcessConfig) {
+	// The ticker and cancellation can be ready together, and select picks
+	// between them at random, so a tick can arrive after Stop.
+	if m.ctx.Err() != nil {
+		return
+	}
+
 	// Create a new wrapper for this execution
 	wrapper := m.newWrapper(name, cfg)
 
@@ -211,9 +244,10 @@ func (m *Manager) runRecurringProcess(name string, cfg ProcessConfig) {
 	// every recurring process, regardless of whether its runs were succeeding,
 	// because ProcessState stays nil on a wrapper whose Start() was never
 	// called.
-	m.mu.Lock()
-	m.processes[name] = wrapper
-	m.mu.Unlock()
+	if !m.adopt(name, wrapper) {
+		discard(wrapper)
+		return
+	}
 
 	// Wait for the process to complete
 	err := wrapper.Wait()
@@ -313,10 +347,10 @@ func (m *Manager) Wait() error {
 					return
 				}
 
-				// Update wrapper in map
-				m.mu.Lock()
-				m.processes[processName] = newWrapper
-				m.mu.Unlock()
+				if !m.adopt(processName, newWrapper) {
+					discard(newWrapper)
+					return
+				}
 
 				// Continue loop to wait for the restarted process
 			}
@@ -365,6 +399,10 @@ func (m *Manager) stopAllLocked() error {
 
 // Restart stops and restarts a specific process by name
 func (m *Manager) Restart(processName string) error {
+	if m.ctx.Err() != nil {
+		return fmt.Errorf("cannot restart process %s: the manager is stopped", processName)
+	}
+
 	m.mu.Lock()
 	cfg, exists := m.configs[processName]
 	if !exists {
@@ -414,9 +452,10 @@ func (m *Manager) Restart(processName string) error {
 		return fmt.Errorf("failed to restart process %s: %w", processName, err)
 	}
 
-	m.mu.Lock()
-	m.processes[processName] = wrapper
-	m.mu.Unlock()
+	if !m.adopt(processName, wrapper) {
+		discard(wrapper)
+		return fmt.Errorf("cannot restart process %s: the manager stopped during the restart", processName)
+	}
 
 	return nil
 }
