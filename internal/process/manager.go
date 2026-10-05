@@ -148,7 +148,11 @@ func (m *Manager) Start() error {
 			// Start regular (non-recurring) process
 			wrapper := m.newWrapper(name, cfg)
 			if err := wrapper.Start(); err != nil {
-				// If any process fails to start, stop all started processes
+				// If any process fails to start, stop all started processes.
+				// Cancelled first: a recurring process launched earlier in this
+				// loop runs on the context, and without this it kept firing
+				// after Start had returned the error.
+				m.cancel()
 				if err := m.stopAllLocked(); err != nil {
 					termout.Errorf("[running-man] Failed to stop processes during cleanup: %v\n", err)
 				}
