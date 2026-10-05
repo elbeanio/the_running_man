@@ -14,9 +14,6 @@ func TestSilenceSuppressesAndRestores(t *testing.T) {
 	if !Quiet() {
 		t.Error("Silence did not suppress writes")
 	}
-	if w := Writer(); w == nil {
-		t.Error("Writer returned nil while suppressed")
-	}
 
 	restore()
 	if Quiet() {

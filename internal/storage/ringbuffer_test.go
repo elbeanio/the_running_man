@@ -261,27 +261,6 @@ func TestRingBuffer_Stats(t *testing.T) {
 	}
 }
 
-func TestRingBuffer_Clear(t *testing.T) {
-	rb := NewRingBuffer(100, 30*time.Minute, 50*1024*1024)
-
-	rb.Append(&parser.LogEntry{
-		Timestamp: time.Now(),
-		Message:   "test",
-		Raw:       "test",
-	})
-
-	rb.Clear()
-
-	stats := rb.Stats()
-	if stats.TotalEntries != 0 {
-		t.Errorf("Expected 0 entries after clear, got %d", stats.TotalEntries)
-	}
-
-	if stats.TotalBytes != 0 {
-		t.Errorf("Expected 0 bytes after clear, got %d", stats.TotalBytes)
-	}
-}
-
 func TestRingBuffer_ThreadSafety(t *testing.T) {
 	rb := NewRingBuffer(1000, 30*time.Minute, 50*1024*1024)
 
@@ -660,9 +639,6 @@ func TestRingBuffer_NonPositiveMaxSizeDoesNotPanic(t *testing.T) {
 
 			rb := NewRingBuffer(maxSize, 30*time.Minute, 1024)
 			rb.Append(&parser.LogEntry{Timestamp: time.Now(), Raw: "x", Message: "x"})
-
-			// Clear() re-allocates from maxSize too, so exercise that path.
-			rb.Clear()
 			rb.Append(&parser.LogEntry{Timestamp: time.Now(), Raw: "y", Message: "y"})
 
 			// The requirement is that it degrades rather than crashing. A

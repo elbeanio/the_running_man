@@ -28,9 +28,9 @@ import (
 //   - A dev server binds a moment after starting, so ports are resolved when
 //     asked rather than recorded once at startup.
 
-// portCacheTTL bounds how often lsof is invoked. /processes can be polled (the
-// TUI does), and shelling out per request would be wasteful; a port is not
-// going to change within a second or two.
+// portCacheTTL bounds how often lsof is invoked. /processes can be polled -- an
+// agent checking whether a server is up will -- and shelling out per request
+// would be wasteful; a port is not going to change within a second or two.
 const portCacheTTL = 2 * time.Second
 
 type portCacheEntry struct {
@@ -65,7 +65,17 @@ func ListeningPorts(pid int) []int {
 	ports := listeningPortsUncached(pid)
 
 	portCacheMu.Lock()
-	portCache[pid] = portCacheEntry{ports: ports, at: time.Now()}
+	// Expired entries are swept here because nothing else removes them, and
+	// every run of a recurring process has a new pid: left alone, the cache
+	// grew for the life of the instance. The sweep is over entries written in
+	// the last TTL plus the dead ones, which is a handful.
+	now := time.Now()
+	for p, entry := range portCache {
+		if now.Sub(entry.at) >= portCacheTTL {
+			delete(portCache, p)
+		}
+	}
+	portCache[pid] = portCacheEntry{ports: ports, at: now}
 	portCacheMu.Unlock()
 
 	return ports

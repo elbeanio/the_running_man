@@ -118,7 +118,7 @@ func TestContainerStreamer_Integration(t *testing.T) {
 	}
 
 	// Discover the test container
-	containers, err := client.DiscoverContainers(ctx, "./docker-compose.yml", []string{"test-logger"})
+	containers, err := client.DiscoverContainersInProject(ctx, GetProjectNameFromPath("./docker-compose.yml"), []string{"test-logger"})
 	if err != nil || len(containers) == 0 {
 		t.Skip("No test-logger container found - manual setup required")
 	}

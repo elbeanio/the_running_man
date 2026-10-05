@@ -195,10 +195,3 @@ func (m *MultiParser) Flush(source string, isStderr bool) *LogEntry {
 
 	return st.python.Flush(source)
 }
-
-// ParseLine is a convenience function that creates a parser and parses a
-// single line. It returns the entries produced; see MultiParser.ParseLine.
-func ParseLine(source string, line string) []*LogEntry {
-	parser := NewMultiParser()
-	return parser.ParseLine(source, line, time.Now())
-}

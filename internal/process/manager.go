@@ -54,6 +54,7 @@ type Manager struct {
 	processes map[string]*ProcessWrapper
 	configs   map[string]ProcessConfig
 	handler   LineHandler
+	onEnd     StreamEndHandler
 	mu        sync.RWMutex
 	sigChan   chan os.Signal
 	ctx       context.Context
@@ -96,6 +97,21 @@ func NewManagerWithOTEL(configs []ProcessConfig, handler LineHandler, otelEndpoi
 	return m
 }
 
+// OnStreamEnd registers fn to be called as each output stream of every
+// process run ends -- including runs started later by a restart or an
+// interval. It must be called before Start.
+func (m *Manager) OnStreamEnd(fn StreamEndHandler) {
+	m.onEnd = fn
+}
+
+// newWrapper creates a wrapper for one run of a process. Every run goes
+// through here so that none is created without the stream-end hook.
+func (m *Manager) newWrapper(name string, cfg ProcessConfig) *ProcessWrapper {
+	w := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled)
+	w.OnStreamEnd(m.onEnd)
+	return w
+}
+
 // Start starts all managed processes
 func (m *Manager) Start() error {
 	m.mu.Lock()
@@ -113,14 +129,14 @@ func (m *Manager) Start() error {
 			}
 
 			// Start recurring process
-			wrapper := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled)
+			wrapper := m.newWrapper(name, cfg)
 			m.processes[name] = wrapper
 
 			// Start the recurring execution in a goroutine
 			go m.startRecurringProcess(name, cfg, interval)
 		} else {
 			// Start regular (non-recurring) process
-			wrapper := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled)
+			wrapper := m.newWrapper(name, cfg)
 			if err := wrapper.Start(); err != nil {
 				// If any process fails to start, stop all started processes
 				if err := m.stopAllLocked(); err != nil {
@@ -163,7 +179,7 @@ func (m *Manager) startRecurringProcess(name string, cfg ProcessConfig, interval
 // runRecurringProcess executes a single instance of a recurring process
 func (m *Manager) runRecurringProcess(name string, cfg ProcessConfig) {
 	// Create a new wrapper for this execution
-	wrapper := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled)
+	wrapper := m.newWrapper(name, cfg)
 
 	// Start the process
 	if err := wrapper.Start(); err != nil {
@@ -272,7 +288,7 @@ func (m *Manager) Wait() error {
 				m.handler(processName, fmt.Sprintf("Process crashed with exit code %d, restarting...", exitCode), time.Now(), true)
 
 				// Create new wrapper and restart
-				newWrapper := NewWithOTEL(processName, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled)
+				newWrapper := m.newWrapper(processName, cfg)
 				if err := newWrapper.Start(); err != nil {
 					m.handler(processName, fmt.Sprintf("Failed to restart: %v", err), time.Now(), true)
 					mu.Lock()
@@ -379,7 +395,7 @@ func (m *Manager) Restart(processName string) error {
 	}
 
 	// Start new instance
-	wrapper := NewWithOTEL(cfg.Name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled)
+	wrapper := m.newWrapper(cfg.Name, cfg)
 	if err := wrapper.Start(); err != nil {
 		return fmt.Errorf("failed to restart process %s: %w", processName, err)
 	}

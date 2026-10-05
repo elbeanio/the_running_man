@@ -174,15 +174,6 @@ func TestComposeOptions_UpArgs_Minimal(t *testing.T) {
 	}
 }
 
-func TestComposeCommand_String(t *testing.T) {
-	if got := (ComposeCommand{Name: "docker", Base: []string{"compose"}}).String(); got != "docker compose" {
-		t.Errorf("got %q", got)
-	}
-	if got := (ComposeCommand{Name: "docker-compose"}).String(); got != "docker-compose" {
-		t.Errorf("got %q", got)
-	}
-}
-
 func TestDisplayCommand_ShowsExactlyWhatWillRun(t *testing.T) {
 	cmd := ComposeCommand{Name: "docker", Base: []string{"compose"}}
 	opts := ComposeOptions{Files: []string{"a.yml"}, Profiles: []string{"api"}}

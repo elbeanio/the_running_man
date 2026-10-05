@@ -434,7 +434,7 @@ func TestCheckPatternComplexity(t *testing.T) {
 			if tt.containsText != "" && len(warnings) > 0 {
 				found := false
 				for _, w := range warnings {
-					if contains(w, tt.containsText) {
+					if strings.Contains(w, tt.containsText) {
 						found = true
 						break
 					}
@@ -482,7 +482,7 @@ func TestPatternWarnings_Integration(t *testing.T) {
 
 	found := false
 	for _, log := range logs {
-		if contains(log.Message, "Warning") && contains(log.Message, "wildcards") {
+		if strings.Contains(log.Message, "Warning") && strings.Contains(log.Message, "wildcards") {
 			found = true
 			break
 		}
@@ -491,20 +491,6 @@ func TestPatternWarnings_Integration(t *testing.T) {
 	if !found {
 		t.Error("Expected to find wildcard warning in captured logs")
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 // Batch 1: Security validation tests for GET /processes/{name}

@@ -37,25 +37,6 @@ type ComposeService struct {
 	// We only care about enough fields to identify services
 }
 
-// ParseComposeFile reads and parses a docker-compose.yml file
-func ParseComposeFile(path string) (*ComposeFile, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read compose file: %w", err)
-	}
-
-	var compose ComposeFile
-	if err := yaml.Unmarshal(data, &compose); err != nil {
-		return nil, fmt.Errorf("failed to parse compose file: %w", err)
-	}
-
-	if len(compose.Services) == 0 {
-		return nil, fmt.Errorf("no services found in compose file")
-	}
-
-	return &compose, nil
-}
-
 // GetServiceNames returns every service name in the compose file, including
 // services gated behind a profile.
 //

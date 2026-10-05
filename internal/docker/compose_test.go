@@ -31,7 +31,7 @@ services:
 	}
 
 	// Parse the file
-	compose, err := ParseComposeFile(composePath)
+	compose, err := ParseComposeFiles([]string{composePath})
 	if err != nil {
 		t.Fatalf("Failed to parse compose file: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestGetServiceNames(t *testing.T) {
 }
 
 func TestParseComposeFile_InvalidPath(t *testing.T) {
-	_, err := ParseComposeFile("/nonexistent/docker-compose.yml")
+	_, err := ParseComposeFiles([]string{"/nonexistent/docker-compose.yml"})
 	if err == nil {
 		t.Error("Expected error for nonexistent file, got nil")
 	}
@@ -106,7 +106,7 @@ func TestParseComposeFile_InvalidYAML(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	_, err = ParseComposeFile(composePath)
+	_, err = ParseComposeFiles([]string{composePath})
 	if err == nil {
 		t.Error("Expected error for invalid YAML, got nil")
 	}
@@ -124,7 +124,7 @@ services: {}
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	_, err = ParseComposeFile(composePath)
+	_, err = ParseComposeFiles([]string{composePath})
 	if err == nil {
 		t.Error("Expected error for compose file with no services")
 	}
@@ -146,7 +146,7 @@ services:
 		t.Fatalf("Failed to create test compose file: %v", err)
 	}
 
-	compose, err := ParseComposeFile(composePath)
+	compose, err := ParseComposeFiles([]string{composePath})
 	if err != nil {
 		t.Fatalf("Failed to parse compose file: %v", err)
 	}
