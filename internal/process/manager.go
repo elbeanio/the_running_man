@@ -475,7 +475,6 @@ func (m *Manager) ExitCodes() map[string]int {
 // ListProcesses returns information about all managed processes
 func (m *Manager) ListProcesses() []ProcessInfo {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 
 	infos := make([]ProcessInfo, 0, len(m.processes))
 	for _, name := range m.order {
@@ -500,12 +499,35 @@ func (m *Manager) ListProcesses() []ProcessInfo {
 			info.Interval = config.Interval
 			info.Status = recurringStatus(info.Status, config.Interval, info.ExitCode)
 		}
-		if info.Status == "running" {
-			info.Ports = ListeningPorts(info.PID)
-		}
 		infos = append(infos, info)
 	}
+	m.mu.RUnlock()
+
+	addPorts(infos)
 	return infos
+}
+
+// addPorts fills in the listening ports of the running processes in infos.
+//
+// Called after the manager's lock is released. Looking ports up shells out to
+// ps and lsof, and doing that under the lock made Restart and Stop, which need
+// it for writing, wait for every subprocess.
+func addPorts(infos []ProcessInfo) {
+	var pids []int
+	for _, info := range infos {
+		if info.Status == "running" {
+			pids = append(pids, info.PID)
+		}
+	}
+	if len(pids) == 0 {
+		return
+	}
+	ports := ListeningPortsFor(pids)
+	for i := range infos {
+		if infos[i].Status == "running" {
+			infos[i].Ports = ports[infos[i].PID]
+		}
+	}
 }
 
 // reportExit records a non-zero exit in the log buffer.
@@ -565,10 +587,9 @@ func (m *Manager) ProcessNames() []string {
 // GetProcess returns information about a specific process
 func (m *Manager) GetProcess(name string) (*ProcessInfo, error) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
 	p, exists := m.processes[name]
 	if !exists {
+		m.mu.RUnlock()
 		return nil, fmt.Errorf("process %s not found", name)
 	}
 
@@ -589,10 +610,11 @@ func (m *Manager) GetProcess(name string) (*ProcessInfo, error) {
 		info.Interval = config.Interval
 		info.Status = recurringStatus(info.Status, config.Interval, info.ExitCode)
 	}
-	if info.Status == "running" {
-		info.Ports = ListeningPorts(info.PID)
-	}
-	return info, nil
+	m.mu.RUnlock()
+
+	infos := []ProcessInfo{*info}
+	addPorts(infos)
+	return &infos[0], nil
 }
 
 // setupSignalHandlers configures graceful shutdown on SIGINT/SIGTERM

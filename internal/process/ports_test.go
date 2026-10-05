@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"testing"
 	"time"
 )
@@ -53,15 +54,24 @@ func TestListeningPorts_DegradesGracefully(t *testing.T) {
 // The process tree must include the process itself, because a command run
 // without shell metacharacters is exec'd directly and IS the listener.
 func TestProcessTree_IncludesSelf(t *testing.T) {
-	tree := processTree(os.Getpid())
-	var found bool
-	for _, p := range tree {
-		if p == os.Getpid() {
-			found = true
-		}
+	self := os.Getpid()
+	if owner := processTrees([]int{self}); owner[self] != self {
+		t.Errorf("processTrees([%d]) does not include the root itself: %v", self, owner)
 	}
-	if !found {
-		t.Errorf("processTree(%d) does not include the pid itself: %v", os.Getpid(), tree)
+}
+
+// A descendant belongs to the tree of the root it was started under, which is
+// how a port found on the listener is reported against the process configured.
+func TestProcessTrees_AttributesChildrenToTheirRoot(t *testing.T) {
+	child := exec.Command("sleep", "30")
+	if err := child.Start(); err != nil {
+		t.Skipf("cannot start a child: %v", err)
+	}
+	defer func() { _ = child.Process.Kill(); _ = child.Wait() }()
+
+	self := os.Getpid()
+	if owner := processTrees([]int{self}); owner[child.Process.Pid] != self {
+		t.Errorf("child %d not attributed to root %d: %v", child.Process.Pid, self, owner[child.Process.Pid])
 	}
 }
 

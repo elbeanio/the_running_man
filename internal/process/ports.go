@@ -43,6 +43,17 @@ var (
 	portCache   = map[int]portCacheEntry{}
 )
 
+// The two commands port detection runs, behind variables so tests can count
+// them and hold one open.
+var (
+	snapshotProcesses = listProcesses
+	runLsof           = func(args ...string) []byte {
+		// Output is returned even when lsof exits non-zero; see the caller.
+		out, _ := exec.Command("lsof", args...).Output()
+		return out
+	}
+)
+
 // ListeningPorts returns the TCP ports the process or any of its descendants
 // are listening on, lowest first.
 //
@@ -51,43 +62,73 @@ var (
 // precondition, so every failure path degrades to "unknown" rather than an
 // error.
 func ListeningPorts(pid int) []int {
-	if pid <= 0 {
-		return nil
-	}
+	return ListeningPortsFor([]int{pid})[pid]
+}
+
+// ListeningPortsFor is ListeningPorts for several processes at once, keyed by
+// pid.
+//
+// Whatever is not cached is looked up together: one process-table snapshot and
+// one lsof, however many processes there are. /processes used to look each one
+// up separately -- a full snapshot and an lsof per process, 2N subprocesses in
+// sequence, fetching the same table N times.
+func ListeningPortsFor(pids []int) map[int][]int {
+	result := make(map[int][]int, len(pids))
+	var todo []int
 
 	portCacheMu.Lock()
-	if entry, ok := portCache[pid]; ok && time.Since(entry.at) < portCacheTTL {
-		portCacheMu.Unlock()
-		return entry.ports
+	now := time.Now()
+	for _, pid := range pids {
+		if pid <= 0 {
+			continue
+		}
+		if entry, ok := portCache[pid]; ok && now.Sub(entry.at) < portCacheTTL {
+			result[pid] = entry.ports
+			continue
+		}
+		todo = append(todo, pid)
 	}
 	portCacheMu.Unlock()
 
-	ports := listeningPortsUncached(pid)
+	if len(todo) == 0 {
+		return result
+	}
+	found := listeningPortsUncached(todo)
 
 	portCacheMu.Lock()
 	// Expired entries are swept here because nothing else removes them, and
 	// every run of a recurring process has a new pid: left alone, the cache
 	// grew for the life of the instance. The sweep is over entries written in
 	// the last TTL plus the dead ones, which is a handful.
-	now := time.Now()
+	now = time.Now()
 	for p, entry := range portCache {
 		if now.Sub(entry.at) >= portCacheTTL {
 			delete(portCache, p)
 		}
 	}
-	portCache[pid] = portCacheEntry{ports: ports, at: now}
+	for _, pid := range todo {
+		portCache[pid] = portCacheEntry{ports: found[pid], at: now}
+		result[pid] = found[pid]
+	}
 	portCacheMu.Unlock()
 
-	return ports
+	return result
 }
 
-func listeningPortsUncached(pid int) []int {
-	pids := processTree(pid)
-	if len(pids) == 0 {
-		return nil
-	}
+// listeningPortsUncached looks up the listening ports of each root process's
+// whole tree, with one snapshot and one lsof, keyed by root.
+func listeningPortsUncached(roots []int) map[int][]int {
+	owner := processTrees(roots)
 
-	args := []string{"-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-F", "n", "-p", joinInts(pids, ",")}
+	pids := make([]int, 0, len(owner))
+	for p := range owner {
+		pids = append(pids, p)
+	}
+	sort.Ints(pids)
+
+	// -F pn: a "p<pid>" line, then an "n<address>" line per listening socket,
+	// so each port can be attributed to the tree it came from.
+	args := []string{"-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-F", "pn", "-p", joinInts(pids, ",")}
 
 	// Parse the output even when lsof reports failure, and ignore the error.
 	//
@@ -95,35 +136,48 @@ func listeningPortsUncached(pid int) []int {
 	// matched -- but it still prints what it did find. Since the pid list comes
 	// from a process-table snapshot, a short-lived child that has since exited
 	// is normal, and treating that as total failure meant one dead pid hid every
-	// real port. exec.Cmd.Output returns captured stdout alongside the error.
-	output, _ := exec.Command("lsof", args...).Output()
+	// real port. runLsof returns captured stdout regardless.
+	output := runLsof(args...)
 	if len(output) == 0 {
 		// Nothing listening, or lsof is unavailable. Both mean "no ports known";
 		// port information is a hint, never a precondition.
 		return nil
 	}
 
-	seen := map[int]bool{}
+	seen := map[int]map[int]bool{}
+	current := 0
 	for _, line := range strings.Split(string(output), "\n") {
-		// -F n emits one field per line, prefixed by its type: "n*:8123",
-		// "n127.0.0.1:5432", "n[::1]:8080".
-		if !strings.HasPrefix(line, "n") {
+		if line == "" {
 			continue
 		}
-		if port, ok := portFromAddr(strings.TrimPrefix(line, "n")); ok {
-			seen[port] = true
+		switch line[0] {
+		case 'p':
+			current, _ = strconv.Atoi(line[1:])
+		case 'n':
+			// "n*:8123", "n127.0.0.1:5432", "n[::1]:8080".
+			root, ok := owner[current]
+			if !ok {
+				continue
+			}
+			if port, ok := portFromAddr(line[1:]); ok {
+				if seen[root] == nil {
+					seen[root] = map[int]bool{}
+				}
+				seen[root][port] = true
+			}
 		}
 	}
 
-	ports := make([]int, 0, len(seen))
-	for p := range seen {
-		ports = append(ports, p)
+	result := make(map[int][]int, len(seen))
+	for root, set := range seen {
+		ports := make([]int, 0, len(set))
+		for p := range set {
+			ports = append(ports, p)
+		}
+		sort.Ints(ports)
+		result[root] = ports
 	}
-	sort.Ints(ports)
-	if len(ports) == 0 {
-		return nil
-	}
-	return ports
+	return result
 }
 
 // portFromAddr extracts the port from an lsof address such as "*:8123",
@@ -140,37 +194,41 @@ func portFromAddr(addr string) (int, bool) {
 	return port, true
 }
 
-// processTree returns pid and all of its descendants.
+// processTrees maps each root and every one of its descendants to the root,
+// from a single snapshot of the process table.
 //
 // Needed because commands run through a shell: the listener is typically a
 // grandchild, so asking lsof about the shell's pid alone finds nothing.
-func processTree(pid int) []int {
-	entries, err := listProcesses()
-	if err != nil {
-		// Without the process table we can still ask about the pid itself.
-		return []int{pid}
+func processTrees(roots []int) map[int]int {
+	owner := make(map[int]int, len(roots))
+	for _, root := range roots {
+		owner[root] = root
 	}
 
-	tree := map[int]bool{pid: true}
-	for changed := true; changed; {
-		changed = false
-		for _, e := range entries {
-			if tree[e.pid] {
-				continue
-			}
-			if tree[e.ppid] {
-				tree[e.pid] = true
-				changed = true
+	entries, err := snapshotProcesses()
+	if err != nil {
+		// Without the process table we can still ask about the roots themselves.
+		return owner
+	}
+
+	children := map[int][]int{}
+	for _, e := range entries {
+		children[e.ppid] = append(children[e.ppid], e.pid)
+	}
+	for _, root := range roots {
+		queue := []int{root}
+		for len(queue) > 0 {
+			p := queue[0]
+			queue = queue[1:]
+			for _, c := range children[p] {
+				if _, done := owner[c]; !done {
+					owner[c] = root
+					queue = append(queue, c)
+				}
 			}
 		}
 	}
-
-	pids := make([]int, 0, len(tree))
-	for p := range tree {
-		pids = append(pids, p)
-	}
-	sort.Ints(pids)
-	return pids
+	return owner
 }
 
 func joinInts(values []int, sep string) string {
