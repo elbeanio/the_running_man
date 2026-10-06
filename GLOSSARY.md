@@ -54,6 +54,17 @@ so the developer and the agent are looking at the same run.
   read as "down", and from `running`, which would be untrue.
 - **Restart on crash** — the `restart_on_crash` flag: respawn a managed process when it
   exits non-zero. Not used for **recurring processes**, which re-run on schedule anyway.
+- **Dependency** — a **managed process** or **Compose service** named in another managed
+  process's `depends_on`. A **hard** dependency: the dependent does not start until the
+  dependency is **ready**, and if it never becomes ready, startup goes no further. A
+  recurring process cannot be one.
+- **Healthcheck** — how Running Man tells that a **dependency** is **ready**: one of
+  `port` (a TCP connect succeeds), `http` (a 2xx response) or `log` (a line of the current
+  run contains the text), with a `timeout`. Declared once, on the thing depended on --
+  `healthcheck:` on a process, the service's own Compose healthcheck, or
+  `docker_compose.healthchecks` for a service without one. One word, as in Compose.
+- **Ready** — a **dependency** whose **healthcheck** has passed. Distinct from `running`:
+  a process is running as soon as it starts, and ready only once its healthcheck passes.
 - **Wrapper** — internal: the object owning one managed process's OS handle and output
   capture (`ProcessWrapper`). Not a user-facing term.
 

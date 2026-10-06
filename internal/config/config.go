@@ -106,6 +106,14 @@ type ProcessConfig struct {
 	Args           []string `yaml:"args,omitempty"`
 	RestartOnCrash bool     `yaml:"restart_on_crash,omitempty"`
 	Interval       string   `yaml:"interval,omitempty"` // Interval for recurring execution (e.g., "1m", "30s", "5h")
+
+	// DependsOn names the processes and Compose services that must be ready
+	// before this process starts. Each must have a healthcheck.
+	DependsOn []string `yaml:"depends_on,omitempty"`
+
+	// Healthcheck says when this process is ready, for anything that depends
+	// on it.
+	Healthcheck *HealthcheckConfig `yaml:"healthcheck,omitempty"`
 }
 
 // Validate checks the config for errors and returns validation errors.
@@ -140,6 +148,11 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("process '%s' has a non-positive interval '%s': "+
 					"recurring processes need a positive interval such as \"30s\" or \"1m\"",
 					proc.Name, proc.Interval)
+			}
+		}
+		if proc.Healthcheck != nil {
+			if err := proc.Healthcheck.Validate(); err != nil {
+				return fmt.Errorf("process '%s': %w", proc.Name, err)
 			}
 		}
 		names[proc.Name] = true
