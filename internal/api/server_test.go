@@ -68,7 +68,6 @@ func TestHandleLogs_WithEntries(t *testing.T) {
 		Source:    "test",
 		Message:   "error message",
 		Raw:       "error message",
-		IsError:   true,
 	})
 
 	req := httptest.NewRequest("GET", "/logs", nil)
@@ -101,7 +100,6 @@ func TestHandleLogs_LevelFilter(t *testing.T) {
 		Level:     parser.LevelError,
 		Message:   "error",
 		Raw:       "error",
-		IsError:   true,
 	})
 
 	// Filter for errors only
@@ -133,7 +131,6 @@ func TestHandleLogs_MultipleFilters(t *testing.T) {
 		Level:     parser.LevelError,
 		Message:   "error",
 		Raw:       "error",
-		IsError:   true,
 	})
 	buffer.Append(&parser.LogEntry{
 		Timestamp: time.Now(),
@@ -224,14 +221,12 @@ func TestHandleErrors(t *testing.T) {
 		Level:     parser.LevelInfo,
 		Message:   "info",
 		Raw:       "info",
-		IsError:   false,
 	})
 	buffer.Append(&parser.LogEntry{
 		Timestamp: time.Now(),
 		Level:     parser.LevelError,
 		Message:   "error",
 		Raw:       "error",
-		IsError:   true,
 	})
 
 	req := httptest.NewRequest("GET", "/errors", nil)
@@ -458,7 +453,6 @@ func TestPatternWarnings_Integration(t *testing.T) {
 			Source:    source,
 			Message:   line,
 			Raw:       line,
-			IsError:   isStderr,
 		}
 		buffer.Append(entry)
 	}
@@ -1238,7 +1232,7 @@ func TestHandleRoot_NotFound(t *testing.T) {
 // --- Review findings R4 and R5: the agent-facing API describing itself truthfully ---
 
 // R4: parser.LogEntry had no json tags, so it serialised under Go field names
-// ("Timestamp", "IsError") while docs/openapi.yaml documented snake_case and
+// ("Timestamp", "TraceID") while docs/openapi.yaml documented snake_case and
 // every other endpoint used snake_case. An agent following /docs -- the
 // discovery mechanism the tool depends on -- got every field name wrong on the
 // endpoint it uses most.
@@ -1251,7 +1245,6 @@ func TestLogsResponse_UsesSnakeCaseFieldNames(t *testing.T) {
 		SourceType: "process",
 		Message:    "boom",
 		Raw:        "boom",
-		IsError:    true,
 		Stacktrace: "trace here",
 		TraceID:    "abc123",
 	})
@@ -1275,7 +1268,7 @@ func TestLogsResponse_UsesSnakeCaseFieldNames(t *testing.T) {
 	// These are the names docs/openapi.yaml promises.
 	for _, key := range []string{
 		"timestamp", "level", "source", "source_type",
-		"message", "raw", "is_error", "stacktrace", "trace_id",
+		"message", "raw", "stacktrace", "trace_id",
 	} {
 		if _, ok := entry[key]; !ok {
 			t.Errorf("missing documented field %q; got keys %v", key, keysOf(entry))
@@ -1287,6 +1280,11 @@ func TestLogsResponse_UsesSnakeCaseFieldNames(t *testing.T) {
 		if _, ok := entry[key]; ok {
 			t.Errorf("field %q is still serialised under its Go name", key)
 		}
+	}
+
+	// is_error was removed: it duplicated level, and the two disagreed.
+	if _, ok := entry["is_error"]; ok {
+		t.Error("is_error is still serialised; level is the only error signal")
 	}
 }
 
@@ -1388,7 +1386,7 @@ func TestLogs_LimitAppliesAfterFiltering(t *testing.T) {
 	add := func(level parser.LogLevel, msg string) {
 		buffer.Append(&parser.LogEntry{
 			Timestamp: time.Now(), Level: level, Source: "app",
-			Message: msg, Raw: msg, IsError: level == parser.LevelError,
+			Message: msg, Raw: msg,
 		})
 	}
 	for i := 0; i < 20; i++ {
@@ -1439,7 +1437,7 @@ func TestErrors_LimitIsApplied(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		buffer.Append(&parser.LogEntry{
 			Timestamp: time.Now(), Level: parser.LevelError, Source: "app",
-			Message: fmt.Sprintf("err-%d", i), Raw: "e", IsError: true,
+			Message: fmt.Sprintf("err-%d", i), Raw: "e",
 		})
 	}
 	server := NewServer(buffer, testProjectDir, nil, nil, nil)

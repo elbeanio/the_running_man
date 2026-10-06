@@ -87,7 +87,6 @@ curl --unix-socket "$SOCK" "http://localhost/logs?limit=0"
       "source": "backend",
       "message": "Database connection failed",
       "raw": "2024-01-15 10:30:00 ERROR Database connection failed",
-      "is_error": true,
       "stacktrace": "",
       "trace_id": "abc123def456"  # If correlated with trace
     }

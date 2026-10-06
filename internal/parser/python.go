@@ -138,7 +138,6 @@ func (p *PythonParser) buildEntry(source string) *LogEntry {
 		Source:     source,
 		Message:    message,
 		Raw:        stacktrace,
-		IsError:    true,
 		Stacktrace: stacktrace,
 	}
 

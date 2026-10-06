@@ -164,14 +164,12 @@ paths:
                     source: "my-api"
                     message: "Failed to connect to database"
                     raw: "[2026-02-09 23:15:30] ERROR: Failed to connect to database"
-                    is_error: true
                     stacktrace: ""
                   - timestamp: "2026-02-09T23:15:32Z"
                     level: "warn"
                     source: "my-api"
                     message: "Retrying connection in 5s"
                     raw: "[2026-02-09 23:15:32] WARN: Retrying connection in 5s"
-                    is_error: false
                     stacktrace: ""
                 count: 2
         '400':
@@ -222,7 +220,6 @@ paths:
                     source: "my-api"
                     message: "Failed to connect to database"
                     raw: "[2026-02-09 23:15:30] ERROR: Failed to connect to database"
-                    is_error: true
                     stacktrace: "Traceback (most recent call last):\n  File \"app.py\", line 42, in connect\n    conn = psycopg2.connect(dsn)\npsycopg2.OperationalError: could not connect to server"
                 count: 1
         '400':
@@ -433,7 +430,15 @@ components:
         level:
           type: string
           enum: [debug, info, warn, error]
-          description: Log severity level
+          description: |
+            Log severity level, and the only signal of whether an entry is an error:
+            `/errors` returns exactly the `error` entries. Set by the parsers from the
+            entry's content: an explicit level, an unambiguous failure phrase, or the
+            presence of a stack trace, which promotes an entry logged at a lower level.
+
+            Arriving on stderr alone does NOT make an entry an error -- many tools write
+            ordinary progress to stderr, so such entries are recorded at `warn`. Check
+            `level=warn` as well as `/errors` when hunting a failure.
         source:
           type: string
           description: Name of the source that generated this log (process or container name)
@@ -443,16 +448,6 @@ components:
         raw:
           type: string
           description: Original unparsed log line
-        is_error:
-          type: boolean
-          description: |
-            Whether this entry represents an error condition. Set by the parsers from the
-            entry's content: an explicit level, an unambiguous failure phrase, or the
-            presence of a stack trace.
-
-            Arriving on stderr alone does NOT set this -- many tools write ordinary
-            progress to stderr, so such entries are recorded at level `warn` instead.
-            Check `level=warn` as well as `/errors` when hunting a failure.
         stacktrace:
           type: string
           description: Stack trace if this is an error with traceback (Python, etc.)
@@ -474,7 +469,6 @@ components:
         - source
         - message
         - raw
-        - is_error
 
     LogsResponse:
       type: object

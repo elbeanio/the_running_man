@@ -513,7 +513,6 @@ func TestReceiver_ProcessLogsRequest(t *testing.T) {
 	assert.Equal(t, "web", e.Source)
 	assert.Equal(t, "boom", e.Message)
 	assert.Equal(t, parser.LevelError, e.Level)
-	assert.True(t, e.IsError)
 	assert.Equal(t, "0102030405060708090a0b0c0d0e0f10", e.TraceID)
 }
 

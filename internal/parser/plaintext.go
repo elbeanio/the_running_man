@@ -131,7 +131,6 @@ func (p *PlainTextParser) Parse(source string, line string, timestamp time.Time,
 
 	if errnoPattern.MatchString(line) {
 		entry.Level = LevelError
-		entry.IsError = true
 		return entry
 	}
 
@@ -139,7 +138,6 @@ func (p *PlainTextParser) Parse(source string, line string, timestamp time.Time,
 	for _, pattern := range errorPatterns {
 		if pattern.MatchString(lineLower) {
 			entry.Level = LevelError
-			entry.IsError = true
 			return entry
 		}
 	}

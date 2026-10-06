@@ -120,13 +120,12 @@ func fixtureLogs() []logEntry {
 		{Timestamp: "2026-10-04T09:15:02Z", Level: "warn", Source: "backend",
 			Message: "deprecated config key 'legacy_mode'"},
 		{Timestamp: "2026-10-04T09:15:03Z", Level: "error", Source: "backend",
-			Message: "could not connect to database: connection refused", IsError: true,
+			Message: "could not connect to database: connection refused",
 			TraceID: "4bf92f3577b34da6a3ce929d0e0e4736"},
 		{Timestamp: "2026-10-04T09:15:04Z", Level: "info", Source: "backend",
 			Message: "retrying in 5s"},
 		{Timestamp: "2026-10-04T09:15:05Z", Level: "error", Source: "backend",
-			Message: "Traceback (most recent call last):\n  File \"app.py\", line 42\n    connect()\nConnectionError: refused",
-			IsError: true},
+			Message: "Traceback (most recent call last):\n  File \"app.py\", line 42\n    connect()\nConnectionError: refused"},
 	}
 }
 
