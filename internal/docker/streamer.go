@@ -45,6 +45,9 @@ type ContainerStreamer struct {
 
 	// history is how far back to replay when attaching. Zero replays nothing.
 	history time.Duration
+
+	// from, when set, replaces history as the replay start; see ReplayFrom.
+	from time.Time
 }
 
 // NewContainerStreamer creates a new streamer for the given container.
@@ -74,6 +77,14 @@ func (s *ContainerStreamer) OnStreamEnd(fn StreamEndHandler) {
 	s.onEnd = fn
 }
 
+// ReplayFrom replays the container's log from t rather than from the history
+// window. Used when reattaching to a restarted container: its log still holds
+// the previous run, which was captured the first time round. It must be
+// called before Start.
+func (s *ContainerStreamer) ReplayFrom(t time.Time) {
+	s.from = t
+}
+
 // Start begins streaming logs from the container
 func (s *ContainerStreamer) Start() error {
 	// A TTY container's log stream is the raw output, with none of the
@@ -96,7 +107,7 @@ func (s *ContainerStreamer) Start() error {
 		// written. Without them every line was stamped on arrival, and history
 		// from before Running Man attached was reported as having just happened.
 		Timestamps: true,
-		Since:      replaySince(s.history),
+		Since:      s.since(),
 	}
 
 	logStream, err := s.client.cli.ContainerLogs(s.ctx, s.containerID, options)
@@ -112,6 +123,17 @@ func (s *ContainerStreamer) Start() error {
 	}()
 
 	return nil
+}
+
+// since renders the Since option: from ReplayFrom when set, else the history
+// window.
+func (s *ContainerStreamer) since() string {
+	if !s.from.IsZero() {
+		// Fractional seconds: a restart inside the same second as the
+		// previous run's last line would otherwise replay that line.
+		return fmt.Sprintf("%d.%09d", s.from.Unix(), s.from.Nanosecond())
+	}
+	return replaySince(s.history)
 }
 
 // replaySince renders the Since option for a replay window. It was "0" under

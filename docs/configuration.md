@@ -142,7 +142,10 @@ Path to Docker Compose file. Running Man will:
   started Running Man is there too. Replayed lines keep the time Docker recorded for them,
   so `since` filters treat them by when they were written, not when they were read.
 - Show each service in TUI tabs
-- Handle container restarts automatically
+- Follow containers that start after it attached: a restart, a container recreated by
+  `docker compose up`, or a service that was not running at startup. A restarted container
+  is replayed from the start of its new run, so nothing from the previous run is captured
+  twice.
 
 **Example:**
 ```yaml

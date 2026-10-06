@@ -538,7 +538,7 @@ func runCommand(args []string) {
 	}
 
 	// Docker Compose integration
-	var containerStreamers []*docker.ContainerStreamer
+	var containerWatcher *docker.Watcher
 	var dockerClient *docker.Client
 	ctx := context.Background()
 
@@ -635,19 +635,20 @@ func runCommand(args []string) {
 			fmt.Printf("  not running: %s\n", strings.Join(missing, ", "))
 		}
 
-		// Start log streamers for each container
+		// Stream each container's logs, and keep streaming them: the watcher
+		// attaches again when a container restarts or is recreated, and picks
+		// up a service that starts later.
+		//
+		// Replays as much history as retention would keep, and no more:
+		// replayed lines arrive now, so anything older would otherwise be held
+		// for a full retention window regardless of its age.
+		containerWatcher = docker.NewWatcher(dockerClient, projectName, serviceNames, finalRetention, dockerLineHandler, flushStream)
 		for _, container := range containers {
-			// Replays as much history as retention would keep, and no more:
-			// replayed lines arrive now, so anything older would otherwise be
-			// held for a full retention window regardless of its age.
-			streamer := docker.NewContainerStreamer(dockerClient, container.ID, container.Name, dockerLineHandler, finalRetention)
-			streamer.OnStreamEnd(flushStream)
-			if err := streamer.Start(); err != nil {
+			if err := containerWatcher.Attach(container); err != nil {
 				fmt.Fprintf(os.Stderr, "[running-man] Failed to start log streamer for %s: %v\n", container.Name, err)
-				continue
 			}
-			containerStreamers = append(containerStreamers, streamer)
 		}
+		containerWatcher.Watch(discover)
 
 		fmt.Println()
 	}
@@ -810,7 +811,7 @@ func runCommand(args []string) {
 		// This was broken by the Wait() fix: beforehand, Wait() blocked on
 		// ctx.Done() forever, which accidentally kept Compose-only runs alive.
 		// Now it is deliberate.
-		if len(processes) == 0 && len(containerStreamers) > 0 {
+		if len(processes) == 0 && containerWatcher != nil {
 			fmt.Printf("\n[running-man] Streaming container logs. Press Ctrl+C to quit.\n")
 			fmt.Printf("[running-man] The Compose stack will be left running.\n")
 			waitForInterrupt()
@@ -818,17 +819,9 @@ func runCommand(args []string) {
 		}
 
 		// Stop all container streamers
-		for _, streamer := range containerStreamers {
-			if err := streamer.Stop(); err != nil {
-				fmt.Fprintf(os.Stderr, "[running-man] Failed to stop container streamer: %v\n", err)
-			}
-		}
-
-		// Wait for container streamers to finish
-		for _, streamer := range containerStreamers {
-			if err := streamer.Wait(); err != nil {
-				fmt.Fprintf(os.Stderr, "[running-man] Error waiting for container streamer: %v\n", err)
-			}
+		if containerWatcher != nil {
+			containerWatcher.Stop()
+			containerWatcher.Wait()
 		}
 
 		// Get exit codes
@@ -905,17 +898,9 @@ func runCommand(args []string) {
 		}
 
 		// Stop all container streamers
-		for _, streamer := range containerStreamers {
-			if err := streamer.Stop(); err != nil {
-				fmt.Fprintf(os.Stderr, "[running-man] Failed to stop container streamer: %v\n", err)
-			}
-		}
-
-		// Wait for container streamers to finish
-		for _, streamer := range containerStreamers {
-			if err := streamer.Wait(); err != nil {
-				fmt.Fprintf(os.Stderr, "[running-man] Error waiting for container streamer: %v\n", err)
-			}
+		if containerWatcher != nil {
+			containerWatcher.Stop()
+			containerWatcher.Wait()
 		}
 
 		// Stop tracing receiver if enabled
