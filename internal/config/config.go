@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/elbeanio/the_running_man/internal/process"
@@ -341,23 +342,43 @@ func (tc *TracingConfig) IsEnabled() bool {
 	return DefaultTracingEnabled
 }
 
-// expandEnvVars expands environment variables in command fields.
-// Supports ${VAR} and $VAR syntax using os.ExpandEnv().
-// References to undefined variables are replaced by empty string.
+// expandEnv expands $VAR, ${VAR} and ${VAR:-default} in s, as
+// docs/configuration.md documents. An undefined variable becomes "".
+//
+// ${VAR:-default} takes the default when VAR is unset or empty, as the shell
+// does. This used to be os.ExpandEnv, which has no default syntax: it read
+// "PORT:-8000" as the name of a variable, so the documented example
+// `--port ${PORT:-8000}` became `--port ` whether PORT was set or not, and
+// `docker_compose: ${DOCKER_COMPOSE_PATH:-./docker-compose.yml}` stopped the
+// config loading at all.
+func expandEnv(s string) string {
+	return os.Expand(s, func(name string) string {
+		if v, def, ok := strings.Cut(name, ":-"); ok {
+			if val := os.Getenv(v); val != "" {
+				return val
+			}
+			return def
+		}
+		return os.Getenv(name)
+	})
+}
+
+// expandEnvVars expands environment variables in command fields; see
+// expandEnv for the syntax.
 func (c *Config) expandEnvVars() {
 	for i := range c.Processes {
 		// Expand environment variables in command
-		c.Processes[i].Command = os.ExpandEnv(c.Processes[i].Command)
+		c.Processes[i].Command = expandEnv(c.Processes[i].Command)
 
 		// Also expand in args if they exist
 		for j := range c.Processes[i].Args {
-			c.Processes[i].Args[j] = os.ExpandEnv(c.Processes[i].Args[j])
+			c.Processes[i].Args[j] = expandEnv(c.Processes[i].Args[j])
 		}
 	}
 
 	// Expand in shell if specified
 	if c.Shell != "" {
-		c.Shell = os.ExpandEnv(c.Shell)
+		c.Shell = expandEnv(c.Shell)
 	}
 
 	// Expand in docker_compose paths and names

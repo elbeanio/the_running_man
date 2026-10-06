@@ -412,3 +412,76 @@ processes:
 		t.Errorf("expected command 'echo ', got '%s'", cfg.Processes[0].Command)
 	}
 }
+
+// docs/configuration.md documents ${VAR:-default}, with this example. It never
+// worked: os.ExpandEnv read "PORT:-8000" as one variable name, so the command
+// became "python server.py --port " whether PORT was set or not.
+func TestLoadConfig_EnvVarDefaults(t *testing.T) {
+	content := `
+processes:
+  - name: backend
+    command: python server.py --port ${PORT:-8000}
+  - name: frontend
+    command: npm run ${NODE_ENV:-development}
+    args:
+      - "--host=${HOST:-localhost}"
+docker_compose: ${DOCKER_COMPOSE_PATH:-./docker-compose.yml}
+shell: ${RM_TEST_SHELL:-/bin/sh}
+`
+	for _, tc := range []struct {
+		name                    string
+		env                     map[string]string
+		backend, frontend, host string
+		compose, shell          string
+	}{
+		{
+			name:    "unset uses the default",
+			backend: "python server.py --port 8000", frontend: "npm run development",
+			host: "--host=localhost", compose: "./docker-compose.yml", shell: "/bin/sh",
+		},
+		{
+			name:    "empty uses the default, as in the shell",
+			env:     map[string]string{"PORT": "", "NODE_ENV": ""},
+			backend: "python server.py --port 8000", frontend: "npm run development",
+			host: "--host=localhost", compose: "./docker-compose.yml", shell: "/bin/sh",
+		},
+		{
+			name: "set uses the value",
+			env: map[string]string{"PORT": "9001", "NODE_ENV": "production", "HOST": "0.0.0.0",
+				"DOCKER_COMPOSE_PATH": "stack.yml", "RM_TEST_SHELL": "/bin/bash"},
+			backend: "python server.py --port 9001", frontend: "npm run production",
+			host: "--host=0.0.0.0", compose: "stack.yml", shell: "/bin/bash",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, k := range []string{"PORT", "NODE_ENV", "HOST", "DOCKER_COMPOSE_PATH", "RM_TEST_SHELL"} {
+				t.Setenv(k, "") // registers restore
+				os.Unsetenv(k)
+			}
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+
+			configPath := filepath.Join(t.TempDir(), "config.yml")
+			if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadConfig(configPath)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+
+			for _, c := range []struct{ field, got, want string }{
+				{"backend command", cfg.Processes[0].Command, tc.backend},
+				{"frontend command", cfg.Processes[1].Command, tc.frontend},
+				{"frontend arg", cfg.Processes[1].Args[0], tc.host},
+				{"docker_compose", cfg.DockerCompose.PrimaryFile(), tc.compose},
+				{"shell", cfg.Shell, tc.shell},
+			} {
+				if c.got != c.want {
+					t.Errorf("%s = %q, want %q", c.field, c.got, c.want)
+				}
+			}
+		})
+	}
+}
