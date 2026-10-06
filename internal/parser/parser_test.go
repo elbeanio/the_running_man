@@ -75,9 +75,6 @@ func TestJSONParser(t *testing.T) {
 				if entry.Message != tt.wantMessage {
 					t.Errorf("Message = %v, want %v", entry.Message, tt.wantMessage)
 				}
-				if entry.Level == LevelError && !entry.IsError {
-					t.Error("Expected IsError = true for error level")
-				}
 				if entry.TraceID != tt.wantTraceID {
 					t.Errorf("TraceID = %v, want %v", entry.TraceID, tt.wantTraceID)
 				}
@@ -128,10 +125,6 @@ func TestPythonParser(t *testing.T) {
 		t.Errorf("Level = %v, want %v", entry.Level, LevelError)
 	}
 
-	if !entry.IsError {
-		t.Error("Expected IsError = true")
-	}
-
 	if !strings.Contains(entry.Stacktrace, "Traceback") {
 		t.Error("Stacktrace should contain 'Traceback'")
 	}
@@ -174,52 +167,44 @@ func TestPlainTextParser(t *testing.T) {
 	ts := time.Now()
 
 	tests := []struct {
-		name        string
-		input       string
-		wantLevel   LogLevel
-		wantIsError bool
+		name      string
+		input     string
+		wantLevel LogLevel
 	}{
 		{
-			name:        "error keyword",
-			input:       "ERROR: Connection failed to database",
-			wantLevel:   LevelError,
-			wantIsError: true,
+			name:      "error keyword",
+			input:     "ERROR: Connection failed to database",
+			wantLevel: LevelError,
 		},
 		{
-			name:        "warning keyword",
-			input:       "WARNING: Deprecated API usage",
-			wantLevel:   LevelWarn,
-			wantIsError: false,
+			name:      "warning keyword",
+			input:     "WARNING: Deprecated API usage",
+			wantLevel: LevelWarn,
 		},
 		{
-			name:        "debug keyword",
-			input:       "DEBUG: Processing request",
-			wantLevel:   LevelDebug,
-			wantIsError: false,
+			name:      "debug keyword",
+			input:     "DEBUG: Processing request",
+			wantLevel: LevelDebug,
 		},
 		{
-			name:        "info explicit",
-			input:       "[INFO] Server started on port 8080",
-			wantLevel:   LevelInfo,
-			wantIsError: false,
+			name:      "info explicit",
+			input:     "[INFO] Server started on port 8080",
+			wantLevel: LevelInfo,
 		},
 		{
-			name:        "plain text default",
-			input:       "Some regular log message",
-			wantLevel:   LevelInfo,
-			wantIsError: false,
+			name:      "plain text default",
+			input:     "Some regular log message",
+			wantLevel: LevelInfo,
 		},
 		{
-			name:        "exception keyword",
-			input:       "Caught exception while processing",
-			wantLevel:   LevelError,
-			wantIsError: true,
+			name:      "exception keyword",
+			input:     "Caught exception while processing",
+			wantLevel: LevelError,
 		},
 		{
-			name:        "failed keyword",
-			input:       "Failed to load configuration",
-			wantLevel:   LevelError,
-			wantIsError: true,
+			name:      "failed keyword",
+			input:     "Failed to load configuration",
+			wantLevel: LevelError,
 		},
 	}
 
@@ -229,10 +214,6 @@ func TestPlainTextParser(t *testing.T) {
 
 			if entry.Level != tt.wantLevel {
 				t.Errorf("Level = %v, want %v", entry.Level, tt.wantLevel)
-			}
-
-			if entry.IsError != tt.wantIsError {
-				t.Errorf("IsError = %v, want %v", entry.IsError, tt.wantIsError)
 			}
 
 			if entry.Message != tt.input {

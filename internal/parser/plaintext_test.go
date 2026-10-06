@@ -36,8 +36,8 @@ func TestPlainTextParser_RecognisesFailuresWithoutErrorWords(t *testing.T) {
 		if entry.Level != LevelError {
 			t.Errorf("level = %q for %q, want error", entry.Level, line)
 		}
-		if !entry.IsError {
-			t.Errorf("is_error = false for %q; it would be missing from /errors", line)
+		if entry.Level != LevelError {
+			t.Errorf("level = %s for %q; it would be missing from /errors", entry.Level, line)
 		}
 	}
 }
@@ -56,7 +56,7 @@ func TestPlainTextParser_DoesNotOverReport(t *testing.T) {
 	}
 	for _, line := range benign {
 		entry := NewPlainTextParser().Parse("app", line, time.Now(), false)
-		if entry.IsError {
+		if entry.Level == LevelError {
 			t.Errorf("%q was classified as an error; false positives make /errors useless", line)
 		}
 	}
@@ -76,16 +76,13 @@ func TestPlainTextParser_StderrRaisesFloorToWarnOnly(t *testing.T) {
 	if stderr.Level != LevelWarn {
 		t.Errorf("stderr level = %q, want warn", stderr.Level)
 	}
-	if stderr.IsError {
-		t.Error("stderr alone must not mark an entry as an error; npm, pip, webpack and git all use it for progress")
-	}
 }
 
 // An explicit level in the text still wins over the stderr floor.
 func TestPlainTextParser_StderrDoesNotDowngrade(t *testing.T) {
 	entry := NewPlainTextParser().Parse("app", "ERROR something broke", time.Now(), true)
-	if entry.Level != LevelError || !entry.IsError {
-		t.Errorf("an error on stderr must stay an error, got level=%q is_error=%v", entry.Level, entry.IsError)
+	if entry.Level != LevelError {
+		t.Errorf("an error on stderr must stay an error, got level=%q", entry.Level)
 	}
 
 	debug := NewPlainTextParser().Parse("app", "DEBUG fine", time.Now(), false)

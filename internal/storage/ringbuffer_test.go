@@ -25,7 +25,6 @@ func TestRingBuffer_BasicAppendAndQuery(t *testing.T) {
 			Source:    "test",
 			Message:   "error message",
 			Raw:       "error message",
-			IsError:   true,
 		},
 	}
 
@@ -55,7 +54,6 @@ func TestRingBuffer_LevelFiltering(t *testing.T) {
 		Level:     parser.LevelError,
 		Message:   "error",
 		Raw:       "error",
-		IsError:   true,
 	})
 	rb.Append(&parser.LogEntry{
 		Timestamp: time.Now(),
@@ -143,14 +141,12 @@ func TestRingBuffer_ErrorsOnlyFiltering(t *testing.T) {
 		Level:     parser.LevelInfo,
 		Message:   "info",
 		Raw:       "info",
-		IsError:   false,
 	})
 	rb.Append(&parser.LogEntry{
 		Timestamp: time.Now(),
 		Level:     parser.LevelError,
 		Message:   "error",
 		Raw:       "error",
-		IsError:   true,
 	})
 
 	result := rb.Query(QueryFilters{
@@ -161,8 +157,8 @@ func TestRingBuffer_ErrorsOnlyFiltering(t *testing.T) {
 		t.Errorf("Expected 1 error entry, got %d", len(result))
 	}
 
-	if !result[0].IsError {
-		t.Error("Expected IsError to be true")
+	if result[0].Level != parser.LevelError {
+		t.Errorf("Expected an error-level entry, got %s", result[0].Level)
 	}
 }
 
@@ -524,7 +520,6 @@ func TestRingBuffer_TraceCorrelation(t *testing.T) {
 			Source:    "service-a",
 			Message:   "Database error",
 			Raw:       "Database error",
-			IsError:   true,
 			TraceID:   "trace-123",
 		},
 		{

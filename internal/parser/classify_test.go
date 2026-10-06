@@ -187,3 +187,23 @@ func TestPython_TracebackTraceIDNotInventedFromWords(t *testing.T) {
 		}
 	}
 }
+
+// A JSON line carrying a stack trace was flagged an error without its level
+// changing, so /errors returned it while /logs?level=error did not: two
+// answers to the same question. GLOSSARY.md: "A stack trace found at a lower
+// level promotes the entry to error."
+func TestJSON_StackTracePromotesLevel(t *testing.T) {
+	p := NewJSONParser()
+	for _, line := range []string{
+		`{"level":"info","msg":"handled","stacktrace":"at foo()\nat bar()"}`,
+		`{"level":"warn","msg":"retrying","stack":"at foo()"}`,
+	} {
+		e, ok := p.Parse("s", line, time.Now())
+		if !ok {
+			t.Fatalf("%s: not parsed as JSON", line)
+		}
+		if e.Level != LevelError {
+			t.Errorf("%s: level %s, want error", line, e.Level)
+		}
+	}
+}

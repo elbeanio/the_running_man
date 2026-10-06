@@ -205,7 +205,7 @@ func (rb *RingBuffer) Query(filters QueryFilters) []*parser.LogEntry {
 		}
 
 		// Filter errors only
-		if filters.ErrorsOnly && !entry.IsError {
+		if filters.ErrorsOnly && entry.Level != parser.LevelError {
 			continue
 		}
 

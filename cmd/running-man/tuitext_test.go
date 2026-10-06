@@ -70,7 +70,7 @@ func TestRenderPathSurvivesEveryWidth(t *testing.T) {
 	logs := []logEntry{
 		{Timestamp: "2026-10-04T18:30:45Z", Level: "info", Source: "a",
 			Message: "a reasonably long message that will need truncating", TraceID: "abcdef1234567890"},
-		{Timestamp: "", Level: "error", Source: "b", Message: "no timestamp at all", IsError: true},
+		{Timestamp: "", Level: "error", Source: "b", Message: "no timestamp at all"},
 		{Timestamp: "oops", Level: "info", Source: "c", Message: "emoji 🚀 and 日本語"},
 	}
 	traces := []traceSummary{{TraceID: "abcdef1234567890", Status: "error", Services: []string{"api", "db"}}}

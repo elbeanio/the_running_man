@@ -115,7 +115,6 @@ type logEntry struct {
 	Level     string `json:"level"`
 	Source    string `json:"source"`
 	Message   string `json:"message"`
-	IsError   bool   `json:"is_error"`
 	TraceID   string `json:"trace_id,omitempty"` // Optional trace ID for correlation
 }
 
@@ -1396,7 +1395,7 @@ func renderLogWindow(logs []logEntry, height, width, scrollOffset int, searchQue
 		}
 
 		style := logStyle
-		if log.IsError {
+		if log.Level == "error" {
 			style = errorLogStyle
 		}
 		for i, raw := range strings.Split(log.Message, "\n") {

@@ -432,7 +432,6 @@ func logRecordToEntry(lr *logsv1.LogRecord, service string) *parser.LogEntry {
 		SourceType: "otlp",
 		Message:    message,
 		Raw:        message,
-		IsError:    level == parser.LevelError,
 		TraceID:    traceID,
 	}
 }

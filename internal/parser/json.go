@@ -58,22 +58,21 @@ func (p *JSONParser) Parse(source string, line string, timestamp time.Time) (*Lo
 
 	entry.Level = parseLevel(levelStr)
 
-	// Check if it's an error
-	if entry.Level == LevelError {
-		entry.IsError = true
-	}
-
 	// Extract stacktrace if present
 	if stack, ok := data["stacktrace"].(string); ok {
 		entry.Stacktrace = stack
-		entry.IsError = true
 	} else if stack, ok := data["stack"].(string); ok {
 		entry.Stacktrace = stack
-		entry.IsError = true
 	} else if stack, ok := data["error"].(string); ok && len(stack) > 100 {
 		// If error field is long, it might be a stack trace
 		entry.Stacktrace = stack
-		entry.IsError = true
+	}
+
+	// A stack trace makes the entry an error whatever level it was logged at.
+	// This used to set a separate IsError flag and leave the level alone, so
+	// /errors returned the entry and /logs?level=error did not.
+	if entry.Stacktrace != "" {
+		entry.Level = LevelError
 	}
 
 	// Extract trace_id if present (common OTEL field names)

@@ -24,7 +24,6 @@ func TestRenderLogs_MultilineMessages(t *testing.T) {
 					Timestamp: "2026-02-08T12:34:56Z",
 					Level:     "INFO",
 					Message:   "Single line",
-					IsError:   false,
 				},
 			},
 			height:    10,
@@ -38,7 +37,6 @@ func TestRenderLogs_MultilineMessages(t *testing.T) {
 					Timestamp: "2026-02-08T12:34:56Z",
 					Level:     "ERROR",
 					Message:   "Line 1\nLine 2\nLine 3",
-					IsError:   true,
 				},
 			},
 			height:    10,
@@ -52,13 +50,11 @@ func TestRenderLogs_MultilineMessages(t *testing.T) {
 					Timestamp: "2026-02-08T12:34:56Z",
 					Level:     "INFO",
 					Message:   "First log",
-					IsError:   false,
 				},
 				{
 					Timestamp: "2026-02-08T12:34:57Z",
 					Level:     "ERROR",
 					Message:   "Error line 1\nError line 2",
-					IsError:   true,
 				},
 			},
 			height:    10,
@@ -72,7 +68,6 @@ func TestRenderLogs_MultilineMessages(t *testing.T) {
 					Timestamp: "2026-02-08T12:34:56Z",
 					Level:     "INFO",
 					Message:   "",
-					IsError:   false,
 				},
 			},
 			height:    10,
@@ -103,7 +98,6 @@ func TestRenderLogs_ContinuationIndentation(t *testing.T) {
 			Timestamp: "2026-02-08T12:34:56Z",
 			Level:     "ERROR",
 			Message:   "First line\nSecond line\nThird line",
-			IsError:   true,
 		},
 	}
 
@@ -137,13 +131,11 @@ func TestRenderLogs_HeightLimit(t *testing.T) {
 			Timestamp: "2026-02-08T12:34:56Z",
 			Level:     "INFO",
 			Message:   "Line 1\nLine 2\nLine 3",
-			IsError:   false,
 		},
 		{
 			Timestamp: "2026-02-08T12:34:57Z",
 			Level:     "INFO",
 			Message:   "Line 4\nLine 5\nLine 6",
-			IsError:   false,
 		},
 	}
 
@@ -173,7 +165,6 @@ func TestRenderLogs_ScrollOffset(t *testing.T) {
 			Timestamp: fmt.Sprintf("2026-02-08T12:34:%02dZ", i),
 			Level:     "INFO",
 			Message:   fmt.Sprintf("Line %d", i),
-			IsError:   false,
 		})
 	}
 

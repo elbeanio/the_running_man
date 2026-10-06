@@ -103,7 +103,8 @@ curl -s --unix-socket "$SOCK" 'http://localhost/logs?level=warn,error&since=10m&
 ```
 
 Entries are snake_case: `timestamp`, `level`, `source`, `source_type`, `message`, `raw`,
-`is_error`, `stacktrace`, `trace_id`. Python tracebacks arrive as **one** entry with the
+`stacktrace`, `trace_id`. `level` is the only error signal: `/errors` returns exactly the
+`error` entries. Python tracebacks arrive as **one** entry with the
 whole trace in `stacktrace`, so you do not have to stitch lines together.
 
 ## Restarting after a change
