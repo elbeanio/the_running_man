@@ -108,6 +108,9 @@ type model struct {
 	// render bug is visible rather than silent. Empty when nothing has gone
 	// wrong.
 	lastPanic string
+
+	// startupRows are the rows of the startup screen; see tuistartup.go.
+	startupRows []startupRow
 }
 
 type logEntry struct {
@@ -761,6 +764,8 @@ func (m model) viewModel() string {
 		if m.currentSource() == "Traces" {
 			// Render trace list
 			content = renderTraceList(m.traces, contentHeight, contentWidth, m.traceScrollOffset, m.selectedTraceIdx)
+		} else if m.currentSource() == startupTab {
+			content = renderStartup(m.startupRows, contentHeight, contentWidth)
 		} else {
 			// Render logs with search highlighting and current match index
 			content = renderLogWindow(m.logs, contentHeight, contentWidth, m.scrollOffset, m.searchQuery, m.searchMatchIdx, m.showTraceIDs, m.matches())
@@ -1174,6 +1179,8 @@ func renderHeader(sources []string, selected int, width int, sourceTypes map[str
 		source := sources[selected]
 		if source == "running-man" {
 			activeTabColor = lipgloss.Color("33") // Dodger blue
+		} else if source == startupTab {
+			activeTabColor = lipgloss.Color("172") // Amber
 		} else if source == "Traces" {
 			activeTabColor = lipgloss.Color("127") // Medium purple
 		} else if isDockerContainer(source, sourceTypes) {
@@ -1197,7 +1204,7 @@ func renderHeader(sources []string, selected int, width int, sourceTypes map[str
 		if source == "running-man" {
 			normalStyle = runningManTabStyle
 			selectedStyle = runningManSelectedTabStyle
-		} else if source == "Traces" {
+		} else if source == "Traces" || source == startupTab {
 			normalStyle = tracesTabStyle
 			selectedStyle = tracesSelectedTabStyle
 		} else if isDockerContainer(source, sourceTypes) {
@@ -1231,6 +1238,8 @@ func renderHeader(sources []string, selected int, width int, sourceTypes map[str
 			displayName = "🏃‍➡️  " + source // Running man facing right
 		} else if source == "Traces" {
 			displayName = "🔍  " + source // 2 spaces after 2-column emoji
+		} else if source == startupTab {
+			displayName = "🚦  " + source // 2 spaces after 2-column emoji
 		} else if isDockerContainer(source, sourceTypes) {
 			displayName = "🐳  " + source // 2 spaces after 2-column emoji
 		} else {

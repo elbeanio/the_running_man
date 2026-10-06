@@ -1,0 +1,18 @@
+   ┌───────────────┐┌───────────────────┐┌──────────────┐   
+   │  🚦  Startup  ││  🏃‍➡️  running-man  ││  🔧 backend  │   
+┌──┘               └┴───────────────────┴┴──────────────┴──┐
+│ Starting: 2 of 4 ready                                   │
+│                                                          │
+│ ✓ denodo-source-db  ready     its Compose healthcheck pa…│
+│     database system is ready to accept connections       │
+│ ◐ denodo            starting  waiting for port 9996 (Com…│
+│     [VDP] INFO server.start - TLS is disabled on incomin…│
+│     [SSO] INFO Starting DenodoSSOWebApplication 9.4.0 us…│
+│ ○ backend           pending   waiting for denodo         │
+│ ● frontend          running   no dependencies            │
+│     VITE v5.4.2  ready in 412 ms                         │
+│     ➜  Local:   http://localhost:5175/                   │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+                                                            
+←/→ Tab: Switch source | q: Quit                            

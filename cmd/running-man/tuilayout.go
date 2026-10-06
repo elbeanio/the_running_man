@@ -94,6 +94,13 @@ func (m model) helpText() string {
 			"q: quit")
 	}
 
+	if m.currentSource() == startupTab {
+		return fitToWidth(m.width,
+			"←/→ Tab: Switch source | q: Quit",
+			"Tab: source | q: quit",
+			"q: quit")
+	}
+
 	if m.currentSource() == "Traces" {
 		long := "←/→ Tab: Switch source | ↑/↓ PgUp/PgDn Home/End: Navigate traces"
 		if len(m.traces) > 0 {

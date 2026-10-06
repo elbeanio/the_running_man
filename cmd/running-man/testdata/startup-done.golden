@@ -1,0 +1,22 @@
+   ┌───────────────┐┌───────────────────┐┌──────────────┐┌───────────────┐┌──────────────┐          
+   │  🚦  Startup  ││  🏃‍➡️  running-man  ││  🔧 backend  ││  🔧 frontend  ││  🔍  Traces  │          
+┌──┘               └┴───────────────────┴┴──────────────┴┴───────────────┴┴──────────────┴─────────┐
+│ Everything is up. Tab to the logs.                                                               │
+│                                                                                                  │
+│ ✓ denodo-source-db  ready     its Compose healthcheck passed (Compose)                           │
+│     database system is ready to accept connections                                               │
+│ ✓ denodo            ready     port 9996 accepting connections (Compose)                          │
+│     [VDP] INFO server.start - TLS is disabled on incoming connections                            │
+│     [SSO] INFO Starting DenodoSSOWebApplication 9.4.0 using Java 17.0.17                         │
+│ ✓ backend           ready     its healthcheck (log "Application startup complete") passed        │
+│     INFO:     Waiting for application startup.                                                   │
+│     INFO:     Application startup complete.                                                      │
+│ ● frontend          running   no dependencies                                                    │
+│     VITE v5.4.2  ready in 412 ms                                                                 │
+│     ➜  Local:   http://localhost:5175/                                                           │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                                                    
+←/→ Tab: Switch source | q: Quit                                                                    
