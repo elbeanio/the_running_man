@@ -42,11 +42,6 @@ var (
 	// Known limitation: lowercase exception names such as socket.timeout are not
 	// matched.
 	errorLineRegex = regexp.MustCompile(`^([A-Za-z_][\w.]*\.)?([A-Z]\w*(?:Error|Exception|Warning|Interrupt|Exit|Iteration|Timeout|Overflow)|Exception|Warning)(:\s*.*)?$`)
-
-	// traceIDRegex extracts a trace id embedded in traceback text. Package-level
-	// so it is compiled once rather than on every traceback, matching its three
-	// neighbours above.
-	traceIDRegex = regexp.MustCompile(`(?i)(?:trace[_-]?id|trace)[=:]\s*([a-zA-Z0-9\-_.]+)`)
 )
 
 // NewPythonParser creates a new Python traceback parser
@@ -149,8 +144,11 @@ func (p *PythonParser) buildEntry(source string) *LogEntry {
 
 	// Try to extract trace_id from the traceback
 	for _, line := range p.lines {
-		if matches := traceIDRegex.FindStringSubmatch(line); len(matches) > 1 {
-			entry.TraceID = matches[1]
+		// The plain-text parser's extractor, not a pattern of its own: this
+		// one had no word boundary and took any value, so a traceback that
+		// mentioned "backtrace: disabled" got the trace ID "disabled".
+		if id, _ := extractTraceID(line); id != "" {
+			entry.TraceID = id
 			break
 		}
 	}

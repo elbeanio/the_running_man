@@ -160,3 +160,30 @@ func TestPlainText_ClassificationIgnoresCase(t *testing.T) {
 		}
 	}
 }
+
+// The traceback parser had its own trace-ID pattern, with the faults the
+// plain-text one had before #40: no word boundary and any value accepted, so a
+// traceback mentioning "backtrace: disabled" got the trace ID "disabled".
+func TestPython_TracebackTraceIDNotInventedFromWords(t *testing.T) {
+	for _, tc := range []struct{ line, want string }{
+		{"    log.info('backtrace: disabled')", ""},
+		{"RuntimeError: request failed trace_id=4bf92f3577b34da6", "4bf92f3577b34da6"},
+	} {
+		p := NewPythonParser()
+		now := time.Now()
+		p.Parse("s", "Traceback (most recent call last):", now)
+		p.Parse("s", `  File "app.py", line 3, in <module>`, now)
+		// An exception line closes the traceback itself; anything else is
+		// held until the stream ends.
+		e, _ := p.Parse("s", tc.line, now)
+		if e == nil {
+			e = p.Flush("s")
+		}
+		if e == nil {
+			t.Fatalf("%q: no traceback entry", tc.line)
+		}
+		if e.TraceID != tc.want {
+			t.Errorf("%q: trace ID %q, want %q", tc.line, e.TraceID, tc.want)
+		}
+	}
+}
