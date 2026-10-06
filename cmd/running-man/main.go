@@ -17,6 +17,7 @@ import (
 	"github.com/elbeanio/the_running_man/internal/api"
 	"github.com/elbeanio/the_running_man/internal/config"
 	"github.com/elbeanio/the_running_man/internal/docker"
+	"github.com/elbeanio/the_running_man/internal/health"
 	"github.com/elbeanio/the_running_man/internal/instance"
 	"github.com/elbeanio/the_running_man/internal/parser"
 	"github.com/elbeanio/the_running_man/internal/process"
@@ -114,6 +115,47 @@ func composeServices(compose *docker.ComposeFile, profiles []string) config.Comp
 		}
 	}
 	return svcs
+}
+
+// composeReadiness is how the process manager learns that a Compose service
+// a process depends on is ready: Docker's own health status for a service
+// whose Compose file defines a healthcheck, otherwise the healthcheck declared
+// under docker_compose.healthchecks. Validation has already ensured one exists.
+func composeReadiness(client *docker.Client, project string, compose *docker.ComposeFile,
+	declared map[string]config.HealthcheckConfig) process.ServiceReadiness {
+	return func(ctx context.Context, service string) error {
+		timeout := config.DefaultHealthcheckTimeout
+		var what string
+		var check func(context.Context) error
+
+		if svc, ok := compose.Services[service]; ok && svc.HasHealthcheck() {
+			what = "its Compose healthcheck"
+			check = func(ctx context.Context) error { return client.WaitServiceHealthy(ctx, project, service) }
+		} else if hc, ok := declared[service]; ok {
+			timeout = hc.GetTimeout()
+			switch {
+			case hc.Port != 0:
+				what = fmt.Sprintf("its healthcheck (port %d)", hc.Port)
+				check = func(ctx context.Context) error { return health.Port(ctx, hc.Port) }
+			case hc.HTTP != "":
+				what = "its healthcheck (http " + hc.HTTP + ")"
+				check = func(ctx context.Context) error { return health.HTTP(ctx, hc.HTTP) }
+			default:
+				what = fmt.Sprintf("its healthcheck (log %q)", hc.Log)
+				check = func(ctx context.Context) error { return client.WaitServiceLog(ctx, project, service, hc.Log) }
+			}
+		} else {
+			return fmt.Errorf("it has no healthcheck")
+		}
+
+		checkCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		err := check(checkCtx)
+		if err != nil && ctx.Err() == nil && errors.Is(checkCtx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("%s did not pass within %s", what, timeout)
+		}
+		return err
+	}
 }
 
 // checkDependencies exits if the configured dependency graph cannot be
@@ -599,6 +641,7 @@ func runCommand(args []string) {
 	// Docker Compose integration
 	var containerWatcher *docker.Watcher
 	var dockerClient *docker.Client
+	var serviceReady process.ServiceReadiness
 	ctx := context.Background()
 
 	if finalCompose.IsSet() {
@@ -708,6 +751,7 @@ func runCommand(args []string) {
 			}
 		}
 		containerWatcher.Watch(discover)
+		serviceReady = composeReadiness(dockerClient, projectName, compose, finalCompose.Healthchecks)
 
 		fmt.Println()
 	}
@@ -723,6 +767,9 @@ func runCommand(args []string) {
 		manager = process.NewManagerWithOTEL(processes, processLineHandler, "", 0, false)
 	}
 	manager.OnStreamEnd(flushStream)
+	if serviceReady != nil {
+		manager.SetServiceReadiness(serviceReady)
+	}
 
 	// A TUI is coming, so nothing else may write to this terminal. Silenced
 	// here rather than when the TUI actually starts, because processes and
@@ -903,11 +950,17 @@ func runCommand(args []string) {
 			fmt.Printf("\n[running-man] All processes completed successfully\n")
 		}
 
-		// Print exit codes for each process
+		// Print exit codes for each process. A process blocked by a failed
+		// dependency never ran, so it has no exit code to report.
 		for name, code := range exitCodes {
-			if code != 0 {
-				fmt.Fprintf(os.Stderr, "[running-man] Process %s exited with code %d\n", name, code)
+			if code == 0 {
+				continue
 			}
+			if info, err := manager.GetProcess(name); err == nil && info.Status == process.StatusBlocked {
+				fmt.Fprintf(os.Stderr, "[running-man] Process %s did not start: %s\n", name, info.StartupError)
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "[running-man] Process %s exited with code %d\n", name, code)
 		}
 
 		// Hold the buffer open so the logs explaining a crash survive it. The
