@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/moby/moby/client"
 )
@@ -218,7 +219,22 @@ type ContainerEvent struct {
 	Type        string // start, stop, die, restart, kill
 	ContainerID string
 	Name        string
+	ServiceName string // the com.docker.compose.service label
 	Image       string
+}
+
+// containerStartedAt returns when the container's current run started. A
+// restart keeps the container's ID, so this is what tells one run from the
+// next.
+func (c *Client) containerStartedAt(ctx context.Context, id string) (time.Time, error) {
+	info, err := c.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	if err != nil {
+		return time.Time{}, err
+	}
+	if info.Container.State == nil {
+		return time.Time{}, fmt.Errorf("container %s has no state", id)
+	}
+	return time.Parse(time.RFC3339Nano, info.Container.State.StartedAt)
 }
 
 // EventHandler is called when a container lifecycle event occurs
@@ -245,6 +261,7 @@ func (c *Client) WatchEvents(ctx context.Context, projectName string, handler Ev
 					Type:        string(event.Action),
 					ContainerID: event.Actor.ID[:12], // Short ID
 					Name:        event.Actor.Attributes["name"],
+					ServiceName: event.Actor.Attributes["com.docker.compose.service"],
 					Image:       event.Actor.Attributes["image"],
 				}
 
