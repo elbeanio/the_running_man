@@ -95,6 +95,41 @@ func slugify(s string) string {
 	return s
 }
 
+// composeServices summarises the Compose stack for dependency validation.
+func composeServices(compose *docker.ComposeFile, profiles []string) config.ComposeServices {
+	svcs := config.ComposeServices{
+		Active:          map[string]bool{},
+		GatedOut:        map[string]bool{},
+		WithHealthcheck: map[string]bool{},
+	}
+	for _, name := range compose.ServiceNamesForProfiles(profiles) {
+		svcs.Active[name] = true
+	}
+	for _, name := range compose.ServicesGatedOut(profiles) {
+		svcs.GatedOut[name] = true
+	}
+	for name, svc := range compose.Services {
+		if svc.HasHealthcheck() {
+			svcs.WithHealthcheck[name] = true
+		}
+	}
+	return svcs
+}
+
+// checkDependencies exits if the configured dependency graph cannot be
+// resolved, listing every problem.
+func checkDependencies(cfg *config.Config, compose config.ComposeServices) {
+	err := cfg.ValidateDependencies(compose)
+	if err == nil {
+		return
+	}
+	fmt.Fprintln(os.Stderr, "Error: the process dependencies cannot be resolved:")
+	for _, line := range strings.Split(err.Error(), "\n") {
+		fmt.Fprintf(os.Stderr, "  - %s\n", line)
+	}
+	os.Exit(1)
+}
+
 // processNamer names --process commands after their slug, adding -2, -3, ...
 // until the name is free.
 //
@@ -443,6 +478,30 @@ func runCommand(args []string) {
 		os.Exit(1)
 	}
 
+	// Parse the Compose files now, ahead of everything else that uses them,
+	// because dependency validation needs them and must come first.
+	var composeFile *docker.ComposeFile
+	if finalCompose.IsSet() {
+		// Every configured Compose file, merged by service name.
+		composeFile, err = docker.ParseComposeFiles(finalCompose.Files)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[running-man] Failed to parse compose file(s): %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	// Refuse an unresolvable dependency graph before anything is printed,
+	// bound or started -- including the offer to bring a Compose stack up.
+	// --process flags replace the config's processes, and with them any
+	// dependencies.
+	if len(procs) == 0 && cfg != nil {
+		svcs := config.ComposeServices{}
+		if composeFile != nil {
+			svcs = composeServices(composeFile, finalCompose.Profiles)
+		}
+		checkDependencies(cfg, svcs)
+	}
+
 	// The project directory is resolved before anything binds, because the socket
 	// path derives from it and the socket is what proves whether this project
 	// already has an instance.
@@ -543,12 +602,7 @@ func runCommand(args []string) {
 	ctx := context.Background()
 
 	if finalCompose.IsSet() {
-		// Parse every configured Compose file, merging by service name.
-		compose, err := docker.ParseComposeFiles(finalCompose.Files)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[running-man] Failed to parse compose file(s): %v\n", err)
-			os.Exit(1)
-		}
+		compose := composeFile
 
 		// Only expect services the active profiles would actually start.
 		serviceNames := compose.ServiceNamesForProfiles(finalCompose.Profiles)
