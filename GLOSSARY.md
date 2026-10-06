@@ -52,6 +52,13 @@ so the developer and the agent are looking at the same run.
   Carries an **exit code** (`-1` while running). **Waiting** applies only to a **recurring
   process** between runs whose last run succeeded — distinct from `stopped`, which would
   read as "down", and from `running`, which would be untrue.
+  Three more come from **dependencies**: **pending** (not started; a dependency is not
+  **ready**), **starting** (running, its own **healthcheck** not yet passed) and
+  **blocked** (will not start: a dependency never became ready and startup stopped).
+  *Pending* is not *waiting*, which stays reserved for recurring processes.
+- **Startup error** — `startup_error` in `/processes`: why startup stopped at a process.
+  On a **blocked** process, the dependency that never became ready; on a running one,
+  that its own healthcheck did not pass in time.
 - **Restart on crash** — the `restart_on_crash` flag: respawn a managed process when it
   exits non-zero. Not used for **recurring processes**, which re-run on schedule anyway.
 - **Dependency** — a **managed process** or **Compose service** named in another managed
