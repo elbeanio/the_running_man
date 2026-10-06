@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -188,8 +187,8 @@ func (d *DockerComposeConfig) ExpandEnv() {
 		return
 	}
 	for i, f := range d.Files {
-		d.Files[i] = os.ExpandEnv(f)
+		d.Files[i] = expandEnv(f)
 	}
-	d.ProjectName = os.ExpandEnv(d.ProjectName)
-	d.EnvFile = os.ExpandEnv(d.EnvFile)
+	d.ProjectName = expandEnv(d.ProjectName)
+	d.EnvFile = expandEnv(d.EnvFile)
 }

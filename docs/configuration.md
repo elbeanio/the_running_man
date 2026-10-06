@@ -351,7 +351,7 @@ Running Man supports environment variable substitution in configuration values.
 
 ### Syntax
 - `${VAR}` - Replace with environment variable `VAR`
-- `${VAR:-default}` - Use `default` if `VAR` is not set
+- `${VAR:-default}` - Use `default` if `VAR` is unset or empty, as the shell does
 - `$VAR` - Simple variable expansion (no default)
 
 ### Example
