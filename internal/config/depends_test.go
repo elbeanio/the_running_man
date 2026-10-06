@@ -207,3 +207,27 @@ processes:
 		t.Errorf("error = %v, want both problems", err)
 	}
 }
+
+// The dependency keys reach the process manager.
+func TestToProcessConfigs_CarriesDependencies(t *testing.T) {
+	cfg, err := loadYAML(t, `
+processes:
+  - name: backend
+    command: run
+    healthcheck: {http: "http://localhost:8000/health", timeout: 5s}
+  - name: frontend
+    command: run
+    depends_on: [backend]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pcs := cfg.ToProcessConfigs()
+	hc := pcs[0].Healthcheck
+	if hc == nil || hc.HTTP != "http://localhost:8000/health" || hc.Timeout != 5*time.Second {
+		t.Errorf("backend healthcheck = %+v", hc)
+	}
+	if pcs[1].Healthcheck != nil || len(pcs[1].DependsOn) != 1 || pcs[1].DependsOn[0] != "backend" {
+		t.Errorf("frontend = %+v", pcs[1])
+	}
+}

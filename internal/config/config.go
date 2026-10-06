@@ -243,6 +243,15 @@ func (c *Config) ToProcessConfigs() []process.ProcessConfig {
 			Shell:          shell,
 			RestartOnCrash: proc.RestartOnCrash,
 			Interval:       proc.Interval,
+			DependsOn:      proc.DependsOn,
+		}
+		if hc := proc.Healthcheck; hc != nil {
+			result[i].Healthcheck = &process.Healthcheck{
+				Port:    hc.Port,
+				HTTP:    hc.HTTP,
+				Log:     hc.Log,
+				Timeout: hc.GetTimeout(),
+			}
 		}
 	}
 	return result
