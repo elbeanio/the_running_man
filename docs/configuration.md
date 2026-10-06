@@ -96,13 +96,11 @@ processes:
 
   # Recurring processes (run at specified intervals)
   - name: health-check
-    type: recurring
     description: "Health check that runs every minute"
     command: ./scripts/check-health.sh
     interval: 1m  # Run every minute
 
   - name: db-backup
-    type: recurring
     description: "Hourly database backup"
     command: ./scripts/backup-db.sh
     interval: 1h  # Run every hour
