@@ -49,3 +49,20 @@ func TestManager_KeepsConfigOrder(t *testing.T) {
 		prev = info.StartTime
 	}
 }
+
+// Stopping iterated the process map, so shutdown order was random. It is now
+// the reverse of config order: the last thing started is the first stopped.
+func TestManager_StopsInReverseConfigOrder(t *testing.T) {
+	m := NewManager([]ProcessConfig{
+		{Name: "db", Command: "true"},
+		{Name: "api", Command: "true"},
+		{Name: "web", Command: "true"},
+	}, nil)
+	for _, name := range m.order {
+		m.processes[name] = m.newWrapper(name, m.configs[name])
+	}
+
+	if got, want := m.stopOrder(), []string{"web", "api", "db"}; !slices.Equal(got, want) {
+		t.Errorf("stop order = %v, want %v", got, want)
+	}
+}

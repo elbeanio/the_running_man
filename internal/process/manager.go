@@ -388,13 +388,30 @@ func (m *Manager) Stop() error {
 func (m *Manager) stopAllLocked() error {
 	var firstErr error
 
-	for name, p := range m.processes {
-		if err := p.Stop(); err != nil && firstErr == nil {
+	for _, name := range m.stopOrder() {
+		if err := m.processes[name].Stop(); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("failed to stop process %s: %w", name, err)
 		}
 	}
 
 	return firstErr
+}
+
+// stopOrder returns the registered processes in the order to stop them: the
+// reverse of config order, so the last started is the first stopped. It was
+// map order, different on every run.
+//
+// Each process is signalled without waiting for the one before it to exit, so
+// this sets the order of the signals, not of the exits. Stopping an API
+// strictly before its database needs depends_on.
+func (m *Manager) stopOrder() []string {
+	names := make([]string, 0, len(m.processes))
+	for i := len(m.order) - 1; i >= 0; i-- {
+		if _, ok := m.processes[m.order[i]]; ok {
+			names = append(names, m.order[i])
+		}
+	}
+	return names
 }
 
 // Restart stops and restarts a specific process by name
