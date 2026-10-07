@@ -3,9 +3,9 @@
 ┌──┘               └┴───────────────────┴┴──────────────┴┴───────────────┴┴──────────────┴─────────┐
 │ Everything is up. Tab to the logs.                                                               │
 │                                                                                                  │
-│ ✓ denodo-source-db  ready     its Compose healthcheck passed (Compose)                           │
+│ ✓ denodo-source-db  ready     its Compose healthcheck passed                                     │
 │     database system is ready to accept connections                                               │
-│ ✓ denodo            ready     port 9996 accepting connections (Compose)                          │
+│ ✓ denodo            ready     port 9996 accepting connections                                    │
 │     [VDP] INFO server.start - TLS is disabled on incoming connections                            │
 │     [SSO] INFO Starting DenodoSSOWebApplication 9.4.0 using Java 17.0.17                         │
 │ ✓ backend           ready     its healthcheck (log "Application startup complete") passed        │
