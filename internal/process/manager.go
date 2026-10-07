@@ -57,6 +57,12 @@ type ProcessInfo struct {
 	// StartupError says why a process is blocked, or why its healthcheck
 	// failed and stopped startup.
 	StartupError string `json:"startup_error,omitempty"`
+
+	// DependsOn and Healthcheck are the process's configured dependencies and
+	// a description of its healthcheck, so a client can tell a process that
+	// is ready from one that is merely running.
+	DependsOn   []string `json:"depends_on,omitempty"`
+	Healthcheck string   `json:"healthcheck,omitempty"`
 }
 
 // Manager manages multiple ProcessWrappers
@@ -81,8 +87,9 @@ type Manager struct {
 	order []string
 
 	// startup is the dependency state; see startup.go.
-	startup      *startup
-	serviceReady ServiceReadiness
+	startup        *startup
+	serviceReady   ServiceReadiness
+	serviceSources func(service string) []string
 }
 
 // NewManager creates a new Manager for multiple processes
@@ -687,6 +694,10 @@ func (m *Manager) infoLocked(name string) (ProcessInfo, bool) {
 		info.URL = config.URL
 		info.Interval = config.Interval
 		info.Status = recurringStatus(info.Status, config.Interval, info.ExitCode)
+		info.DependsOn = config.DependsOn
+		if config.Healthcheck != nil {
+			info.Healthcheck = config.Healthcheck.String()
+		}
 	}
 	m.applyStartup(&info)
 	return info, true

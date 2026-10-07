@@ -171,3 +171,22 @@ func TestWatcher_IgnoresOtherServices(t *testing.T) {
 		t.Errorf("a start event for a watched service opened %d streams, want 1", len(d.streams))
 	}
 }
+
+// The startup screen shows a Compose service's own output next to its state,
+// so the watcher says which log sources are the service's containers.
+func TestWatcher_SourcesForService(t *testing.T) {
+	w, d := newTestWatcher()
+	d.setStarted("a", time.Unix(1000, 0))
+	d.setStarted("b", time.Unix(1000, 0))
+	d.setStarted("c", time.Unix(1000, 0))
+	_ = w.Attach(Container{ID: "b", Name: "proj-api-2", ServiceName: "api"})
+	_ = w.Attach(Container{ID: "a", Name: "proj-api-1", ServiceName: "api"})
+	_ = w.Attach(Container{ID: "c", Name: "proj-db-1", ServiceName: "db"})
+
+	if got := w.SourcesFor("api"); len(got) != 2 || got[0] != "proj-api-1" || got[1] != "proj-api-2" {
+		t.Errorf("SourcesFor(api) = %v, want both api containers in name order", got)
+	}
+	if got := w.SourcesFor("nope"); len(got) != 0 {
+		t.Errorf("SourcesFor(nope) = %v", got)
+	}
+}

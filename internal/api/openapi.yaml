@@ -558,6 +558,19 @@ components:
             Why startup stopped at this process: on a `blocked` process, the dependency
             that never became ready; on a running one, that its own healthcheck did not
             pass in time. Absent otherwise.
+        depends_on:
+          type: array
+          items:
+            type: string
+          description: |
+            The processes and Compose services this process waits for before it starts.
+            Absent when it has none.
+        healthcheck:
+          type: string
+          description: |
+            How this process's readiness is checked, e.g. `port 8000` or
+            `log "Application startup complete"`. Absent when it has none. A `running`
+            process with a healthcheck and no `startup_error` has passed it.
       required:
         - name
         - command
@@ -576,9 +589,42 @@ components:
         count:
           type: integer
           description: Number of processes
+        dependencies:
+          type: array
+          description: |
+            The Compose services that processes depend on. Empty when no process
+            depends on one.
+          items:
+            $ref: '#/components/schemas/DependencyInfo'
       required:
         - processes
         - count
+        - dependencies
+
+    DependencyInfo:
+      type: object
+      description: A Compose service that a process depends on
+      properties:
+        name:
+          type: string
+          description: The Compose service name
+        state:
+          type: string
+          enum: [pending, starting, ready, failed]
+          description: |
+            `pending` until something waits on it, `starting` while its healthcheck is
+            being checked, then `ready` or `failed`.
+        detail:
+          type: string
+          description: Why it failed. Absent otherwise.
+        sources:
+          type: array
+          items:
+            type: string
+          description: The log sources of the service's containers, for `/logs?source=`.
+      required:
+        - name
+        - state
 
     SourceInfo:
       type: object

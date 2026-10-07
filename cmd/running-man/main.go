@@ -770,6 +770,9 @@ func runCommand(args []string) {
 	if serviceReady != nil {
 		manager.SetServiceReadiness(serviceReady)
 	}
+	if containerWatcher != nil {
+		manager.SetServiceSources(containerWatcher.SourcesFor)
+	}
 
 	// A TUI is coming, so nothing else may write to this terminal. Silenced
 	// here rather than when the TUI actually starts, because processes and

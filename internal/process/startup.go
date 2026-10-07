@@ -427,3 +427,65 @@ func (m *Manager) applyStartup(info *ProcessInfo) {
 		info.StartupError = failure.Error()
 	}
 }
+
+// DependencyInfo is a Compose service that a process depends on, as reported
+// alongside the processes. Processes report their own state; services are not
+// processes, so they are listed here.
+type DependencyInfo struct {
+	Name string `json:"name"`
+	// State is pending (not checked yet), starting (being checked), ready or
+	// failed.
+	State string `json:"state"`
+	// Detail says why it failed.
+	Detail string `json:"detail,omitempty"`
+	// Sources are the log sources of the service's containers.
+	Sources []string `json:"sources,omitempty"`
+}
+
+// SetServiceSources supplies the log sources belonging to a Compose service,
+// so its output can be shown next to its state.
+func (m *Manager) SetServiceSources(fn func(service string) []string) {
+	m.serviceSources = fn
+}
+
+// Dependencies reports each Compose service a process depends on, in the
+// order first named.
+func (m *Manager) Dependencies() []DependencyInfo {
+	var names []string
+	seen := map[string]bool{}
+	for _, p := range m.order {
+		for _, dep := range m.configs[p].DependsOn {
+			if _, isProc := m.configs[dep]; !isProc && !seen[dep] {
+				seen[dep] = true
+				names = append(names, dep)
+			}
+		}
+	}
+
+	deps := make([]DependencyInfo, 0, len(names))
+	for _, name := range names {
+		d := DependencyInfo{Name: name, State: StatusPending}
+		s := m.startup
+		s.mu.Lock()
+		r, hasReadiness := s.ready[name]
+		checked := s.checked[name]
+		s.mu.Unlock()
+		if checked && hasReadiness {
+			select {
+			case <-r.done:
+				if r.err != nil {
+					d.State, d.Detail = "failed", r.err.Error()
+				} else {
+					d.State = "ready"
+				}
+			default:
+				d.State = StatusStarting
+			}
+		}
+		if m.serviceSources != nil {
+			d.Sources = m.serviceSources(name)
+		}
+		deps = append(deps, d)
+	}
+	return deps
+}

@@ -263,3 +263,72 @@ func TestStartup_RestartOfPendingProcessStartsItOnce(t *testing.T) {
 		t.Errorf("app started %d times, want 1", n)
 	}
 }
+
+// A client drawing the startup screen needs each process's dependencies and
+// healthcheck, to tell ready from merely running, and the Compose services
+// depended on, which are not processes.
+func TestStartup_ReportsDependenciesAndHealthchecks(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	m := NewManager([]ProcessConfig{
+		{Name: "backend", Command: "sleep 30", DependsOn: []string{"db"},
+			Healthcheck: &Healthcheck{Port: 1, Timeout: 5 * time.Second}},
+		{Name: "frontend", Command: "sleep 30"},
+	}, nil)
+	m.SetServiceReadiness(func(ctx context.Context, service string) error {
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	m.SetServiceSources(func(service string) []string { return []string{"proj-" + service + "-1"} })
+	if err := m.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = m.Stop() }()
+
+	backend := statusOf(t, m, "backend")
+	if len(backend.DependsOn) != 1 || backend.DependsOn[0] != "db" || backend.Healthcheck != "port 1" {
+		t.Errorf("backend = depends_on %v, healthcheck %q", backend.DependsOn, backend.Healthcheck)
+	}
+	if fe := statusOf(t, m, "frontend"); len(fe.DependsOn) != 0 || fe.Healthcheck != "" {
+		t.Errorf("frontend = depends_on %v, healthcheck %q", fe.DependsOn, fe.Healthcheck)
+	}
+
+	eventually(t, "db being checked", func() bool {
+		deps := m.Dependencies()
+		return len(deps) == 1 && deps[0].State == StatusStarting
+	})
+	d := m.Dependencies()[0]
+	if d.Name != "db" || len(d.Sources) != 1 || d.Sources[0] != "proj-db-1" {
+		t.Errorf("dependency = %+v", d)
+	}
+
+	close(release)
+	eventually(t, "db ready", func() bool { return m.Dependencies()[0].State == "ready" })
+}
+
+func TestStartup_FailedDependencyIsReported(t *testing.T) {
+	t.Parallel()
+	m := startManagerWithService(t, errors.New("its Compose healthcheck did not pass within 1s"))
+	eventually(t, "db failed", func() bool {
+		deps := m.Dependencies()
+		return len(deps) == 1 && deps[0].State == "failed"
+	})
+	if d := m.Dependencies()[0]; !strings.Contains(d.Detail, "did not pass within 1s") {
+		t.Errorf("detail = %q", d.Detail)
+	}
+}
+
+func startManagerWithService(t *testing.T, result error) *Manager {
+	t.Helper()
+	m := NewManager([]ProcessConfig{{Name: "app", Command: "sleep 30", DependsOn: []string{"db"}}}, nil)
+	m.SetServiceReadiness(func(context.Context, string) error { return result })
+	if err := m.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = m.Stop() })
+	return m
+}
