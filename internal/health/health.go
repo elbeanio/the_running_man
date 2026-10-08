@@ -7,6 +7,7 @@ package health
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -37,7 +38,20 @@ func poll(ctx context.Context, what string, try func(context.Context) error) err
 	}
 }
 
-// Port passes once a TCP connection to localhost:port succeeds.
+// portSettle is how long a connection must stay open, silent or talking, to
+// count as a server rather than a forwarder hanging up.
+const portSettle = 250 * time.Millisecond
+
+// Port passes once a TCP connection to localhost:port succeeds and is not
+// closed at once.
+//
+// A successful connect is not enough. Docker publishes a container's port by
+// listening on the host itself, so a connect succeeds as soon as the container
+// exists, and the forwarder then hangs up when it finds nothing listening
+// inside. A connect-only check declared Denodo ready seven seconds before its
+// server had begun to start. So the check reads briefly: a real server either
+// waits for the client to speak (Postgres) or greets it (MySQL), and the
+// forwarder closes the connection within milliseconds.
 func Port(ctx context.Context, port int) error {
 	addr := net.JoinHostPort("localhost", strconv.Itoa(port))
 	var d net.Dialer
@@ -48,7 +62,21 @@ func Port(ctx context.Context, port int) error {
 		if err != nil {
 			return err
 		}
-		return conn.Close()
+		defer conn.Close()
+
+		if err := conn.SetReadDeadline(time.Now().Add(portSettle)); err != nil {
+			return err
+		}
+		n, err := conn.Read(make([]byte, 1))
+		var netErr net.Error
+		switch {
+		case n > 0:
+			return nil // it greeted us
+		case errors.As(err, &netErr) && netErr.Timeout():
+			return nil // it is waiting for us to speak
+		default:
+			return fmt.Errorf("connection closed at once, so nothing is listening behind it yet: %v", err)
+		}
 	})
 }
 

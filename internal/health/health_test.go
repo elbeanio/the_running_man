@@ -153,3 +153,58 @@ func TestLineMatcher_Wait(t *testing.T) {
 		t.Error("Wait passed with no matching line")
 	}
 }
+
+// Docker publishes a container's port by listening on the host itself, so a
+// connection succeeds as soon as the container exists, and the forwarder
+// hangs up once it finds nothing listening inside. A connect-only check passed
+// on that: observed against Denodo, declared ready 7s before its server began
+// starting. Reproduced here without Docker by a listener that accepts and
+// closes at once.
+func TestPort_ConnectionClosedAtOnceIsNotReady(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if err := Port(ctx, ln.Addr().(*net.TCPAddr).Port); err == nil {
+		t.Error("passed on a port that hangs up at once")
+	}
+}
+
+// A server that speaks first -- MySQL, SMTP -- is ready too.
+func TestPort_ServerThatSendsAGreetingIsReady(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = c.Write([]byte("hello\n"))
+			time.Sleep(time.Second)
+			c.Close()
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := Port(ctx, ln.Addr().(*net.TCPAddr).Port); err != nil {
+		t.Errorf("Port = %v, want pass for a server that greets", err)
+	}
+}
