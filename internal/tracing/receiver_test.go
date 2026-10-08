@@ -215,7 +215,7 @@ func TestReceiver_ProcessTraceRequest(t *testing.T) {
 	assert.Equal(t, 2, spansProcessed)
 
 	// Check that spans were stored
-	spans := storage.Query(SpanQueryFilters{})
+	spans := allSpans(storage)
 	assert.Len(t, spans, 2)
 
 	// Verify span data

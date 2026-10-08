@@ -55,8 +55,10 @@ func TestEmptyListsAreArraysNotNull(t *testing.T) {
 // the two endpoints disagreed on what limit meant.
 func TestTracesLimitKeepsTheMostRecent(t *testing.T) {
 	spans := tracing.NewSpanStorage(100, time.Hour)
+	base := time.Now().Add(-time.Minute)
 	for i := 0; i < 10; i++ {
-		spans.Add(&tracing.SpanEntry{TraceID: string(rune('a' + i)), StartTime: time.Now()})
+		at := base.Add(time.Duration(i) * time.Second)
+		spans.Add(&tracing.SpanEntry{TraceID: string(rune('a' + i)), SpanID: "s", StartTime: at, EndTime: at})
 	}
 	server := NewServer(storage.NewRingBuffer(10, time.Minute, 1024), "/p", nil, nil, spans)
 
@@ -75,7 +77,8 @@ func TestTracesLimitKeepsTheMostRecent(t *testing.T) {
 	for _, s := range body.Traces {
 		got = append(got, s.TraceID)
 	}
-	if strings.Join(got, "") != "hij" {
-		t.Errorf("limit=3 returned %v, want the three most recent [h i j]", got)
+	// Traces come newest first, so the three most recent are j, i, h.
+	if strings.Join(got, "") != "jih" {
+		t.Errorf("limit=3 returned %v, want the three most recent, newest first [j i h]", got)
 	}
 }

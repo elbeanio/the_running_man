@@ -1,9 +1,9 @@
    ┌───────────────────┐┌──────────────┐┌──────────────┐                                            
    │  🏃‍➡️  running-man  ││  🔧 backend  ││  🔍  Traces  │                                            
 ┌──┴───────────────────┴┴──────────────┴┘              └───────────────────────────────────────────┐
-│Trace ID              Duration      Status    Services                                            │
-│4bf92f3577b34da6a...  0s            error     backend, postgres                                   │
-│00f067aa0ba902b7a...  0s            ok        backend                                             │
+│Start     Root span    Summary                           Duration  Spans  Errors  Services        │
+│09:16:10  chat.turn    Show me the revenue by region...  8.659s    15             backend         │
+│09:15:03  GET /things  /things                           182ms     2      1       backend, post...│
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

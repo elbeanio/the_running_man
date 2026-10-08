@@ -224,97 +224,103 @@ Compose services processes depend on -- `pending`, `checking`, `ready` or `faile
 
 ## Trace Endpoints (OpenTelemetry)
 
+Traces come in **three levels of detail**, so a caller -- an agent especially -- spends its
+context only on what it asks for. A single trace from an LLM application can carry
+megabytes of attributes: whole conversations, and the images in them.
+
+1. `GET /traces` -- summaries, enough to choose a trace. No span attributes.
+2. `GET /traces/{trace_id}` -- one trace and every span, each value cut at 1 KB and each
+   span's values held to 8 KB together.
+3. `GET /traces/{trace_id}/spans/{span_id}` -- one span in full.
+
+Status is `ok`, `error` or `unset`; durations are strings (`"3.38s"`).
+
 ### GET /traces
 
-Query distributed traces (OTEL spans).
+Trace summaries, newest first.
 
 **Query Parameters:**
-- `since` - Time window (e.g., `5m`, `1h`, `30s`)
-- `service_name` - Filter by service name
-- `trace_id` - Get specific trace by ID
-- `span_name` - Filter by span name (supports partial match)
-- `status` - Filter by span status (`ok`, `error`, `unset`)
-- `limit` - Maximum traces to return (default: 50, max: 1000)
+- `since` - Traces with a span that started within this window (e.g. `5m`, `1h`)
+- `service` - Traces with a span from this service
+- `span_name` - Traces with a span whose name contains this
+- `status` - `error` (traces with any failing span) or `ok`
+- `limit` - The newest N traces
 
-**Example:**
 ```bash
 curl --unix-socket "$SOCK" "http://localhost/traces?since=10m&status=error"
-curl --unix-socket "$SOCK" "http://localhost/traces?service_name=database&limit=20"
-curl --unix-socket "$SOCK" "http://localhost/traces?span_name=http.request&since=5m"
 ```
 
-**Response:**
 ```json
 {
-  "count": 3,
+  "count": 1,
   "traces": [
     {
-      "trace_id": "abc123def456",
-      "span_count": 5,
-      "start_time": "2024-01-15T10:30:00Z",
-      "end_time": "2024-01-15T10:30:01.5Z",
-      "duration_ms": 1500,
-      "has_error": true,
-      "services": ["backend", "database"],
-      "root_span": "process_order"
+      "trace_id": "a52b1a91528093522205536890ef2f09",
+      "root_span": "chat.turn",
+      "summary": "Show me the revenue by region",
+      "start_time": "2026-10-08T19:42:12Z",
+      "duration": "8.659s",
+      "span_count": 15,
+      "error_count": 1,
+      "status": "error",
+      "services": ["duet"]
     }
   ]
 }
 ```
 
----
+`summary` is the root span's `input.value`, `http.route`, `http.target` or `db.statement`
+-- the first present -- on one line, at most 120 characters; absent if it has none of them.
 
 ### GET /traces/{trace_id}
 
-Get detailed information about a specific trace including all spans.
+The trace's summary and every span, in start order. Each attribute value (and event
+attribute value) is **cut at 1 KB**, and a span's values together are held to **8 KB** -- an
+LLM span can carry hundreds of attributes, which a per-value cut alone does not bound. The
+budget goes to event attributes first (exceptions live there), then to the smallest values,
+so the most stay whole. A value cut short keeps its key in `attributes`; a value that did
+not fit the budget is left out of `attributes`. Either way `truncated` gives its real size,
+keyed by attribute (events as `events.N.key`), so every key is listed in one or the other.
+404 for an unknown trace.
 
-**Path Parameter:**
-- `trace_id` - The trace ID to retrieve
-
-**Example:**
-```bash
-curl --unix-socket "$SOCK" "http://localhost/traces/abc123def456"
-```
-
-**Response:**
 ```json
 {
-  "trace_id": "abc123def456",
-  "span_count": 5,
-  "start_time": "2024-01-15T10:30:00Z",
-  "end_time": "2024-01-15T10:30:01.5Z",
-  "duration_ms": 1500,
-  "has_error": true,
-  "services": ["backend", "database"],
+  "trace": { "trace_id": "a52b1a91…", "root_span": "chat.turn", "...": "..." },
+  "count": 15,
   "spans": [
     {
-      "span_id": "span1",
-      "parent_span_id": "",
-      "name": "process_order",
-      "start_time": "2024-01-15T10:30:00Z",
-      "end_time": "2024-01-15T10:30:01.5Z",
-      "duration_ms": 1500,
-      "status": "error",
-      "service_name": "backend",
-      "attributes": {
-        "order.id": "ORD-1001",
-        "processing.stage": "started"
-      }
-    },
-    {
-      "span_id": "span2",
-      "parent_span_id": "span1",
-      "name": "validate_order",
-      "start_time": "2024-01-15T10:30:00.1Z",
-      "end_time": "2024-01-15T10:30:00.15Z",
-      "duration_ms": 50,
+      "trace_id": "a52b1a91…",
+      "span_id": "9f1c…",
+      "parent_span_id": "41ab…",
+      "name": "ChatCompletion",
+      "kind": "SPAN_KIND_INTERNAL",
+      "start_time": "2026-10-08T19:42:12.1Z",
+      "end_time": "2026-10-08T19:42:15.5Z",
+      "duration": "3.376812s",
       "status": "ok",
-      "service_name": "backend",
-      "attributes": {}
+      "status_code": "STATUS_CODE_OK",
+      "service_name": "duet",
+      "attributes": { "input.value": "[{\"role\": \"system\", ……" },
+      "events": [ { "name": "…", "timestamp": "…", "attributes": {} } ],
+      "truncated": { "input.value": 136024 }
     }
   ]
 }
 ```
+
+### GET /traces/{trace_id}/spans/{span_id}
+
+One span, nothing cut: the full attribute values, events and links. This is the step that
+returns large content, such as images sent to a model -- ask for it deliberately, knowing
+from `truncated` how large it is. 404 for an unknown trace or span.
+
+```json
+{ "trace_id": "a52b1a91…", "span": { "span_id": "9f1c…", "attributes": { "input.value": "…all 136 KB…" } } }
+```
+
+### GET /traces/{trace_id}/logs
+
+Every log entry carrying this trace ID.
 
 ---
 

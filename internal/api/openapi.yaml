@@ -31,6 +31,11 @@ tags:
     description: Process management operations
   - name: health
     description: Health and status checks
+  - name: traces
+    description: |
+      OpenTelemetry traces, in three levels of detail: summaries, one trace with values
+      cut at 1 KB and 8 KB a span, one span in full. A caller spends context only on what
+      it asks for.
 
 paths:
   /:
@@ -417,6 +422,105 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /traces:
+    get:
+      summary: Trace summaries
+      description: |
+        Trace summaries, newest first: enough to choose a trace. No span attributes, which
+        can run to megabytes for a single trace. Span-level filters match a trace when any
+        of its spans does.
+      tags:
+        - traces
+      parameters:
+        - {name: since, in: query, schema: {type: string}, description: "Traces with a span that started within this window, e.g. 10m"}
+        - {name: service, in: query, schema: {type: string}, description: Traces with a span from this service}
+        - {name: span_name, in: query, schema: {type: string}, description: Traces with a span whose name contains this}
+        - {name: status, in: query, schema: {type: string, enum: [error, ok]}, description: "error: traces with any failing span"}
+        - {name: limit, in: query, schema: {type: integer}, description: The newest N traces}
+      responses:
+        '200':
+          description: Trace summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TracesResponse'
+        '400':
+          description: Invalid parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /traces/{trace_id}:
+    get:
+      summary: One trace, values cut at 1 KB and 8 KB a span
+      description: |
+        The trace's summary and every span, in start order. Each attribute value, and each
+        event attribute value, is cut at 1 KB, and a span's values together are held to
+        8 KB: event attributes first, then the smallest values. A value that did not fit is
+        left out of `attributes`; `truncated` gives the original size of every value cut
+        or left out, so every key appears in one or the other.
+      tags:
+        - traces
+      parameters:
+        - {name: trace_id, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: The trace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TraceResponse'
+        '404':
+          description: Unknown trace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /traces/{trace_id}/spans/{span_id}:
+    get:
+      summary: One span in full
+      description: |
+        One span, nothing cut. The step that returns large content, such as images sent to
+        a model: ask for it deliberately, knowing its size from `truncated`.
+      tags:
+        - traces
+      parameters:
+        - {name: trace_id, in: path, required: true, schema: {type: string}}
+        - {name: span_id, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: The span
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  trace_id: {type: string}
+                  span: {$ref: '#/components/schemas/Span'}
+        '404':
+          description: Unknown trace or span
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /traces/{trace_id}/logs:
+    get:
+      summary: Log entries for a trace
+      tags:
+        - traces
+      parameters:
+        - {name: trace_id, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Every log entry carrying this trace ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogsResponse'
+
 components:
   schemas:
     LogEntry:
@@ -710,6 +814,70 @@ components:
         - uptime_seconds
         - buffer
         - sources
+
+    TraceSummary:
+      type: object
+      properties:
+        trace_id: {type: string}
+        root_span: {type: string, description: "The span whose parent is not in the trace; the earliest if several"}
+        summary:
+          type: string
+          description: |
+            The root span's input.value, http.route, http.target or db.statement -- the
+            first present -- on one line, at most 120 characters. Absent if none.
+        start_time: {type: string, format: date-time}
+        duration: {type: string, description: "Earliest span start to latest span end, e.g. 8.659s"}
+        span_count: {type: integer}
+        error_count: {type: integer}
+        status: {type: string, enum: [ok, error]}
+        services: {type: array, items: {type: string}}
+      required: [trace_id, root_span, start_time, duration, span_count, error_count, status, services]
+
+    TracesResponse:
+      type: object
+      properties:
+        traces: {type: array, items: {$ref: '#/components/schemas/TraceSummary'}}
+        count: {type: integer}
+      required: [traces, count]
+
+    Span:
+      type: object
+      properties:
+        trace_id: {type: string}
+        span_id: {type: string}
+        parent_span_id: {type: string}
+        name: {type: string}
+        kind: {type: string}
+        start_time: {type: string, format: date-time}
+        end_time: {type: string, format: date-time}
+        duration: {type: string}
+        status: {type: string, enum: [ok, error, unset]}
+        status_code: {type: string}
+        service_name: {type: string}
+        attributes: {type: object, additionalProperties: {type: string}}
+        events:
+          type: array
+          items:
+            type: object
+            properties:
+              name: {type: string}
+              timestamp: {type: string, format: date-time}
+              attributes: {type: object, additionalProperties: {type: string}}
+        truncated:
+          type: object
+          additionalProperties: {type: integer}
+          description: |
+            In /traces/{trace_id} only: the original size in bytes of each value that was cut
+            short or left out by the span budget, keyed by attribute (events as
+            events.N.key). Absent when nothing was cut.
+
+    TraceResponse:
+      type: object
+      properties:
+        trace: {$ref: '#/components/schemas/TraceSummary'}
+        spans: {type: array, items: {$ref: '#/components/schemas/Span'}}
+        count: {type: integer}
+      required: [trace, spans, count]
 
     ErrorResponse:
       type: object

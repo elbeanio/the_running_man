@@ -140,11 +140,27 @@ user. The old loopback-only 403 went away with the TCP port.
 Present when the app is OTEL-instrumented; Running Man injects the exporter configuration
 into the processes it starts.
 
+Traces come in **three levels of detail**. Go one level at a time: a single trace from an
+LLM application can carry megabytes of attributes -- whole conversations and the images in
+them -- and the first two levels are built so you never pay for that by accident.
+
 ```bash
+# 1. Which trace? Summaries, newest first: root span, a summary (the user's message, the
+#    route, the query), duration, span and error counts. No attributes.
 curl -s --unix-socket "$SOCK" 'http://localhost/traces?since=10m'
 curl -s --unix-socket "$SOCK" 'http://localhost/traces?status=error&since=10m'
-curl -s --unix-socket "$SOCK" http://localhost/traces/TRACE_ID          # every span
-curl -s --unix-socket "$SOCK" http://localhost/traces/TRACE_ID/logs     # correlated log entries
+
+# 2. What happened in it? Every span, each value cut at 1 KB and each span held to 8 KB.
+#    Values cut short, or left out to fit, are listed with their real sizes under
+#    "truncated" -- every attribute key is in "attributes" or "truncated".
+curl -s --unix-socket "$SOCK" http://localhost/traces/TRACE_ID
+
+# 3. The full content of one span -- a model's whole input, the images in it. Check
+#    "truncated" first: this is the call that can be hundreds of KB.
+curl -s --unix-socket "$SOCK" http://localhost/traces/TRACE_ID/spans/SPAN_ID
+
+# The log entries correlated with a trace.
+curl -s --unix-socket "$SOCK" http://localhost/traces/TRACE_ID/logs
 ```
 
 ## Notes

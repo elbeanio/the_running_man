@@ -128,6 +128,12 @@ so the developer and the agent are looking at the same run.
   attributes. The unit the OTLP receiver stores.
 - **Trace** — a set of **spans** sharing a **trace ID**, forming one distributed
   operation. A trace is never stored as an object; it is spans grouped by ID.
+- **Root span** — the span of a trace whose parent is not in the trace: normally the one
+  with no parent, the earliest if an exporter dropped a parent and left several.
+- **Trace summary** — what `/traces` returns for a trace: root span, a one-line summary
+  (the root's `input.value`, `http.route`, `http.target` or `db.statement`), start,
+  duration, span and error counts, services. The first of the **three levels** of trace
+  detail; then one trace with values cut at 1 KB and 8 KB a span; then one span in full.
 - **OTLP receiver** — the endpoint accepting spans over OTLP/HTTP (default port 4318).
   Running Man injects the matching `OTEL_*` variables into **managed processes**, so an
   instrumented app finds it without configuration.

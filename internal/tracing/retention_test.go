@@ -20,7 +20,7 @@ func TestSpanRetentionIgnoresReportedStartTimes(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	s.Add(&SpanEntry{TraceID: "latest", StartTime: time.Now()})
 
-	if got := len(s.Query(SpanQueryFilters{})); got > 1 {
+	if got := len(allSpans(s)); got > 1 {
 		t.Errorf("storage holds %d spans after retention elapsed; want only the latest", got)
 	}
 }
@@ -32,7 +32,7 @@ func TestSpanRetentionKeepsRecentlyReceivedSpans(t *testing.T) {
 	s.Add(&SpanEntry{TraceID: "long", StartTime: time.Now().Add(-10 * time.Minute)})
 	s.Add(&SpanEntry{TraceID: "new", StartTime: time.Now()})
 
-	if got := len(s.Query(SpanQueryFilters{})); got != 2 {
+	if got := len(allSpans(s)); got != 2 {
 		t.Errorf("storage holds %d spans; a long span was discarded on arrival", got)
 	}
 }

@@ -309,30 +309,33 @@ running-man run --config my-config.yml
 ```bash
 SOCK=.running-man/api.sock
 
-# List recent traces
+# 1. Trace summaries, newest first: root span, summary, duration, span and error counts
 curl --unix-socket "$SOCK" "http://localhost/traces?since=5m"
 
-# Get specific trace
-curl --unix-socket "$SOCK" "http://localhost/traces/abc123-def456"
-
-# Filter by service
-curl --unix-socket "$SOCK" "http://localhost/traces?service_name=backend&since=10m"
-
-# Find slow traces
-curl --unix-socket "$SOCK" "http://localhost/traces?min_duration=1s&since=5m"
-
-# Traces with errors
+# Filters: a trace matches when any of its spans does
+curl --unix-socket "$SOCK" "http://localhost/traces?service=backend&since=10m"
+curl --unix-socket "$SOCK" "http://localhost/traces?span_name=SELECT&since=10m"
 curl --unix-socket "$SOCK" "http://localhost/traces?status=error&since=30m"
+
+# 2. One trace: every span, values cut at 1 KB and 8 KB a span ("truncated" gives real sizes)
+curl --unix-socket "$SOCK" "http://localhost/traces/TRACE_ID"
+
+# 3. One span in full: large values such as a model's input, images included
+curl --unix-socket "$SOCK" "http://localhost/traces/TRACE_ID/spans/SPAN_ID"
 ```
 
 ### Trace Endpoints (AI Agent Integration)
 
-Agents explore traces over the REST API:
+Agents explore traces in **three levels of detail**, spending context only on what they ask
+for -- a single trace from an LLM application can carry megabytes of attributes:
 
-1. **`GET /traces`** - list recent traces, filtered by `service`, `span_name`, `status`,
-   `trace_id`, `since`
-2. **`GET /traces/{id}`** - one trace in detail, including all its spans
-3. **`GET /traces/{id}/logs`** - log entries correlated to a trace by `trace_id`
+1. **`GET /traces`** - trace summaries, filtered by `service`, `span_name`, `status`
+   (`error` or `ok`), `since`, `limit`. No span attributes.
+2. **`GET /traces/{id}`** - one trace and every span, values cut at 1 KB and 8 KB a span
+3. **`GET /traces/{id}/spans/{span_id}`** - one span in full
+4. **`GET /traces/{id}/logs`** - log entries correlated to a trace by `trace_id`
+
+The full reference is in [api-reference.md](api-reference.md#trace-endpoints-opentelemetry).
 
 ### Example Agent Usage
 
@@ -342,7 +345,6 @@ running-man run --process "python app.py"
 
 # AI agent can now:
 # - "Show me recent traces with errors"
-# - "Find the slowest database queries"
 # - "Get trace details for failed user login"
 # - "Show me traces from the payment service"
 ```
