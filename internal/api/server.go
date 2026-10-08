@@ -585,11 +585,15 @@ func (s *Server) handleTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse query parameters
-	filters := tracing.SpanQueryFilters{}
-
-	// Parse 'since' parameter (e.g., "30s", "5m", "1h")
-	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
+	// Level one: summaries -- enough to choose a trace, and no span
+	// attributes, which can run to megabytes for a single trace.
+	q := r.URL.Query()
+	filters := tracing.TraceFilters{
+		ServiceName: q.Get("service"),
+		SpanName:    q.Get("span_name"),
+		Status:      q.Get("status"),
+	}
+	if sinceStr := q.Get("since"); sinceStr != "" {
 		duration, err := parseDuration(sinceStr)
 		if err != nil {
 			s.writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid since parameter: %v", err))
@@ -597,29 +601,11 @@ func (s *Server) handleTraces(w http.ResponseWriter, r *http.Request) {
 		}
 		filters.Since = duration
 	}
-
-	// Parse 'service' parameter
-	if serviceName := r.URL.Query().Get("service"); serviceName != "" {
-		filters.ServiceName = serviceName
+	if filters.Status != "" && filters.Status != "error" && filters.Status != "ok" {
+		s.writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid status %q: use error or ok", filters.Status))
+		return
 	}
-
-	// Parse 'trace_id' parameter
-	if traceID := r.URL.Query().Get("trace_id"); traceID != "" {
-		filters.TraceID = traceID
-	}
-
-	// Parse 'span_name' parameter
-	if spanName := r.URL.Query().Get("span_name"); spanName != "" {
-		filters.SpanName = spanName
-	}
-
-	// Parse 'status' parameter
-	if status := r.URL.Query().Get("status"); status != "" {
-		filters.Status = status
-	}
-
-	// Parse 'limit' parameter
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+	if limitStr := q.Get("limit"); limitStr != "" {
 		limit, err := strconv.Atoi(limitStr)
 		if err != nil {
 			s.writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid limit parameter: %v", err))
@@ -628,20 +614,10 @@ func (s *Server) handleTraces(w http.ResponseWriter, r *http.Request) {
 		filters.Limit = limit
 	}
 
-	// Query the trace storage
-	spans := s.traceStorage.Query(filters)
-
-	// Apply limit if specified, keeping the most recent -- the same meaning
-	// /logs gives it. This took spans[:limit], the oldest N, which for a
-	// debugging tool is the least useful slice there is.
-	if filters.Limit > 0 && len(spans) > filters.Limit {
-		spans = spans[len(spans)-filters.Limit:]
-	}
-
-	// Return JSON response
+	traces := s.traceStorage.Traces(filters)
 	s.writeJSON(w, map[string]interface{}{
-		"traces": spans,
-		"count":  len(spans),
+		"traces": traces,
+		"count":  len(traces),
 	})
 }
 
@@ -669,26 +645,52 @@ func (s *Server) handleTraceDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Otherwise, handle GET /traces/{id}
+	// Otherwise, handle GET /traces/{id} and GET /traces/{id}/spans/{span_id}
 	if r.Method != http.MethodGet {
 		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed, use GET")
+		return
+	}
+	if traceID, spanID, ok := strings.Cut(path, "/spans/"); ok {
+		s.handleSpan(w, traceID, spanID)
 		return
 	}
 	s.handleTraceSpans(w, r, path)
 }
 
 func (s *Server) handleTraceSpans(w http.ResponseWriter, r *http.Request, traceID string) {
-	// Get all spans for this trace
-	spans := s.traceStorage.GetTrace(traceID)
+	// Level two: the trace and every span, with attribute values cut to
+	// trimLimit. Enough to see its shape and find the span that matters.
+	spans := s.traceStorage.SpansOf(traceID)
 	if len(spans) == 0 {
 		s.writeError(w, http.StatusNotFound, fmt.Sprintf("Trace %s not found", traceID))
 		return
 	}
 
+	trimmed := make([]tracing.TrimmedSpan, len(spans))
+	for i, sp := range spans {
+		trimmed[i] = tracing.Trim(sp, trimLimit)
+	}
+	s.writeJSON(w, map[string]interface{}{
+		"trace": tracing.Summarise(spans),
+		"spans": trimmed,
+		"count": len(spans),
+	})
+}
+
+// trimLimit is the most of any one attribute value /traces/{id} returns.
+const trimLimit = 1024
+
+// handleSpan is level three: one span, nothing cut. An agent asks for this
+// deliberately, knowing from level two how large it is.
+func (s *Server) handleSpan(w http.ResponseWriter, traceID, spanID string) {
+	sp := s.traceStorage.Span(traceID, spanID)
+	if sp == nil {
+		s.writeError(w, http.StatusNotFound, fmt.Sprintf("Span %s not found in trace %s", spanID, traceID))
+		return
+	}
 	s.writeJSON(w, map[string]interface{}{
 		"trace_id": traceID,
-		"spans":    spans,
-		"count":    len(spans),
+		"span":     sp,
 	})
 }
 
