@@ -115,3 +115,44 @@ func TestWatcher_ReattachesARestartedContainer(t *testing.T) {
 	}
 	t.Logf("lines per run: %v", runs)
 }
+
+// A one-shot service that ran to completion is done, not missing; one that
+// failed, or one still running, is not "completed".
+func TestCompletedServices(t *testing.T) {
+	if !IsAvailable() {
+		t.Skip("Docker daemon not available")
+	}
+	if err := exec.Command("docker", "image", "inspect", "alpine:latest").Run(); err != nil {
+		t.Skip("alpine:latest not available locally")
+	}
+	c, err := NewClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	project := fmt.Sprintf("rmdone%d", time.Now().UnixNano())
+	run := func(service, script string) {
+		out, err := exec.Command("docker", "run", "-d",
+			"--label", "com.docker.compose.project="+project,
+			"--label", "com.docker.compose.service="+service,
+			"alpine:latest", "sh", "-c", script).Output()
+		if err != nil {
+			t.Fatalf("docker run: %v", err)
+		}
+		id := strings.TrimSpace(string(out))
+		t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", id).Run() })
+	}
+	run("migrate", "exit 0")
+	run("seed", "exit 1")
+	run("server", "sleep 30")
+	time.Sleep(time.Second)
+
+	done, err := c.CompletedServices(context.Background(), project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !done["migrate"] || done["seed"] || done["server"] {
+		t.Errorf("completed = %v, want only migrate", done)
+	}
+}

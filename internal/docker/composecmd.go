@@ -22,6 +22,12 @@ type ComposeOptions struct {
 	Profiles    []string
 	ProjectName string
 	EnvFile     string
+
+	// Services, when set, limits up to these services, with --no-recreate so
+	// that a running container whose config has drifted is not replaced from
+	// under the developer. For starting what is missing from a partly running
+	// stack.
+	Services []string
 }
 
 // ComposeCommand is a resolved Compose CLI entry point.
@@ -73,7 +79,12 @@ func (o ComposeOptions) UpArgs() []string {
 		args = append(args, "--profile", p)
 	}
 
-	return append(args, "up", "-d")
+	args = append(args, "up", "-d")
+	if len(o.Services) > 0 {
+		args = append(args, "--no-recreate")
+		args = append(args, o.Services...)
+	}
+	return args
 }
 
 // Up brings the stack up and returns Compose's combined output.

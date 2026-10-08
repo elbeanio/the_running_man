@@ -614,6 +614,20 @@ func runCommand(args []string) {
 			}
 		}
 
+		// Part of the stack running is not all of it. Offer to start the rest,
+		// by the same rules as starting the whole stack.
+		completed := func() map[string]bool {
+			done, err := dockerClient.CompletedServices(ctx, projectName)
+			if err != nil {
+				return nil
+			}
+			return done
+		}
+		if missing := missingServices(serviceNames, containers, completed()); len(containers) > 0 && len(missing) > 0 {
+			containers = offerToStartMissing(ctx, finalCompose, projectName, missing,
+				discover, completed, containers)
+		}
+
 		fmt.Printf("Found %d running container(s):\n", len(containers))
 		for _, container := range containers {
 			fmt.Printf("  - [%s] %s\n", container.Name, container.ID[:12])
@@ -621,17 +635,8 @@ func runCommand(args []string) {
 
 		// Report expected services that are not running, rather than quietly
 		// watching a partial stack.
-		running := make(map[string]bool, len(containers))
-		for _, c := range containers {
-			running[c.ServiceName] = true
-		}
-		var missing []string
-		for _, name := range serviceNames {
-			if !running[name] {
-				missing = append(missing, name)
-			}
-		}
-		if len(missing) > 0 {
+		// One-shot services that ran to completion are done, not missing.
+		if missing := missingServices(serviceNames, containers, completed()); len(missing) > 0 {
 			fmt.Printf("  not running: %s\n", strings.Join(missing, ", "))
 		}
 

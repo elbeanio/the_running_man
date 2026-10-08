@@ -281,3 +281,31 @@ func (c *Client) WatchEvents(ctx context.Context, projectName string, handler Ev
 		}
 	}
 }
+
+// CompletedServices returns the project's services that have a container that
+// ran to completion: stopped, with exit code 0. One-shot services -- a
+// migration, a seed -- exit by design, and are done rather than missing.
+func (c *Client) CompletedServices(ctx context.Context, project string) (map[string]bool, error) {
+	result, err := c.cli.ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: client.Filters{}.Add("label", "com.docker.compose.project="+project),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	done := map[string]bool{}
+	for _, ct := range result.Items {
+		if ct.State != "exited" {
+			continue
+		}
+		info, err := c.cli.ContainerInspect(ctx, ct.ID, client.ContainerInspectOptions{})
+		if err != nil || info.Container.State == nil {
+			continue
+		}
+		if info.Container.State.ExitCode == 0 {
+			done[ct.Labels["com.docker.compose.service"]] = true
+		}
+	}
+	return done, nil
+}
