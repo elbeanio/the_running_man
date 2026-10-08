@@ -540,12 +540,17 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		{
 			"path":        "/traces",
 			"method":      "GET",
-			"description": "Query traces with filters (since, service, trace_id, span_name, status)",
+			"description": "Trace summaries, newest first, no span attributes (since, service, span_name, status=error|ok, limit)",
 		},
 		{
 			"path":        "/traces/{id}",
 			"method":      "GET",
-			"description": "Get all spans for a specific trace",
+			"description": "One trace and every span, attribute values cut at 1 KB (original sizes in truncated)",
+		},
+		{
+			"path":        "/traces/{id}/spans/{span_id}",
+			"method":      "GET",
+			"description": "One span in full, nothing cut: large content such as images sent to a model",
 		},
 		{
 			"path":        "/traces/{id}/logs",
