@@ -25,6 +25,8 @@ import (
 	"github.com/elbeanio/the_running_man/internal/termout"
 	"github.com/elbeanio/the_running_man/internal/tracing"
 	"github.com/kballard/go-shellquote"
+
+	"github.com/mattn/go-isatty"
 )
 
 const (
@@ -266,12 +268,12 @@ const (
 
 // stdoutIsTerminal reports whether stdout is a terminal, i.e. whether a human
 // is plausibly watching.
+//
+// Asked of the terminal driver, not the file mode: /dev/null is a character
+// device too, and treating it as a terminal kept a headless instance waiting
+// for a Ctrl-C nobody could send.
 func stdoutIsTerminal() bool {
-	info, err := os.Stdout.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
+	return isatty.IsTerminal(os.Stdout.Fd())
 }
 
 // shouldKeepAlive decides whether to hold the API and buffer open after a

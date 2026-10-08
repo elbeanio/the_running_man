@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -441,5 +442,24 @@ func TestShouldKeepAlive_AutoFollowsTerminal(t *testing.T) {
 	}
 	if !shouldKeepAlive(keepAliveAlways) {
 		t.Error("always must still keep it alive without a terminal")
+	}
+}
+
+// /dev/null is a character device, so checking the file mode alone took it for
+// a terminal: `running-man run --no-tui > /dev/null` then kept the instance
+// alive waiting for a Ctrl-C nobody could send, and the Compose offer would
+// have waited for an answer nobody could see.
+func TestStdoutIsTerminal_DevNullIsNot(t *testing.T) {
+	devnull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devnull.Close()
+	saved := os.Stdout
+	os.Stdout = devnull
+	defer func() { os.Stdout = saved }()
+
+	if stdoutIsTerminal() {
+		t.Error("stdout to /dev/null reported as a terminal")
 	}
 }
