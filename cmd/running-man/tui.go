@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -427,8 +426,8 @@ func fetchTraces(apiURL string) tea.Cmd {
 				}
 
 				// Update status if this span has error
-				if span.Status == "ERROR" {
-					summary.Status = "ERROR"
+				if spanFailed(span.Status) {
+					summary.Status = "error"
 				}
 
 				// Add service if not already in list
@@ -874,7 +873,7 @@ func renderTraceList(traces []traceSummary, height, width, scrollOffset, selecte
 			lineStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("15")). // White
 				Background(lipgloss.Color("57"))  // Purple
-		} else if trace.Status == "ERROR" {
+		} else if spanFailed(trace.Status) {
 			lineStyle = errorLogStyle
 		}
 
@@ -929,15 +928,24 @@ func renderTraceList(traces []traceSummary, height, width, scrollOffset, selecte
 	return padLines(allLines[startIdx:endIdx], height)
 }
 
-func renderTraceDetail(traceID string, spans []spanDetail, logs []logEntry, height, width, scrollOffset int) string {
-	if height <= 0 || width <= 0 {
-		return logStyle.Render("Invalid terminal dimensions")
-	}
+// traceDetailMaxScroll is the furthest the trace detail view can scroll: its
+// rows less the window. Measured from the same rows the view draws.
+func (m model) traceDetailMaxScroll() int {
+	rows := traceDetailLines(m.selectedTraceID, m.traceSpans, m.traceLogs, m.contentWidth())
+	return max(0, len(rows)-m.contentHeight())
+}
 
-	if traceID == "" {
-		return logStyle.Render("No trace selected")
-	}
+// spanFailed reports whether a span status means failure. The receiver
+// records "error", "ok" or "unset" in lower case; the trace views compared
+// against "ERROR", so no span or trace could ever show as failed.
+func spanFailed(status string) bool {
+	return strings.EqualFold(status, "error")
+}
 
+// traceDetailLines builds every row of the trace detail view, one string per
+// row, for renderTraceDetail to show a window of and for the scroll keys to
+// measure.
+func traceDetailLines(traceID string, spans []spanDetail, logs []logEntry, width int) []string {
 	// Build trace summary from spans
 	var traceDuration time.Duration
 	var traceStatus string
@@ -948,7 +956,7 @@ func renderTraceDetail(traceID string, spans []spanDetail, logs []logEntry, heig
 		if span.Duration > traceDuration {
 			traceDuration = span.Duration
 		}
-		if span.Status == "ERROR" {
+		if spanFailed(span.Status) {
 			traceStatus = "ERROR"
 		}
 		if span.ServiceName != "" {
@@ -1008,11 +1016,30 @@ func renderTraceDetail(traceID string, spans []spanDetail, logs []logEntry, heig
 		infoLines = append(infoLines, "No correlated logs")
 	}
 
-	// Apply styles to all lines
+	// Apply styles to all lines, one row each. The span tree arrives as one
+	// multi-line string, and counted as a single line it made a big trace
+	// look as if it fitted: scrolling was skipped and the view drew more rows
+	// than its window had.
 	allLines := []string{header}
-	for _, line := range infoLines {
-		allLines = append(allLines, infoStyle.Render(line))
+	for _, block := range infoLines {
+		for _, line := range strings.Split(block, "\n") {
+			allLines = append(allLines, infoStyle.Render(line))
+		}
 	}
+	return allLines
+}
+
+func renderTraceDetail(traceID string, spans []spanDetail, logs []logEntry, height, width, scrollOffset int) string {
+	if height <= 0 || width <= 0 {
+		return logStyle.Render("Invalid terminal dimensions")
+	}
+
+	if traceID == "" {
+		return logStyle.Render("No trace selected")
+	}
+
+	allLines := traceDetailLines(traceID, spans, logs, width)
+	infoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
 
 	// Handle scrolling with padding
 	totalLines := len(allLines)
@@ -1098,7 +1125,7 @@ func renderSpanNode(span spanDetail, children map[string][]spanDetail, prefix st
 
 	// Format span info
 	statusSymbol := "✓"
-	if span.Status == "ERROR" {
+	if spanFailed(span.Status) {
 		statusSymbol = "✗"
 	}
 
@@ -1926,10 +1953,8 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case "down":
 		if m.mode == ModeTraceDetail {
-			// Scroll down in trace detail view. Saturating: End sets this to
-			// math.MaxInt, and incrementing that wrapped to the minimum, which
-			// renders as the top.
-			if m.traceDetailScrollOffset < math.MaxInt {
+			// Scroll down in trace detail view, stopping at the end.
+			if m.traceDetailScrollOffset < m.traceDetailMaxScroll() {
 				m.traceDetailScrollOffset++
 			}
 		} else if m.isTraceView() {
@@ -1968,9 +1993,8 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case "pgdown":
 		if m.mode == ModeTraceDetail {
-			// Page down in trace detail view
-			availableHeight := m.pageSize()
-			m.traceDetailScrollOffset += availableHeight
+			// Page down in trace detail view, stopping at the end.
+			m.traceDetailScrollOffset = min(m.traceDetailScrollOffset+m.pageSize(), m.traceDetailMaxScroll())
 		} else if m.isTraceView() {
 			// Page down in trace list
 			availableHeight := m.pageSize()
@@ -2000,8 +2024,10 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case "end":
 		if m.mode == ModeTraceDetail {
-			// Go to bottom of trace detail view (we don't know total height, so just set a large number)
-			m.traceDetailScrollOffset = math.MaxInt
+			// Go to the bottom of the trace detail view. It was set to
+			// math.MaxInt and clamped only when drawn, so Up afterwards counted
+			// down from MaxInt and appeared to do nothing.
+			m.traceDetailScrollOffset = m.traceDetailMaxScroll()
 		} else if m.isTraceView() {
 			// Go to last trace
 			m.selectedTraceIdx = len(m.traces) - 1
