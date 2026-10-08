@@ -124,7 +124,12 @@ user. The old loopback-only 403 went away with the TCP port.
 1. `curl -s --unix-socket "$SOCK" 'http://localhost/errors?since=10m&limit=50'` — what has actually failed.
 2. `curl -s --unix-socket "$SOCK" http://localhost/processes` — is anything not `running`? Check
    `exit_code`. For recurring processes, `waiting` is healthy (between runs); `failed`
-   is not.
+   is not. With `depends_on` configured there are three more: `pending` and `starting`
+   mean startup is still under way -- the process is coming, so do not start your own
+   copy -- and `blocked` means it never will, because a dependency failed:
+   `startup_error` says which, and the `dependencies` list shows Compose services. The
+   dependency's own logs are the explanation; startup does not retry until Running Man is
+   run again.
 3. `curl -s --unix-socket "$SOCK" 'http://localhost/logs?source=NAME&since=5m'` — the full context from
    whichever process looks implicated.
 4. If an entry has a `trace_id`, get everything correlated with it:

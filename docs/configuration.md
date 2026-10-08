@@ -59,7 +59,9 @@ tracing:
 #### `processes` (array)
 List of processes to run and manage. They are started in the order listed, and
 `/processes` reports them in that order. A process is started without waiting
-for the one before it to be ready, so list order is a sequence, not a dependency.
+for the one before it to be ready, so list order is a sequence, not a dependency:
+to make one process wait for another, use `depends_on` (see
+[Dependencies and healthchecks](#dependencies-and-healthchecks)).
 
 **Each process supports:**
 - `name` (string, required): Unique identifier for the process
@@ -71,6 +73,8 @@ for the one before it to be ready, so list order is a sequence, not a dependency
 - `restart_on_crash` (boolean, optional): Auto-restart on non-zero exit (default: `false`)
 - `shell` (string, optional): Shell to use for this process (overrides global `shell`)
 - `interval` (string, optional): Interval for recurring execution (e.g., "30s", "1m", "5m", "1h"). Must be **positive** — a zero or negative interval is rejected at startup.
+- `depends_on` (array of strings, optional): Processes and Compose services that must be **ready** before this process starts. See [Dependencies and healthchecks](#dependencies-and-healthchecks).
+- `healthcheck` (object, optional): How to tell this process is ready, for the processes that depend on it. One of `port`, `http` or `log`, plus an optional `timeout`.
 
 **Example:**
 ```yaml
@@ -132,6 +136,81 @@ Processes with an `interval` field run repeatedly at the specified interval unti
 
 **Note**: Recurring processes run forever until The Running Man is stopped. They don't participate in the normal process wait/exit logic.
 
+#### Dependencies and healthchecks
+
+A process can wait for other processes, or for Compose services, to be **ready** before it
+starts. Readiness is declared once, on the thing being depended on, as a **healthcheck**;
+the process that waits names it in `depends_on`.
+
+```yaml
+processes:
+  - name: backend
+    command: uv run uvicorn app:app --port 8000
+    depends_on: [postgres, redis]       # Compose services
+    healthcheck:
+      log: "Application startup complete"
+      timeout: 90s
+
+  - name: frontend
+    command: npm run dev
+    depends_on: [backend]               # a process
+
+docker_compose:
+  files: [docker-compose.yml]
+  # For Compose services without a healthcheck of their own. postgres has one in
+  # docker-compose.yml, so it is not listed here.
+  healthchecks:
+    redis:
+      port: 6379
+```
+
+**Healthchecks.** Exactly one of:
+
+| check | ready when |
+|---|---|
+| `port: 8000` | a TCP connection to `localhost:8000` succeeds **and stays open**. A connection closed at once does not count: Docker listens on a published port as soon as the container exists, before anything inside does, and hangs up when it finds nothing. |
+| `http: http://localhost:8000/health` | a `GET` returns any **2xx**. Redirects are not followed; a 3xx is not ready. |
+| `log: "Application startup complete"` | a line from the **current run** contains the text (case-sensitive substring). For a Compose service, lines from before the container last started do not count. |
+
+`timeout` is how long the check has to pass, as a duration; the default is `60s`. A slow
+starter -- a JVM, a database restoring a snapshot -- needs more.
+
+A **Compose service** is ready when Docker reports it `healthy`, if its Compose file defines
+a `healthcheck`. Otherwise give it one under `docker_compose.healthchecks`, keyed by service
+name. Declaring one in both places is refused as ambiguous. A healthcheck defined only in
+the image (a Dockerfile `HEALTHCHECK`) is not visible to Running Man, so such a service also
+needs one under `docker_compose.healthchecks`.
+
+**Startup.** Processes without dependencies start at once, as before. Each process with
+`depends_on` starts the moment every dependency is ready -- nothing else waits for it, and
+the TUI is up throughout, on a **Startup** tab showing what is ready, what is waiting on
+what, and the latest lines from each. Once everything is up it hands over to the logs.
+
+**When a dependency never becomes ready**, startup goes no further: nothing still waiting is
+started, and each such process is reported `blocked`, with the reason. What is already
+running keeps running -- its output is usually the explanation -- and the failure is in
+`/errors`. Fix the cause, then quit and run again; nothing is retried. In headless mode the
+failure is printed, and `--keep-alive` applies as for any failed process.
+
+**Refused before anything starts:**
+
+- a name in `depends_on` that is neither a process nor a Compose service
+- a dependency cycle, or a process depending on itself
+- depending on a recurring (`interval`) process, or giving one a healthcheck
+- depending on a Compose service that no active profile starts
+- a name that is both a process and a Compose service
+- **anything depended on that has no healthcheck**
+
+Every problem is listed at once.
+
+**Statuses.** In `/processes`, a process waiting on dependencies is `pending`; one running
+whose own healthcheck has not yet passed is `starting`; one that will never start because
+a dependency failed is `blocked`, with `startup_error` saying why. Compose services that are
+depended on are listed under `dependencies`, each `pending`, `checking`, `ready` or `failed`.
+
+**Not covered:** restarting a dependent when a dependency restarts later; and
+`POST /processes/{name}/restart`, which starts a process at once without waiting.
+
 ### Docker Integration
 
 #### `docker_compose` (string, optional)
@@ -167,6 +246,8 @@ docker_compose:
   env_file: .env
   start: ask                        # ask | never | always
   start_timeout: 5m                 # how long to wait for containers (default: 30s)
+  healthchecks:                     # for services processes depend on
+    redis: {port: 6379}
 ```
 
 | Key | Meaning |
@@ -175,8 +256,9 @@ docker_compose:
 | `profiles` | Active Compose profiles. Services gated behind an inactive profile are not expected, and are reported as "not watched" rather than silently ignored. |
 | `project_name` | Overrides the project name. Rarely needed — the compose file's own `name:` is honoured (see below). **Set this if you use `docker compose -p` or `COMPOSE_PROJECT_NAME`**, neither of which Running Man can see. |
 | `env_file` | Passed to Compose as `--env-file`. |
-| `start` | What to do when nothing is running: `ask` (default), `never`, `always`. |
+| `start` | What to do when some or all services are not running: `ask` (default), `never`, `always`. |
 | `start_timeout` | How long to wait for containers to appear after starting the stack (default: `30s`). Raise it for a stack that brings up a database, migrates it, then starts services behind that. |
+| `healthchecks` | Healthchecks for Compose services that processes depend on, keyed by service name, for services whose Compose file has none. See [Dependencies and healthchecks](#dependencies-and-healthchecks). |
 
 The plain string form is still valid and equivalent to `files: [path]`.
 

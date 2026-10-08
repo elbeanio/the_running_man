@@ -180,11 +180,33 @@ curl --unix-socket "$SOCK" "http://localhost/processes"
       "status": "running",
       "exit_code": -1,
       "start_time": "2024-01-15T08:00:00Z",
-      "uptime": "2h30m"
+      "ports": [8000],
+      "depends_on": ["postgres"],
+      "healthcheck": "port 8000"
+    },
+    {
+      "name": "frontend",
+      "command": "npm run dev",
+      "pid": -1,
+      "status": "pending",
+      "exit_code": -1,
+      "start_time": "0001-01-01T00:00:00Z",
+      "depends_on": ["backend"]
     }
+  ],
+  "count": 2,
+  "dependencies": [
+    {"name": "postgres", "state": "ready", "sources": ["myproject-postgres-1"]}
   ]
 }
 ```
+
+`status` is `running`, `stopped`, `failed`, `waiting` (a recurring process between runs),
+or one of three from `depends_on`: `pending` (not started; a dependency is not ready),
+`starting` (running, its own healthcheck not yet passed) and `blocked` (will not start:
+a dependency never became ready; `startup_error` says why). `dependencies` lists the
+Compose services processes depend on -- `pending`, `checking`, `ready` or `failed`, with
+`detail` when failed. `ports` are observed, not configured.
 
 ---
 

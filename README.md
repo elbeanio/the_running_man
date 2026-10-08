@@ -51,18 +51,22 @@ processes:
   - name: frontend
     type: web
     command: npm run dev
+    depends_on: [backend]     # starts once the backend is ready
 
   - name: backend
     type: api
     command: cd api && python -m uvicorn main:app --reload
+    depends_on: [postgres]    # a Compose service
+    healthcheck:
+      port: 8000              # ready once it accepts connections
 
   - name: worker
     type: worker
     command: cd api && python worker.py
     restart_on_crash: true
 
-  - name: healthcheck
-    command: ./scripts/health.sh
+  - name: status-check
+    command: ./scripts/status.sh
     interval: 1m        # recurring: runs on a timer, output captured like anything else
 
 docker_compose:
@@ -76,8 +80,10 @@ Then:
 running-man run
 ```
 
-That starts the four processes, offers to bring the Compose stack up if it is not already
-running, and opens a TUI with a tab per source — the two containers included.
+That offers to bring the Compose stack up if it is not already running, starts the four
+processes -- each one with a `depends_on` as soon as what it depends on is ready -- and opens
+a TUI with a tab per source, the two containers included. While anything is still waiting,
+the first tab shows startup: what is ready, what is waiting on what, and why anything failed.
 
 Or without a config file:
 
