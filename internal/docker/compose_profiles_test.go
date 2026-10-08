@@ -244,3 +244,18 @@ func TestParseComposeFiles_NameAbsent(t *testing.T) {
 		t.Errorf("name = %q, want empty", cf.Name)
 	}
 }
+
+// Starting only the missing services of a partly running stack: named
+// services, and --no-recreate so a running container whose config has
+// drifted is not replaced from under the developer.
+func TestComposeOptions_UpArgs_NamedServices(t *testing.T) {
+	opts := ComposeOptions{
+		Files: []string{"docker-compose.yml"}, Profiles: []string{"denodo"},
+		Services: []string{"db", "keycloak"},
+	}
+	got := strings.Join(opts.UpArgs(), " ")
+	want := "-f docker-compose.yml --profile denodo up -d --no-recreate db keycloak"
+	if got != want {
+		t.Errorf("UpArgs = %q\nwant      %q", got, want)
+	}
+}
