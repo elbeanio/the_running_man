@@ -156,3 +156,95 @@ func TestCompletedServices(t *testing.T) {
 		t.Errorf("completed = %v, want only migrate", done)
 	}
 }
+
+// runService starts a container labelled as a Compose service, and removes it
+// when the test ends.
+func runService(t *testing.T, project string, extra []string, script string) string {
+	t.Helper()
+	args := append([]string{"run", "-d",
+		"--label", "com.docker.compose.project=" + project,
+		"--label", "com.docker.compose.service=svc",
+		"--name", project + "-svc-1"}, extra...)
+	args = append(args, "alpine:latest", "sh", "-c", script)
+	out, err := exec.Command("docker", args...).Output()
+	if err != nil {
+		t.Fatalf("docker run: %v", err)
+	}
+	id := strings.TrimSpace(string(out))[:12]
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", id).Run() })
+	return id
+}
+
+func requireDocker(t *testing.T) *Client {
+	t.Helper()
+	if !IsAvailable() {
+		t.Skip("Docker daemon not available")
+	}
+	if err := exec.Command("docker", "image", "inspect", "alpine:latest").Run(); err != nil {
+		t.Skip("alpine:latest not available locally")
+	}
+	c, err := NewClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	return c
+}
+
+// A Compose healthcheck is run by Docker; readiness is Docker saying healthy.
+func TestWaitServiceHealthy(t *testing.T) {
+	c := requireDocker(t)
+	project := fmt.Sprintf("rmhealth%d", time.Now().UnixNano())
+	runService(t, project, []string{
+		"--health-cmd", "test -f /tmp/ready", "--health-interval", "200ms", "--health-retries", "1",
+	}, "sleep 1; touch /tmp/ready; sleep 30")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	start := time.Now()
+	if err := c.WaitServiceHealthy(ctx, project, "svc"); err != nil {
+		t.Fatalf("WaitServiceHealthy: %v", err)
+	}
+	if time.Since(start) < 500*time.Millisecond {
+		t.Error("passed before the healthcheck could have passed")
+	}
+}
+
+// A log check passes on a line of the container's current run.
+func TestWaitServiceLog(t *testing.T) {
+	c := requireDocker(t)
+	project := fmt.Sprintf("rmlog%d", time.Now().UnixNano())
+	runService(t, project, nil, "sleep 0.5; echo 'Ready to accept connections'; sleep 30")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := c.WaitServiceLog(ctx, project, "svc", "Ready to accept"); err != nil {
+		t.Fatalf("WaitServiceLog: %v", err)
+	}
+
+	never, cancel2 := context.WithTimeout(context.Background(), time.Second)
+	defer cancel2()
+	if err := c.WaitServiceLog(never, project, "svc", "not in the log"); err == nil {
+		t.Error("WaitServiceLog passed on text the container never wrote")
+	}
+}
+
+// A line from before the current run started does not count: a restarted
+// container's previous run said it was ready, and this one has not yet.
+func TestWaitServiceLog_IgnoresThePreviousRun(t *testing.T) {
+	c := requireDocker(t)
+	project := fmt.Sprintf("rmlogrun%d", time.Now().UnixNano())
+	// Ready only on the first run: the marker file survives a restart.
+	id := runService(t, project, nil,
+		"if [ ! -f /tmp/ran ]; then touch /tmp/ran; echo ready; fi; sleep 30")
+	time.Sleep(500 * time.Millisecond)
+	if err := exec.Command("docker", "restart", "-t", "0", id).Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	if err := c.WaitServiceLog(ctx, project, "svc", "ready"); err == nil {
+		t.Error("passed on a line from the previous run")
+	}
+}

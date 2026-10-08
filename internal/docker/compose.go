@@ -34,7 +34,36 @@ type ComposeService struct {
 	// appearing.
 	Profiles []string `yaml:"profiles"`
 
+	// Healthcheck is parsed only to know whether one is defined: Docker runs it
+	// and reports the result, which is what depends_on waits for.
+	Healthcheck *ComposeHealthcheck `yaml:"healthcheck"`
+
 	// We only care about enough fields to identify services
+}
+
+// ComposeHealthcheck is the part of a Compose healthcheck that says whether
+// there is one.
+type ComposeHealthcheck struct {
+	Test    interface{} `yaml:"test"` // a string, or a list such as ["CMD", ...]
+	Disable bool        `yaml:"disable"`
+}
+
+// HasHealthcheck reports whether Docker will run a healthcheck for the
+// service, as defined in its Compose file. A healthcheck defined only in the
+// image (a Dockerfile HEALTHCHECK) is not visible here.
+func (s ComposeService) HasHealthcheck() bool {
+	hc := s.Healthcheck
+	if hc == nil || hc.Disable {
+		return false
+	}
+	switch test := hc.Test.(type) {
+	case string:
+		return test != ""
+	case []interface{}:
+		// ["NONE"] is Compose's other way of disabling a healthcheck.
+		return len(test) > 0 && test[0] != "NONE"
+	}
+	return false
 }
 
 // GetServiceNames returns every service name in the compose file, including

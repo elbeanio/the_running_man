@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 
@@ -51,6 +52,7 @@ type Watcher struct {
 type attachment struct {
 	stream    stream
 	startedAt time.Time
+	container Container
 }
 
 // errStopped is returned by Attach once the watcher has been stopped.
@@ -132,7 +134,7 @@ func (w *Watcher) Attach(c Container) error {
 	if err != nil {
 		return err
 	}
-	w.attached[c.ID] = attachment{stream: s, startedAt: startedAt}
+	w.attached[c.ID] = attachment{stream: s, startedAt: startedAt, container: c}
 	return nil
 }
 
@@ -180,6 +182,21 @@ func (w *Watcher) Watch(discover func() ([]Container, error)) {
 			}
 		}
 	}()
+}
+
+// SourcesFor returns the log sources of the service's attached containers, in
+// name order.
+func (w *Watcher) SourcesFor(service string) []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var names []string
+	for _, a := range w.attached {
+		if a.container.ServiceName == service {
+			names = append(names, a.container.Name)
+		}
+	}
+	slices.Sort(names)
+	return names
 }
 
 // Stop stops watching and stops every stream. Nothing is attached after it.

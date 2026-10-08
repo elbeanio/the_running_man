@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -108,6 +109,15 @@ type model struct {
 	// render bug is visible rather than silent. Empty when nothing has gone
 	// wrong.
 	lastPanic string
+
+	// startupRows are the rows of the startup screen; see tuistartup.go.
+	startupRows []startupRow
+	// startupActive is set once anything is configured with dependencies,
+	// which is when the startup tab exists.
+	startupActive bool
+	// startupHandedOver is set once the screen has switched to the logs, so
+	// it does so only once.
+	startupHandedOver bool
 }
 
 type logEntry struct {
@@ -341,6 +351,9 @@ func (m model) fetchForSelectedSource() (model, tea.Cmd) {
 	}
 	if source == "Traces" {
 		return m, fetchTraces(m.apiURL)
+	}
+	if source == startupTab {
+		return m, fetchStartup(m.apiURL)
 	}
 	return m, fetchLogs(m.apiURL, source, m.logLimit())
 }
@@ -578,6 +591,7 @@ func initialModel(apiURL string, manager *process.Manager) model {
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		fetchSources(m.apiURL),
+		fetchStartup(m.apiURL),
 		tickCmd(),
 	)
 }
@@ -624,7 +638,7 @@ func (m model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// arrives, history stops at the live window and search counts only
 		// what is loaded.
 		if nm, ok := next.(model); ok && wasTailing && !nm.tailing() {
-			if source := nm.currentSource(); source != "" && source != "Traces" {
+			if source := nm.currentSource(); source != "" && source != "Traces" && source != startupTab {
 				cmd = tea.Batch(cmd, fetchLogs(nm.apiURL, source, 0))
 			}
 		}
@@ -643,11 +657,18 @@ func (m model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sourceTypes = make(map[string]string)
 		}
 		m.sourceTypes["Traces"] = "traces"
+		// And the startup screen first, once there is one. Always first, so
+		// the selected index means the same tab from one refresh to the next.
+		if m.startupActive {
+			m.sources = withStartupTab(m.sources)
+			m.sourceTypes[startupTab] = "startup"
+		}
 		// The list was just replaced and may be shorter than before.
 		m.clampSelectedSource()
-		if source := m.currentSource(); source != "" {
-			return m, fetchLogs(m.apiURL, source, m.logLimit())
-		}
+		return m.fetchForSelectedSource()
+
+	case startupMsg:
+		return m.applyStartup(msg)
 
 	case logsMsg:
 		// Stale replies are dropped rather than applied: one for a tab that is
@@ -699,12 +720,8 @@ func (m model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{tickCmd(), fetchSources(m.apiURL)}
 
 		if len(m.sources) > 0 {
-			source := m.currentSource()
-			if source == "Traces" {
-				cmds = append(cmds, fetchTraces(m.apiURL))
-			} else {
-				cmds = append(cmds, fetchLogs(m.apiURL, source, m.logLimit()))
-			}
+			_, cmd := m.fetchForSelectedSource()
+			cmds = append(cmds, cmd)
 		}
 
 		return m, tea.Batch(cmds...)
@@ -761,6 +778,8 @@ func (m model) viewModel() string {
 		if m.currentSource() == "Traces" {
 			// Render trace list
 			content = renderTraceList(m.traces, contentHeight, contentWidth, m.traceScrollOffset, m.selectedTraceIdx)
+		} else if m.currentSource() == startupTab {
+			content = renderStartup(m.startupRows, contentHeight, contentWidth)
 		} else {
 			// Render logs with search highlighting and current match index
 			content = renderLogWindow(m.logs, contentHeight, contentWidth, m.scrollOffset, m.searchQuery, m.searchMatchIdx, m.showTraceIDs, m.matches())
@@ -1174,6 +1193,8 @@ func renderHeader(sources []string, selected int, width int, sourceTypes map[str
 		source := sources[selected]
 		if source == "running-man" {
 			activeTabColor = lipgloss.Color("33") // Dodger blue
+		} else if source == startupTab {
+			activeTabColor = lipgloss.Color("172") // Amber
 		} else if source == "Traces" {
 			activeTabColor = lipgloss.Color("127") // Medium purple
 		} else if isDockerContainer(source, sourceTypes) {
@@ -1197,7 +1218,7 @@ func renderHeader(sources []string, selected int, width int, sourceTypes map[str
 		if source == "running-man" {
 			normalStyle = runningManTabStyle
 			selectedStyle = runningManSelectedTabStyle
-		} else if source == "Traces" {
+		} else if source == "Traces" || source == startupTab {
 			normalStyle = tracesTabStyle
 			selectedStyle = tracesSelectedTabStyle
 		} else if isDockerContainer(source, sourceTypes) {
@@ -1231,6 +1252,8 @@ func renderHeader(sources []string, selected int, width int, sourceTypes map[str
 			displayName = "🏃‍➡️  " + source // Running man facing right
 		} else if source == "Traces" {
 			displayName = "🔍  " + source // 2 spaces after 2-column emoji
+		} else if source == startupTab {
+			displayName = "🚦  " + source // 2 spaces after 2-column emoji
 		} else if isDockerContainer(source, sourceTypes) {
 			displayName = "🐳  " + source // 2 spaces after 2-column emoji
 		} else {
@@ -1854,6 +1877,10 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case "/", "ctrl+f":
+		// Nothing to search on the startup screen.
+		if m.currentSource() == startupTab {
+			return m, nil
+		}
 		// Enter search mode
 		m.mode = ModeSearch
 		m.searchQuery = ""
@@ -2029,7 +2056,7 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case "r":
 		// Restart current process (only in log view, not trace view)
-		if source := m.currentSource(); source != "" && !m.isTraceView() {
+		if source := m.currentSource(); source != "" && !m.isTraceView() && source != startupTab {
 			return m, restartProcess(m.apiURL, source)
 		}
 	}
@@ -2152,6 +2179,21 @@ func TuiCommandWithManager(args []string, manager *process.Manager) {
 
 	// Create and run the TUI
 	p := tea.NewProgram(initialModel(apiURL, manager), tea.WithAltScreen())
+
+	// Quit on any shutdown signal, so the shutdown after the TUI runs. Bubble
+	// Tea quits on SIGINT and SIGTERM itself, but not on SIGHUP -- what closing
+	// the terminal sends. The process manager stopped the processes, and the
+	// TUI went on running against a terminal that was gone, holding the
+	// instance socket so the project still looked attended.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, process.ShutdownSignals...)
+	defer signal.Stop(sigs)
+	go func() {
+		if _, ok := <-sigs; ok {
+			p.Quit()
+		}
+	}()
+
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Any crash report is in %s\n", crashLogName)

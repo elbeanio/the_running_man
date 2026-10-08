@@ -27,6 +27,12 @@ type ProcessConfig struct {
 	Shell          string // Shell to use (default: /bin/sh)
 	RestartOnCrash bool   // Whether to restart process on crash (default: false)
 	Interval       string // Interval for recurring execution (e.g., "1m", "30s", "5h")
+
+	// DependsOn names the processes and Compose services that must be ready
+	// before this process starts.
+	DependsOn []string
+	// Healthcheck says when this process is ready, for its dependents.
+	Healthcheck *Healthcheck
 }
 
 // ProcessInfo contains runtime information about a process
@@ -37,7 +43,7 @@ type ProcessInfo struct {
 	URL         string    `json:"url,omitempty"`         // Optional URL for web applications
 	Command     string    `json:"command"`
 	PID         int       `json:"pid"`       // -1 if not started
-	Status      string    `json:"status"`    // "running", "stopped", "failed"
+	Status      string    `json:"status"`    // running, stopped, failed, waiting, pending, starting, blocked
 	ExitCode    int       `json:"exit_code"` // -1 for running processes
 	StartTime   time.Time `json:"start_time"`
 	Interval    string    `json:"interval,omitempty"` // Interval for recurring execution (e.g., "1m", "30s")
@@ -47,6 +53,16 @@ type ProcessInfo struct {
 	// the process listens on nothing, has exited, or ports could not be
 	// determined; treat it as a hint, never a guarantee.
 	Ports []int `json:"ports,omitempty"`
+
+	// StartupError says why a process is blocked, or why its healthcheck
+	// failed and stopped startup.
+	StartupError string `json:"startup_error,omitempty"`
+
+	// DependsOn and Healthcheck are the process's configured dependencies and
+	// a description of its healthcheck, so a client can tell a process that
+	// is ready from one that is merely running.
+	DependsOn   []string `json:"depends_on,omitempty"`
+	Healthcheck string   `json:"healthcheck,omitempty"`
 }
 
 // Manager manages multiple ProcessWrappers
@@ -69,6 +85,11 @@ type Manager struct {
 	// maps have no order, and iterating them started and listed processes in a
 	// different random order on every run.
 	order []string
+
+	// startup is the dependency state; see startup.go.
+	startup        *startup
+	serviceReady   ServiceReadiness
+	serviceSources func(service string) []string
 }
 
 // NewManager creates a new Manager for multiple processes
@@ -101,6 +122,7 @@ func NewManagerWithOTEL(configs []ProcessConfig, handler LineHandler, otelEndpoi
 		}
 		m.configs[cfg.Name] = cfg
 	}
+	m.startup = newStartup(m.configs)
 
 	return m
 }
@@ -115,7 +137,7 @@ func (m *Manager) OnStreamEnd(fn StreamEndHandler) {
 // newWrapper creates a wrapper for one run of a process. Every run goes
 // through here so that none is created without the stream-end hook.
 func (m *Manager) newWrapper(name string, cfg ProcessConfig) *ProcessWrapper {
-	w := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.handler, m.otelEndpoint, m.otelPort, m.otelEnabled)
+	w := NewWithOTEL(name, cfg.Command, cfg.Args, cfg.Shell, m.feedHandler(name), m.otelEndpoint, m.otelPort, m.otelEnabled)
 	w.OnStreamEnd(m.onEnd)
 	return w
 }
@@ -152,8 +174,9 @@ func (m *Manager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Start each process, in the order configured: until depends_on exists,
-	// that order is the only statement of what needs to come up first.
+	// Start each process, in the order configured. A process with dependencies
+	// is started by its own goroutine once they are ready, so nothing here
+	// waits on the slowest dependency.
 	for _, name := range m.order {
 		cfg := m.configs[name]
 		// Check if this is a recurring process
@@ -171,6 +194,8 @@ func (m *Manager) Start() error {
 
 			// Start the recurring execution in a goroutine
 			go m.startRecurringProcess(name, cfg, interval)
+		} else if len(cfg.DependsOn) > 0 {
+			go m.gate(name, cfg)
 		} else {
 			// Start regular (non-recurring) process
 			wrapper := m.newWrapper(name, cfg)
@@ -188,6 +213,7 @@ func (m *Manager) Start() error {
 				return fmt.Errorf("failed to start process %s: %w", name, err)
 			}
 			m.processes[name] = wrapper
+			m.checkHealth(name, cfg)
 		}
 	}
 
@@ -199,6 +225,17 @@ func (m *Manager) Start() error {
 
 // startRecurringProcess starts a process that runs at regular intervals
 func (m *Manager) startRecurringProcess(name string, cfg ProcessConfig, interval time.Duration) {
+	// The first run waits for any dependencies.
+	if len(cfg.DependsOn) > 0 {
+		if err := m.awaitDependencies(name, cfg); err != nil {
+			if m.ctx.Err() == nil {
+				m.halt(err)
+			}
+			return
+		}
+		m.startup.settle(name, "")
+	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -269,12 +306,17 @@ func (m *Manager) runRecurringProcess(name string, cfg ProcessConfig) {
 // for concurrent use.
 func (m *Manager) Wait() error {
 	m.mu.RLock()
-	// Filter out recurring processes
+	// Filter out recurring processes. Configured processes, not just started
+	// ones: a process waiting on dependencies starts after this is called.
 	nonRecurringProcesses := make([]string, 0)
 	hasRecurring := false
-	for name := range m.processes {
-		cfg, hasCfg := m.configs[name]
-		if hasCfg && cfg.Interval != "" {
+	for _, name := range m.order {
+		_, started := m.processes[name]
+		_, gated := m.startup.gated[name]
+		if !started && !gated {
+			continue
+		}
+		if m.configs[name].Interval != "" {
 			// This is a recurring process, skip it (runs forever)
 			hasRecurring = true
 			continue
@@ -292,6 +334,18 @@ func (m *Manager) Wait() error {
 		wg.Add(1)
 		go func(processName string) {
 			defer wg.Done()
+
+			// A gated process may not have started yet, and may never.
+			if err := m.awaitStarted(processName); err != nil {
+				if m.ctx.Err() == nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = fmt.Errorf("process %s did not start: %w", processName, err)
+					}
+					mu.Unlock()
+				}
+				return
+			}
 
 			for {
 				// Get current wrapper
@@ -473,6 +527,9 @@ func (m *Manager) Restart(processName string) error {
 		discard(wrapper)
 		return fmt.Errorf("cannot restart process %s: the manager stopped during the restart", processName)
 	}
+	// Started now, whatever it was waiting for: a restart does not wait.
+	m.startup.started(processName)
+	m.checkHealth(processName, cfg)
 
 	return nil
 }
@@ -486,6 +543,12 @@ func (m *Manager) ExitCodes() map[string]int {
 	for name, p := range m.processes {
 		codes[name] = p.ExitCode()
 	}
+	// A process blocked by a failed dependency never ran: it failed.
+	for _, name := range m.order {
+		if status, _ := m.startup.status(name); status == StatusBlocked {
+			codes[name] = -1
+		}
+	}
 	return codes
 }
 
@@ -493,30 +556,11 @@ func (m *Manager) ExitCodes() map[string]int {
 func (m *Manager) ListProcesses() []ProcessInfo {
 	m.mu.RLock()
 
-	infos := make([]ProcessInfo, 0, len(m.processes))
+	infos := make([]ProcessInfo, 0, len(m.order))
 	for _, name := range m.order {
-		p, ok := m.processes[name]
-		if !ok {
-			continue
+		if info, ok := m.infoLocked(name); ok {
+			infos = append(infos, info)
 		}
-		config, hasConfig := m.configs[name]
-		info := ProcessInfo{
-			Name:      name,
-			Command:   p.CommandString(),
-			PID:       p.PID(),
-			Status:    p.GetStatus(),
-			StartTime: p.StartTime(),
-			ExitCode:  p.ExitCode(), // Always include exit code (-1 for running processes)
-		}
-		// Add config fields if available
-		if hasConfig {
-			info.Type = config.Type
-			info.Description = config.Description
-			info.URL = config.URL
-			info.Interval = config.Interval
-			info.Status = recurringStatus(info.Status, config.Interval, info.ExitCode)
-		}
-		infos = append(infos, info)
 	}
 	m.mu.RUnlock()
 
@@ -604,20 +648,44 @@ func (m *Manager) ProcessNames() []string {
 // GetProcess returns information about a specific process
 func (m *Manager) GetProcess(name string) (*ProcessInfo, error) {
 	m.mu.RLock()
-	p, exists := m.processes[name]
+	info, exists := m.infoLocked(name)
+	m.mu.RUnlock()
 	if !exists {
-		m.mu.RUnlock()
 		return nil, fmt.Errorf("process %s not found", name)
 	}
 
+	infos := []ProcessInfo{info}
+	addPorts(infos)
+	return &infos[0], nil
+}
+
+// infoLocked describes one process, including one still waiting on its
+// dependencies, which has no run yet. Called with m.mu held.
+func (m *Manager) infoLocked(name string) (ProcessInfo, bool) {
 	config, hasConfig := m.configs[name]
-	info := &ProcessInfo{
-		Name:      name,
-		Command:   p.CommandString(),
-		PID:       p.PID(),
-		Status:    p.GetStatus(),
-		StartTime: p.StartTime(),
-		ExitCode:  p.ExitCode(), // Always include exit code (-1 for running processes)
+	p, started := m.processes[name]
+	_, gated := m.startup.gated[name]
+	if !started && !(hasConfig && gated) {
+		return ProcessInfo{}, false
+	}
+
+	var info ProcessInfo
+	if started {
+		info = ProcessInfo{
+			Name:      name,
+			Command:   p.CommandString(),
+			PID:       p.PID(),
+			Status:    p.GetStatus(),
+			StartTime: p.StartTime(),
+			ExitCode:  p.ExitCode(), // Always include exit code (-1 for running processes)
+		}
+	} else {
+		info = ProcessInfo{
+			Name:     name,
+			Command:  strings.TrimSpace(config.Command + " " + strings.Join(config.Args, " ")),
+			PID:      -1,
+			ExitCode: -1,
+		}
 	}
 	// Add config fields if available
 	if hasConfig {
@@ -626,17 +694,27 @@ func (m *Manager) GetProcess(name string) (*ProcessInfo, error) {
 		info.URL = config.URL
 		info.Interval = config.Interval
 		info.Status = recurringStatus(info.Status, config.Interval, info.ExitCode)
+		info.DependsOn = config.DependsOn
+		if config.Healthcheck != nil {
+			info.Healthcheck = config.Healthcheck.String()
+		}
 	}
-	m.mu.RUnlock()
-
-	infos := []ProcessInfo{*info}
-	addPorts(infos)
-	return &infos[0], nil
+	m.applyStartup(&info)
+	return info, true
 }
 
-// setupSignalHandlers configures graceful shutdown on SIGINT/SIGTERM
+// ShutdownSignals are the signals that stop Running Man and everything it
+// manages. Every handler uses this list, so they cannot disagree.
+//
+// SIGHUP is among them because it is what closing the terminal sends -- the
+// window, or the tmux session. It was missing: SIGHUP's default action ended
+// Running Man without stopping anything it had started, and in testing nine
+// processes survived two runs in a tmux session that was killed.
+var ShutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
+
+// setupSignalHandlers stops every process on any of ShutdownSignals.
 func (m *Manager) setupSignalHandlers() {
-	signal.Notify(m.sigChan, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(m.sigChan, ShutdownSignals...)
 
 	go func() {
 		select {

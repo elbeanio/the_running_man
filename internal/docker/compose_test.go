@@ -155,3 +155,45 @@ services:
 		t.Errorf("Expected container_name my-nginx, got %s", compose.Services["web"].ContainerName)
 	}
 }
+
+// A Compose service's own healthcheck counts for depends_on, unless Compose is
+// told to disable it, which it can be in two ways.
+func TestComposeService_HasHealthcheck(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "docker-compose.yml")
+	content := `
+services:
+  db:
+    image: postgres
+    healthcheck:
+      test: ["CMD", "pg_isready"]
+  shell-form:
+    image: x
+    healthcheck:
+      test: pg_isready
+  none:
+    image: redis
+  disabled:
+    image: x
+    healthcheck:
+      disable: true
+  test-none:
+    image: x
+    healthcheck:
+      test: ["NONE"]
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cf, err := ParseComposeFiles([]string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]bool{
+		"db": true, "shell-form": true, "none": false, "disabled": false, "test-none": false,
+	} {
+		svc := cf.Services[name]
+		if got := svc.HasHealthcheck(); got != want {
+			t.Errorf("%s: HasHealthcheck = %v, want %v", name, got, want)
+		}
+	}
+}

@@ -353,6 +353,10 @@ func (s *Server) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, map[string]interface{}{
 		"processes": processes,
 		"count":     len(processes),
+		// Compose services that processes depend on. They are not processes,
+		// so they have their own list, but a client drawing startup needs
+		// both.
+		"dependencies": s.manager.Dependencies(),
 	})
 }
 

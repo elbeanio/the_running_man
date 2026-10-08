@@ -48,6 +48,9 @@ type ContainerStreamer struct {
 
 	// from, when set, replaces history as the replay start; see ReplayFrom.
 	from time.Time
+
+	// quiet stops lines being echoed to the terminal; see Quiet.
+	quiet bool
 }
 
 // NewContainerStreamer creates a new streamer for the given container.
@@ -83,6 +86,13 @@ func (s *ContainerStreamer) OnStreamEnd(fn StreamEndHandler) {
 // called before Start.
 func (s *ContainerStreamer) ReplayFrom(t time.Time) {
 	s.from = t
+}
+
+// Quiet stops this stream echoing lines to the terminal. For a stream that
+// only reads a log -- a readiness check -- while another stream already shows
+// it. It must be called before Start.
+func (s *ContainerStreamer) Quiet() {
+	s.quiet = true
 }
 
 // Start begins streaming logs from the container
@@ -189,9 +199,11 @@ func (s *ContainerStreamer) emit(line string, isStderr bool) {
 
 	// Pass-through to terminal with container name prefix. Suppressed by
 	// termout while the TUI owns the screen.
-	if isStderr {
+	switch {
+	case s.quiet:
+	case isStderr:
 		termout.Errorf("[%s] %s\n", s.name, text)
-	} else {
+	default:
 		termout.Printf("[%s] %s\n", s.name, text)
 	}
 

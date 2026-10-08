@@ -11,12 +11,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/elbeanio/the_running_man/internal/api"
 	"github.com/elbeanio/the_running_man/internal/config"
 	"github.com/elbeanio/the_running_man/internal/docker"
+	"github.com/elbeanio/the_running_man/internal/health"
 	"github.com/elbeanio/the_running_man/internal/instance"
 	"github.com/elbeanio/the_running_man/internal/parser"
 	"github.com/elbeanio/the_running_man/internal/process"
@@ -24,6 +24,8 @@ import (
 	"github.com/elbeanio/the_running_man/internal/termout"
 	"github.com/elbeanio/the_running_man/internal/tracing"
 	"github.com/kballard/go-shellquote"
+
+	"github.com/mattn/go-isatty"
 )
 
 const (
@@ -93,6 +95,93 @@ func slugify(s string) string {
 	}
 
 	return s
+}
+
+// lineSourceType is the source type for a line arriving through a handler of
+// type via. Running Man's own lines are system output whichever handler they
+// came through: the process manager reports startup and restarts through the
+// process handler, under the name running-man.
+func lineSourceType(source, via string) string {
+	if source == "running-man" {
+		return "system"
+	}
+	return via
+}
+
+// composeServices summarises the Compose stack for dependency validation.
+func composeServices(compose *docker.ComposeFile, profiles []string) config.ComposeServices {
+	svcs := config.ComposeServices{
+		Active:          map[string]bool{},
+		GatedOut:        map[string]bool{},
+		WithHealthcheck: map[string]bool{},
+	}
+	for _, name := range compose.ServiceNamesForProfiles(profiles) {
+		svcs.Active[name] = true
+	}
+	for _, name := range compose.ServicesGatedOut(profiles) {
+		svcs.GatedOut[name] = true
+	}
+	for name, svc := range compose.Services {
+		if svc.HasHealthcheck() {
+			svcs.WithHealthcheck[name] = true
+		}
+	}
+	return svcs
+}
+
+// composeReadiness is how the process manager learns that a Compose service
+// a process depends on is ready: Docker's own health status for a service
+// whose Compose file defines a healthcheck, otherwise the healthcheck declared
+// under docker_compose.healthchecks. Validation has already ensured one exists.
+func composeReadiness(client *docker.Client, project string, compose *docker.ComposeFile,
+	declared map[string]config.HealthcheckConfig) process.ServiceReadiness {
+	return func(ctx context.Context, service string) error {
+		timeout := config.DefaultHealthcheckTimeout
+		var what string
+		var check func(context.Context) error
+
+		if svc, ok := compose.Services[service]; ok && svc.HasHealthcheck() {
+			what = "its Compose healthcheck"
+			check = func(ctx context.Context) error { return client.WaitServiceHealthy(ctx, project, service) }
+		} else if hc, ok := declared[service]; ok {
+			timeout = hc.GetTimeout()
+			switch {
+			case hc.Port != 0:
+				what = fmt.Sprintf("its healthcheck (port %d)", hc.Port)
+				check = func(ctx context.Context) error { return health.Port(ctx, hc.Port) }
+			case hc.HTTP != "":
+				what = "its healthcheck (http " + hc.HTTP + ")"
+				check = func(ctx context.Context) error { return health.HTTP(ctx, hc.HTTP) }
+			default:
+				what = fmt.Sprintf("its healthcheck (log %q)", hc.Log)
+				check = func(ctx context.Context) error { return client.WaitServiceLog(ctx, project, service, hc.Log) }
+			}
+		} else {
+			return fmt.Errorf("it has no healthcheck")
+		}
+
+		checkCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		err := check(checkCtx)
+		if err != nil && ctx.Err() == nil && errors.Is(checkCtx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("%s did not pass within %s", what, timeout)
+		}
+		return err
+	}
+}
+
+// checkDependencies exits if the configured dependency graph cannot be
+// resolved, listing every problem.
+func checkDependencies(cfg *config.Config, compose config.ComposeServices) {
+	err := cfg.ValidateDependencies(compose)
+	if err == nil {
+		return
+	}
+	fmt.Fprintln(os.Stderr, "Error: the process dependencies cannot be resolved:")
+	for _, line := range strings.Split(err.Error(), "\n") {
+		fmt.Fprintf(os.Stderr, "  - %s\n", line)
+	}
+	os.Exit(1)
 }
 
 // processNamer names --process commands after their slug, adding -2, -3, ...
@@ -178,12 +267,12 @@ const (
 
 // stdoutIsTerminal reports whether stdout is a terminal, i.e. whether a human
 // is plausibly watching.
+//
+// Asked of the terminal driver, not the file mode: /dev/null is a character
+// device too, and treating it as a terminal kept a headless instance waiting
+// for a Ctrl-C nobody could send.
 func stdoutIsTerminal() bool {
-	info, err := os.Stdout.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
+	return isatty.IsTerminal(os.Stdout.Fd())
 }
 
 // shouldKeepAlive decides whether to hold the API and buffer open after a
@@ -207,13 +296,13 @@ func shouldKeepAlive(mode string) bool {
 	}
 }
 
-// waitForInterrupt blocks until SIGINT or SIGTERM.
+// waitForInterrupt blocks until one of process.ShutdownSignals arrives.
 //
 // Registers its own channel: the process manager also watches for signals, and
 // signal.Notify delivers to every registered channel, so both see it.
 func waitForInterrupt() {
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sigChan, process.ShutdownSignals...)
 	defer signal.Stop(sigChan)
 	<-sigChan
 }
@@ -443,6 +532,30 @@ func runCommand(args []string) {
 		os.Exit(1)
 	}
 
+	// Parse the Compose files now, ahead of everything else that uses them,
+	// because dependency validation needs them and must come first.
+	var composeFile *docker.ComposeFile
+	if finalCompose.IsSet() {
+		// Every configured Compose file, merged by service name.
+		composeFile, err = docker.ParseComposeFiles(finalCompose.Files)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[running-man] Failed to parse compose file(s): %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	// Refuse an unresolvable dependency graph before anything is printed,
+	// bound or started -- including the offer to bring a Compose stack up.
+	// --process flags replace the config's processes, and with them any
+	// dependencies.
+	if len(procs) == 0 && cfg != nil {
+		svcs := config.ComposeServices{}
+		if composeFile != nil {
+			svcs = composeServices(composeFile, finalCompose.Profiles)
+		}
+		checkDependencies(cfg, svcs)
+	}
+
 	// The project directory is resolved before anything binds, because the socket
 	// path derives from it and the socket is what proves whether this project
 	// already has an instance.
@@ -518,7 +631,7 @@ func runCommand(args []string) {
 	}
 
 	processLineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {
-		appendEntries(parse(source, "process", line, timestamp, isStderr))
+		appendEntries(parse(source, lineSourceType(source, "process"), line, timestamp, isStderr))
 	}
 
 	dockerLineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {
@@ -540,15 +653,11 @@ func runCommand(args []string) {
 	// Docker Compose integration
 	var containerWatcher *docker.Watcher
 	var dockerClient *docker.Client
+	var serviceReady process.ServiceReadiness
 	ctx := context.Background()
 
 	if finalCompose.IsSet() {
-		// Parse every configured Compose file, merging by service name.
-		compose, err := docker.ParseComposeFiles(finalCompose.Files)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[running-man] Failed to parse compose file(s): %v\n", err)
-			os.Exit(1)
-		}
+		compose := composeFile
 
 		// Only expect services the active profiles would actually start.
 		serviceNames := compose.ServiceNamesForProfiles(finalCompose.Profiles)
@@ -654,6 +763,7 @@ func runCommand(args []string) {
 			}
 		}
 		containerWatcher.Watch(discover)
+		serviceReady = composeReadiness(dockerClient, projectName, compose, finalCompose.Healthchecks)
 
 		fmt.Println()
 	}
@@ -669,6 +779,12 @@ func runCommand(args []string) {
 		manager = process.NewManagerWithOTEL(processes, processLineHandler, "", 0, false)
 	}
 	manager.OnStreamEnd(flushStream)
+	if serviceReady != nil {
+		manager.SetServiceReadiness(serviceReady)
+	}
+	if containerWatcher != nil {
+		manager.SetServiceSources(containerWatcher.SourcesFor)
+	}
 
 	// A TUI is coming, so nothing else may write to this terminal. Silenced
 	// here rather than when the TUI actually starts, because processes and
@@ -790,7 +906,7 @@ func runCommand(args []string) {
 
 	go func() {
 		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+		signal.Notify(sigChan, process.ShutdownSignals...)
 		<-sigChan
 		// The process manager handles the signal too and stops the processes;
 		// this only cleans up the marker, because a deferred call does not run
@@ -849,11 +965,17 @@ func runCommand(args []string) {
 			fmt.Printf("\n[running-man] All processes completed successfully\n")
 		}
 
-		// Print exit codes for each process
+		// Print exit codes for each process. A process blocked by a failed
+		// dependency never ran, so it has no exit code to report.
 		for name, code := range exitCodes {
-			if code != 0 {
-				fmt.Fprintf(os.Stderr, "[running-man] Process %s exited with code %d\n", name, code)
+			if code == 0 {
+				continue
 			}
+			if info, err := manager.GetProcess(name); err == nil && info.Status == process.StatusBlocked {
+				fmt.Fprintf(os.Stderr, "[running-man] Process %s did not start: %s\n", name, info.StartupError)
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "[running-man] Process %s exited with code %d\n", name, code)
 		}
 
 		// Hold the buffer open so the logs explaining a crash survive it. The

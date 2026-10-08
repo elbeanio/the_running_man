@@ -67,6 +67,10 @@ type DockerComposeConfig struct {
 	// StartTimeout is how long to wait for containers to appear after starting
 	// the stack, as a duration string. Defaults to DefaultComposeStartTimeout.
 	StartTimeout string `yaml:"start_timeout,omitempty"`
+
+	// Healthchecks say when a Compose service is ready, for a service whose
+	// Compose file has no healthcheck of its own. Keyed by service name.
+	Healthchecks map[string]HealthcheckConfig `yaml:"healthchecks,omitempty"`
 }
 
 // UnmarshalYAML accepts either a plain path string or the structured mapping.
@@ -175,6 +179,13 @@ func (d *DockerComposeConfig) Validate() error {
 	for _, p := range d.Profiles {
 		if p == "" {
 			return fmt.Errorf("docker_compose profiles must not contain empty names")
+		}
+	}
+
+	for _, name := range sortedKeys(d.Healthchecks) {
+		hc := d.Healthchecks[name]
+		if err := hc.Validate(); err != nil {
+			return fmt.Errorf("docker_compose.healthchecks.%s: %w", name, err)
 		}
 	}
 

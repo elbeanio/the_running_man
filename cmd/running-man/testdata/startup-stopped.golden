@@ -1,0 +1,22 @@
+   ┌───────────────┐┌───────────────────┐┌──────────────┐┌───────────────┐┌──────────────┐          
+   │  🚦  Startup  ││  🏃‍➡️  running-man  ││  🔧 backend  ││  🔧 frontend  ││  🔍  Traces  │          
+┌──┘               └┴───────────────────┴┴──────────────┴┴───────────────┴┴──────────────┴─────────┐
+│ Startup stopped: denodo: its healthcheck (port 9996) did not pass within 3m                      │
+│                                                                                                  │
+│ ✓ denodo-source-db  ready     its Compose healthcheck passed                                     │
+│     database system is ready to accept connections                                               │
+│ ✗ denodo            failed    its healthcheck (port 9996) did not pass within 3m                 │
+│     [VDP] INFO server.start - TLS is disabled on incoming connections                            │
+│     [SSO] INFO Starting DenodoSSOWebApplication 9.4.0 using Java 17.0.17                         │
+│ ✗ backend           blocked   denodo was not ready                                               │
+│ ● frontend          running   no dependencies                                                    │
+│     VITE v5.4.2  ready in 412 ms                                                                 │
+│     ➜  Local:   http://localhost:5175/                                                           │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                                                    
+←/→ Tab: Switch source | q: Quit                                                                    

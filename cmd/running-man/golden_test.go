@@ -274,6 +274,10 @@ func TestFramesFitTheirWidth(t *testing.T) {
 		"traces":       func(m model) string { m.selectedSource = 2; return m.View() },
 		"search":       func(m model) string { m.mode = ModeSearch; m.searchQuery = "connect"; return m.View() },
 		"trace-detail": func(m model) string { m.mode = ModeTraceDetail; m.selectedSource = 2; return m.View() },
+		"startup": func(m model) string {
+			s := startupModel(m.width, m.height, startupStopped())
+			return s.View()
+		},
 	}
 
 	for _, size := range sizes {
