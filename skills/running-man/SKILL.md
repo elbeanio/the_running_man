@@ -150,8 +150,9 @@ them -- and the first two levels are built so you never pay for that by accident
 curl -s --unix-socket "$SOCK" 'http://localhost/traces?since=10m'
 curl -s --unix-socket "$SOCK" 'http://localhost/traces?status=error&since=10m'
 
-# 2. What happened in it? Every span, with each attribute value cut at 1 KB. A span whose
-#    values were cut lists their real sizes under "truncated".
+# 2. What happened in it? Every span, each value cut at 1 KB and each span held to 8 KB.
+#    Values cut short, or left out to fit, are listed with their real sizes under
+#    "truncated" -- every attribute key is in "attributes" or "truncated".
 curl -s --unix-socket "$SOCK" http://localhost/traces/TRACE_ID
 
 # 3. The full content of one span -- a model's whole input, the images in it. Check

@@ -545,7 +545,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		{
 			"path":        "/traces/{id}",
 			"method":      "GET",
-			"description": "One trace and every span, attribute values cut at 1 KB (original sizes in truncated)",
+			"description": "One trace and every span, values cut at 1 KB and 8 KB a span (original sizes in truncated)",
 		},
 		{
 			"path":        "/traces/{id}/spans/{span_id}",
@@ -673,7 +673,7 @@ func (s *Server) handleTraceSpans(w http.ResponseWriter, r *http.Request, traceI
 
 	trimmed := make([]tracing.TrimmedSpan, len(spans))
 	for i, sp := range spans {
-		trimmed[i] = tracing.Trim(sp, trimLimit)
+		trimmed[i] = tracing.Trim(sp, trimLimit, spanBudget)
 	}
 	s.writeJSON(w, map[string]interface{}{
 		"trace": tracing.Summarise(spans),
@@ -682,8 +682,13 @@ func (s *Server) handleTraceSpans(w http.ResponseWriter, r *http.Request, traceI
 	})
 }
 
-// trimLimit is the most of any one attribute value /traces/{id} returns.
-const trimLimit = 1024
+// trimLimit is the most of any one attribute value /traces/{id} returns, and
+// spanBudget the most of all of one span's values together. A per-value cut
+// alone did not bound a span with hundreds of attributes.
+const (
+	trimLimit  = 1024
+	spanBudget = 8 * 1024
+)
 
 // handleSpan is level three: one span, nothing cut. An agent asks for this
 // deliberately, knowing from level two how large it is.

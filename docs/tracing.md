@@ -317,7 +317,7 @@ curl --unix-socket "$SOCK" "http://localhost/traces?service=backend&since=10m"
 curl --unix-socket "$SOCK" "http://localhost/traces?span_name=SELECT&since=10m"
 curl --unix-socket "$SOCK" "http://localhost/traces?status=error&since=30m"
 
-# 2. One trace: every span, attribute values cut at 1 KB ("truncated" gives the real sizes)
+# 2. One trace: every span, values cut at 1 KB and 8 KB a span ("truncated" gives real sizes)
 curl --unix-socket "$SOCK" "http://localhost/traces/TRACE_ID"
 
 # 3. One span in full: large values such as a model's input, images included
@@ -331,7 +331,7 @@ for -- a single trace from an LLM application can carry megabytes of attributes:
 
 1. **`GET /traces`** - trace summaries, filtered by `service`, `span_name`, `status`
    (`error` or `ok`), `since`, `limit`. No span attributes.
-2. **`GET /traces/{id}`** - one trace and every span, attribute values cut at 1 KB
+2. **`GET /traces/{id}`** - one trace and every span, values cut at 1 KB and 8 KB a span
 3. **`GET /traces/{id}/spans/{span_id}`** - one span in full
 4. **`GET /traces/{id}/logs`** - log entries correlated to a trace by `trace_id`
 

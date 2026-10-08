@@ -229,7 +229,8 @@ context only on what it asks for. A single trace from an LLM application can car
 megabytes of attributes: whole conversations, and the images in them.
 
 1. `GET /traces` -- summaries, enough to choose a trace. No span attributes.
-2. `GET /traces/{trace_id}` -- one trace and every span, attribute values cut at 1 KB.
+2. `GET /traces/{trace_id}` -- one trace and every span, each value cut at 1 KB and each
+   span's values held to 8 KB together.
 3. `GET /traces/{trace_id}/spans/{span_id}` -- one span in full.
 
 Status is `ok`, `error` or `unset`; durations are strings (`"3.38s"`).
@@ -274,8 +275,13 @@ curl --unix-socket "$SOCK" "http://localhost/traces?since=10m&status=error"
 ### GET /traces/{trace_id}
 
 The trace's summary and every span, in start order. Each attribute value (and event
-attribute value) is **cut at 1 KB**; a span where that happened lists the original sizes in
-`truncated`, keyed by attribute (events as `events.N.key`). 404 for an unknown trace.
+attribute value) is **cut at 1 KB**, and a span's values together are held to **8 KB** -- an
+LLM span can carry hundreds of attributes, which a per-value cut alone does not bound. The
+budget goes to event attributes first (exceptions live there), then to the smallest values,
+so the most stay whole. A value cut short keeps its key in `attributes`; a value that did
+not fit the budget is left out of `attributes`. Either way `truncated` gives its real size,
+keyed by attribute (events as `events.N.key`), so every key is listed in one or the other.
+404 for an unknown trace.
 
 ```json
 {

@@ -34,7 +34,8 @@ tags:
   - name: traces
     description: |
       OpenTelemetry traces, in three levels of detail: summaries, one trace with values
-      cut at 1 KB, one span in full. A caller spends context only on what it asks for.
+      cut at 1 KB and 8 KB a span, one span in full. A caller spends context only on what
+      it asks for.
 
 paths:
   /:
@@ -452,10 +453,13 @@ paths:
 
   /traces/{trace_id}:
     get:
-      summary: One trace, values cut at 1 KB
+      summary: One trace, values cut at 1 KB and 8 KB a span
       description: |
         The trace's summary and every span, in start order. Each attribute value, and each
-        event attribute value, is cut at 1 KB; `truncated` gives the original sizes.
+        event attribute value, is cut at 1 KB, and a span's values together are held to
+        8 KB: event attributes first, then the smallest values. A value that did not fit is
+        left out of `attributes`; `truncated` gives the original size of every value cut
+        or left out, so every key appears in one or the other.
       tags:
         - traces
       parameters:
@@ -863,8 +867,9 @@ components:
           type: object
           additionalProperties: {type: integer}
           description: |
-            In /traces/{trace_id} only: the original size in bytes of each value that was
-            cut, keyed by attribute (events as events.N.key). Absent when nothing was cut.
+            In /traces/{trace_id} only: the original size in bytes of each value that was cut
+            short or left out by the span budget, keyed by attribute (events as
+            events.N.key). Absent when nothing was cut.
 
     TraceResponse:
       type: object

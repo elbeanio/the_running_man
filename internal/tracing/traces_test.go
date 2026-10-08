@@ -2,6 +2,7 @@ package tracing
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -122,7 +123,7 @@ func TestTrim(t *testing.T) {
 	sp := span("t", "s", "", "op", 0, 1, "ok", map[string]string{"input.value": big, "small": "x"})
 	sp.Events = []SpanEvent{{Name: "exception", Attributes: map[string]string{"exception.stacktrace": big}}}
 
-	tr := Trim(sp, 1024)
+	tr := Trim(sp, 1024, 1<<20)
 	v := tr.Span.Attributes["input.value"]
 	if len(v) > 1024+len("…") || !strings.HasSuffix(v, "…") || !json.Valid([]byte(`"`+v+`"`)) {
 		t.Errorf("cut value is %d bytes, suffix %q", len(v), v[len(v)-5:])
@@ -149,7 +150,64 @@ func TestTrim(t *testing.T) {
 	if m["span_id"] != "s" || m["duration"] != "1ms" || m["truncated"] == nil {
 		t.Errorf("JSON = %s", b)
 	}
-	if b, _ := json.Marshal(Trim(span("t", "s", "", "op", 0, 1, "ok", nil), 1024)); strings.Contains(string(b), "truncated") {
+	if b, _ := json.Marshal(Trim(span("t", "s", "", "op", 0, 1, "ok", nil), 1024, 1<<20)); strings.Contains(string(b), "truncated") {
 		t.Errorf("an untrimmed span says truncated: %s", b)
+	}
+}
+
+// A 1 KB cut per value did not bound a span: an OpenInference LLM span carries
+// ~240 attributes, and a 69-span trace came to 608 KB at level two. Each span
+// now has a budget for all its values together. Every key is still listed --
+// in attributes, or, when its value did not fit, only in truncated with its
+// size -- and the smallest values are kept whole first.
+func TestTrim_PerSpanBudget(t *testing.T) {
+	attrs := map[string]string{"llm.model_name": "gpt-4.1", "session.id": "s-123"}
+	for i := range 240 {
+		attrs[fmt.Sprintf("llm.input_messages.%d.message.content", i)] = strings.Repeat("m", 1500)
+	}
+	sp := span("t", "llm", "", "ChatCompletion", 0, 1, "ok", attrs)
+	sp.Events = []SpanEvent{{Name: "exception", Attributes: map[string]string{"exception.message": "boom"}}}
+
+	tr := Trim(sp, 1024, 8192)
+
+	total := 0
+	for _, v := range tr.Span.Attributes {
+		total += len(v)
+	}
+	for _, v := range tr.Span.Events[0].Attributes {
+		total += len(v)
+	}
+	if total > 8192+len("…")*len(attrs) {
+		t.Errorf("values total %d bytes, budget 8192", total)
+	}
+	for k := range attrs {
+		_, kept := tr.Span.Attributes[k]
+		_, sized := tr.Truncated[k]
+		if !kept && !sized {
+			t.Errorf("%s is listed nowhere", k)
+		}
+	}
+	if tr.Span.Attributes["llm.model_name"] != "gpt-4.1" || tr.Span.Attributes["session.id"] != "s-123" {
+		t.Error("small values were not kept whole")
+	}
+	if tr.Span.Events[0].Attributes["exception.message"] != "boom" {
+		t.Error("the exception was not kept")
+	}
+	dropped := 0
+	for k := range attrs {
+		if _, kept := tr.Span.Attributes[k]; !kept {
+			dropped++
+			if tr.Truncated[k] != 1500 {
+				t.Errorf("%s dropped without its size: %v", k, tr.Truncated[k])
+			}
+		}
+	}
+	if dropped == 0 {
+		t.Error("nothing was dropped; the budget did not apply")
+	}
+
+	// Deterministic: the same span trims the same way.
+	if again := Trim(sp, 1024, 8192); fmt.Sprint(again.Span.Attributes) != fmt.Sprint(tr.Span.Attributes) {
+		t.Error("trimming is not deterministic")
 	}
 }

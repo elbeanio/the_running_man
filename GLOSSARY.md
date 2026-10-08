@@ -133,7 +133,7 @@ so the developer and the agent are looking at the same run.
 - **Trace summary** — what `/traces` returns for a trace: root span, a one-line summary
   (the root's `input.value`, `http.route`, `http.target` or `db.statement`), start,
   duration, span and error counts, services. The first of the **three levels** of trace
-  detail; then one trace with values cut at 1 KB; then one span in full.
+  detail; then one trace with values cut at 1 KB and 8 KB a span; then one span in full.
 - **OTLP receiver** — the endpoint accepting spans over OTLP/HTTP (default port 4318).
   Running Man injects the matching `OTEL_*` variables into **managed processes**, so an
   instrumented app finds it without configuration.

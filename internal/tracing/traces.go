@@ -204,9 +204,17 @@ func (t TrimmedSpan) MarshalJSON() ([]byte, error) {
 }
 
 // Trim copies sp with every attribute value, and every event attribute value,
-// cut to at most limit bytes on a character boundary. The stored span is not
-// changed.
-func Trim(sp *SpanEntry, limit int) TrimmedSpan {
+// cut to at most perValue bytes on a character boundary, and all of them
+// together held to perSpan bytes. The stored span is not changed.
+//
+// The per-span budget is there because a per-value cut does not bound a span:
+// an OpenInference LLM span carries ~240 attributes, and a 69-span trace came
+// to 608 KB with values cut at 1 KB. Every key is still listed. The budget goes
+// to event attributes first -- exceptions live there -- then to the smallest
+// values, so the most values stay whole (model names, roles, IDs) and the
+// largest give way. A value that does not fit is left out of the attributes
+// and listed in Truncated with its real size, as a cut value's size is.
+func Trim(sp *SpanEntry, perValue, perSpan int) TrimmedSpan {
 	out := TrimmedSpan{Span: *sp}
 	note := func(key string, n int) {
 		if out.Truncated == nil {
@@ -214,34 +222,78 @@ func Trim(sp *SpanEntry, limit int) TrimmedSpan {
 		}
 		out.Truncated[key] = n
 	}
-	out.Span.Attributes = trimValues(sp.Attributes, limit, func(k string, n int) { note(k, n) })
+
+	// Every value, cut to perValue, with where it goes back to.
+	type entry struct {
+		key, value, original string
+		event                bool
+		put                  func(string)
+	}
+	var entries []entry
+	add := func(key, v string, event bool, put func(string)) {
+		cut := cutValue(v, perValue)
+		entries = append(entries, entry{key: key, value: cut, original: v, event: event, put: put})
+	}
+	if sp.Attributes != nil {
+		out.Span.Attributes = make(map[string]string, len(sp.Attributes))
+		for k, v := range sp.Attributes {
+			add(k, v, false, func(val string) { out.Span.Attributes[k] = val })
+		}
+	}
 	if len(sp.Events) > 0 {
 		out.Span.Events = make([]SpanEvent, len(sp.Events))
 		for i, ev := range sp.Events {
 			out.Span.Events[i] = ev
+			if ev.Attributes == nil {
+				continue
+			}
+			attrs := make(map[string]string, len(ev.Attributes))
+			out.Span.Events[i].Attributes = attrs
 			prefix := "events." + strconv.Itoa(i) + "."
-			out.Span.Events[i].Attributes = trimValues(ev.Attributes, limit, func(k string, n int) { note(prefix+k, n) })
+			for k, v := range ev.Attributes {
+				add(prefix+k, v, true, func(val string) { attrs[k] = val })
+			}
+		}
+	}
+
+	// Events first, then smallest first; by key on ties, so the result is
+	// the same every time.
+	sort.Slice(entries, func(a, b int) bool {
+		ea, eb := entries[a], entries[b]
+		if ea.event != eb.event {
+			return ea.event
+		}
+		if len(ea.value) != len(eb.value) {
+			return len(ea.value) < len(eb.value)
+		}
+		return ea.key < eb.key
+	})
+	used := 0
+	for _, e := range entries {
+		if used+len(e.value) > perSpan {
+			// Listed once, in Truncated with its size, rather than also as an
+			// empty "…" here: on an LLM span the key names alone outweighed
+			// the values once these were dropped.
+			note(e.key, len(e.original))
+			continue
+		}
+		used += len(e.value)
+		e.put(e.value)
+		if e.value != e.original {
+			note(e.key, len(e.original))
 		}
 	}
 	return out
 }
 
-func trimValues(attrs map[string]string, limit int, cut func(key string, original int)) map[string]string {
-	if attrs == nil {
-		return nil
+// cutValue cuts v to at most limit bytes on a character boundary, marked "…".
+func cutValue(v string, limit int) string {
+	if len(v) <= limit {
+		return v
 	}
-	out := make(map[string]string, len(attrs))
-	for k, v := range attrs {
-		if len(v) <= limit {
-			out[k] = v
-			continue
-		}
-		i := limit
-		for i > 0 && !utf8.RuneStart(v[i]) {
-			i--
-		}
-		out[k] = v[:i] + "…"
-		cut(k, len(v))
+	i := limit
+	for i > 0 && !utf8.RuneStart(v[i]) {
+		i--
 	}
-	return out
+	return v[:i] + "…"
 }
