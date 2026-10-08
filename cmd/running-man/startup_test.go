@@ -90,7 +90,7 @@ func liveModel() model {
 }
 
 var (
-	rowsWaiting = []startupRow{{Name: "db", State: "starting"}, {Name: "backend", State: "pending"}}
+	rowsWaiting = []startupRow{{Name: "db", State: "checking"}, {Name: "backend", State: "pending"}}
 	rowsUp      = []startupRow{{Name: "db", State: "ready"}, {Name: "backend", State: "ready"}}
 	rowsStopped = []startupRow{{Name: "db", State: "failed"}, {Name: "backend", State: "blocked"}}
 )
@@ -165,7 +165,7 @@ func TestFetchStartup_OverTheSocket(t *testing.T) {
 					{Name: "backend", Status: process.StatusPending, DependsOn: []string{"db"}},
 				},
 				"dependencies": []process.DependencyInfo{
-					{Name: "db", State: process.StatusStarting, Sources: []string{"proj-db-1"}},
+					{Name: "db", State: process.DependencyChecking, Sources: []string{"proj-db-1"}},
 				},
 			})
 		case "/logs":
@@ -186,7 +186,7 @@ func TestFetchStartup_OverTheSocket(t *testing.T) {
 		t.Fatalf("got %#v", msg)
 	}
 	db, backend := msg.rows[0], msg.rows[1]
-	if db.State != "starting" || len(db.Lines) != 1 || !strings.Contains(db.Lines[0], "starting up") {
+	if db.State != "checking" || len(db.Lines) != 1 || !strings.Contains(db.Lines[0], "starting up") {
 		t.Errorf("db row = %+v", db)
 	}
 	if backend.State != "pending" || backend.Detail != "waiting for db" {

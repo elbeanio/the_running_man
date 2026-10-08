@@ -5,7 +5,7 @@
 │                                                          │
 │ ✓ denodo-source-db  ready     its Compose healthcheck pa…│
 │     database system is ready to accept connections       │
-│ ◐ denodo            starting  waiting for port 9996      │
+│ ◐ denodo            checking  waiting for port 9996      │
 │     [VDP] INFO server.start - TLS is disabled on incomin…│
 │     [SSO] INFO Starting DenodoSSOWebApplication 9.4.0 us…│
 │ ○ backend           pending   waiting for denodo         │

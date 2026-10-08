@@ -299,7 +299,7 @@ func TestStartup_ReportsDependenciesAndHealthchecks(t *testing.T) {
 
 	eventually(t, "db being checked", func() bool {
 		deps := m.Dependencies()
-		return len(deps) == 1 && deps[0].State == StatusStarting
+		return len(deps) == 1 && deps[0].State == DependencyChecking
 	})
 	d := m.Dependencies()[0]
 	if d.Name != "db" || len(d.Sources) != 1 || d.Sources[0] != "proj-db-1" {

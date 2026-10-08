@@ -610,10 +610,11 @@ components:
           description: The Compose service name
         state:
           type: string
-          enum: [pending, starting, ready, failed]
+          enum: [pending, checking, ready, failed]
           description: |
-            `pending` until something waits on it, `starting` while its healthcheck is
-            being checked, then `ready` or `failed`.
+            `pending` until something waits on it, `checking` while its healthcheck is
+            being checked, then `ready` or `failed`. Running Man does not start Compose
+            services, so a service that has been up for days is `checking` too, briefly.
         detail:
           type: string
           description: Why it failed. Absent otherwise.

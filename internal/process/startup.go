@@ -45,6 +45,11 @@ const (
 	// StatusBlocked is a process that will not start, because a dependency
 	// never became ready and startup stopped.
 	StatusBlocked = "blocked"
+
+	// DependencyChecking is a Compose service whose healthcheck is being
+	// checked. Not "starting": Running Man does not start Compose services,
+	// and a service that has been up for days is checked the same way.
+	DependencyChecking = "checking"
 )
 
 // ServiceReadiness blocks until the named Compose service is ready, or
@@ -433,8 +438,7 @@ func (m *Manager) applyStartup(info *ProcessInfo) {
 // processes, so they are listed here.
 type DependencyInfo struct {
 	Name string `json:"name"`
-	// State is pending (not checked yet), starting (being checked), ready or
-	// failed.
+	// State is pending (not checked yet), checking, ready or failed.
 	State string `json:"state"`
 	// Detail says why it failed.
 	Detail string `json:"detail,omitempty"`
@@ -479,7 +483,7 @@ func (m *Manager) Dependencies() []DependencyInfo {
 					d.State = "ready"
 				}
 			default:
-				d.State = StatusStarting
+				d.State = DependencyChecking
 			}
 		}
 		if m.serviceSources != nil {

@@ -14,7 +14,7 @@ func startupInProgress() []startupRow {
 		{Name: "denodo-source-db", Kind: "service", State: "ready",
 			Detail: "its Compose healthcheck passed",
 			Lines:  []string{"database system is ready to accept connections"}},
-		{Name: "denodo", Kind: "service", State: "starting",
+		{Name: "denodo", Kind: "service", State: "checking",
 			Detail: "waiting for port 9996",
 			Lines: []string{
 				"[VDP] INFO server.start - TLS is disabled on incoming connections",

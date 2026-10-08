@@ -34,6 +34,7 @@ var startupGlyphs = map[string]string{
 	"running":  "●",
 	"waiting":  "●",
 	"starting": "◐",
+	"checking": "◐",
 	"pending":  "○",
 	"stopped":  "■",
 	"blocked":  "✗",
@@ -54,7 +55,7 @@ func startupStateStyle(state string) lipgloss.Style {
 	switch state {
 	case "ready", "running":
 		return startupReadyStyle
-	case "starting":
+	case "starting", "checking":
 		return startupWaitStyle
 	case "blocked", "failed", "exited":
 		return startupFailStyle
@@ -236,7 +237,7 @@ func buildStartupRows(pv processesView, lines map[string][]string) []startupRow 
 		switch d.State {
 		case "pending":
 			r.Detail = "not checked yet"
-		case "starting":
+		case "checking":
 			r.Detail = "waiting for its healthcheck"
 		case "ready":
 			r.Detail = "its healthcheck passed"
