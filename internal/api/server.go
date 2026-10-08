@@ -151,7 +151,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/traces", s.handleTraces)
 	mux.HandleFunc("/traces/", s.handleTraceDetail) // Handles /traces/{id} and /traces/{id}/logs
 
-	return mux
+	return s.logCalls(mux)
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {

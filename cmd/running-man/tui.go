@@ -1447,6 +1447,8 @@ func renderLogWindow(logs []logEntry, height, width, scrollOffset int, searchQue
 		style := logStyle
 		if log.Level == "error" {
 			style = errorLogStyle
+		} else if isAPICall(log) {
+			style = apiCallLogStyle
 		}
 		for i, raw := range strings.Split(log.Message, "\n") {
 			if lineIdx >= startIdx && lineIdx < endIdx {
@@ -1741,6 +1743,12 @@ func tickCmd() tea.Cmd {
 	})
 }
 
+// isAPICall reports whether an entry is an agent's API call, which the API
+// logs in Running Man's own source as a line starting "api ".
+func isAPICall(e logEntry) bool {
+	return e.Source == "running-man" && strings.HasPrefix(e.Message, "api ")
+}
+
 func countMatches(logs []logEntry, query string) int {
 	// Delegates to buildMatchLineIndex so the count and the positions can never
 	// disagree -- they used to, by being given different widths.
@@ -1831,6 +1839,11 @@ var (
 
 	errorLogStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("203"))
+
+	// apiCallLogStyle sets an agent's API calls apart from Running Man's own
+	// messages, which share its source.
+	apiCallLogStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("44")) // cyan
 
 	traceIndicatorStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("33")). // Bright blue

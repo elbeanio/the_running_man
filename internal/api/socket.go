@@ -117,11 +117,21 @@ func (s *Server) Serve(ln net.Listener) error {
 // the dialler decide where that actually goes.
 func NewSocketClient(socketPath string) *http.Client {
 	return &http.Client{
-		Transport: &http.Transport{
+		Transport: internalAgent{&http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				var d net.Dialer
 				return d.DialContext(ctx, "unix", socketPath)
 			},
-		},
+		}},
 	}
+}
+
+// internalAgent marks every request as Running Man's own, so the API call log
+// leaves it out.
+type internalAgent struct{ next http.RoundTripper }
+
+func (t internalAgent) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("User-Agent", InternalUserAgent)
+	return t.next.RoundTrip(r)
 }
