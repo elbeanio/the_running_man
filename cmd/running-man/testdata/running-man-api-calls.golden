@@ -1,0 +1,14 @@
+   ┌───────────────────┐┌──────────────┐┌──────────────┐                                            
+   │  🏃‍➡️  running-man  ││  🔧 backend  ││  🔍  Traces  │                                            
+┌──┘                   └┴──────────────┴┴──────────────┴───────────────────────────────────────────┐
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│[19:42:10] [info] backend is waiting for denodo                                                   │
+│[19:42:11] [info] Compose service denodo is ready                                                 │
+│[19:43:02] [info] api GET /traces?since=10m 200 4.1 KB 2ms                                        │
+│[19:43:05] [info] api GET /traces/a52b1a91528093522205536890ef2f09 200 21.7 KB 6ms                │
+│[19:43:09] [warn] api GET /traces/nope 404 42 B 157µs                                             │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                                                    
+Tab: source | ↑/↓: scroll | /: search | t: trace:on | q: quit                                       
