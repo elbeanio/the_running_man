@@ -96,6 +96,17 @@ func slugify(s string) string {
 	return s
 }
 
+// lineSourceType is the source type for a line arriving through a handler of
+// type via. Running Man's own lines are system output whichever handler they
+// came through: the process manager reports startup and restarts through the
+// process handler, under the name running-man.
+func lineSourceType(source, via string) string {
+	if source == "running-man" {
+		return "system"
+	}
+	return via
+}
+
 // composeServices summarises the Compose stack for dependency validation.
 func composeServices(compose *docker.ComposeFile, profiles []string) config.ComposeServices {
 	svcs := config.ComposeServices{
@@ -619,7 +630,7 @@ func runCommand(args []string) {
 	}
 
 	processLineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {
-		appendEntries(parse(source, "process", line, timestamp, isStderr))
+		appendEntries(parse(source, lineSourceType(source, "process"), line, timestamp, isStderr))
 	}
 
 	dockerLineHandler := func(source string, line string, timestamp time.Time, isStderr bool) {

@@ -47,3 +47,20 @@ services:
 		t.Errorf("with the debug profile active, debug-ui should be active: %+v", svcs)
 	}
 }
+
+// The process manager reports startup through the process line handler, under
+// Running Man's own name. Typed "process", that made the running-man tab look
+// like a managed process. Its own lines are system output wherever they come
+// from.
+func TestLineSourceType(t *testing.T) {
+	for _, tc := range []struct{ source, via, want string }{
+		{"running-man", "process", "system"},
+		{"running-man", "system", "system"},
+		{"backend", "process", "process"},
+		{"duet-db-1", "docker", "docker"},
+	} {
+		if got := lineSourceType(tc.source, tc.via); got != tc.want {
+			t.Errorf("lineSourceType(%q, %q) = %q, want %q", tc.source, tc.via, got, tc.want)
+		}
+	}
+}
