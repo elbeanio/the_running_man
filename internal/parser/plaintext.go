@@ -125,6 +125,15 @@ func (p *PlainTextParser) Parse(source string, line string, timestamp time.Time,
 	// "0 failed" matched the error patterns.
 	line = classificationText(line, traceSpan)
 
+	// A line that states its own level is that level, ahead of every keyword
+	// rule and of the stderr floor. Keywords guess, and they guessed from the
+	// wrong words: uvicorn's logger is named "uvicorn.error", so all of its
+	// INFO lines were errors, and it writes them to stderr.
+	if level, ok := explicitLevel(line); ok {
+		entry.Level = level
+		return entry
+	}
+
 	// Lowered after the annotations are cut out, not before: the trace span
 	// indexes the original bytes, and lowering can change a line's length.
 	lineLower := strings.ToLower(line)
@@ -167,6 +176,36 @@ func (p *PlainTextParser) Parse(source string, line string, timestamp time.Time,
 	// gone: it returned the same answer as falling through.
 	entry.Level = LevelInfo
 	return entry
+}
+
+// The ways a line states its own level. Separate patterns rather than one
+// alternation, which Go's regexp scans more slowly; the earliest match in the
+// line wins.
+var explicitLevelPatterns = []*regexp.Regexp{
+	// level=warn, level: "info" -- logfmt, slog, structured text.
+	regexp.MustCompile(`(?i)\blevel\s*[=:]\s*"?(trace|debug|info|warn|warning|error|err|fatal|critical|panic)\b`),
+	// [INFO], [error] -- bracketed, any case.
+	regexp.MustCompile(`(?i)\[\s*(trace|debug|info|warn|warning|error|err|fatal|critical)\s*\]`),
+	// INFO, WARNING: -- an upper-case level as a word of its own: Python's
+	// "name - INFO - msg", uvicorn's "INFO:", Java's "[main] INFO  ...".
+	// Upper case only, so the word in a sentence ("for more info") is not one.
+	regexp.MustCompile(`(?:^|\s)(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)(?::|\s|$)`),
+}
+
+// explicitLevel returns the level a line states for itself, if it does.
+func explicitLevel(line string) (LogLevel, bool) {
+	best, word := -1, ""
+	for _, re := range explicitLevelPatterns {
+		m := re.FindStringSubmatchIndex(line)
+		if m == nil || (best >= 0 && m[0] >= best) {
+			continue
+		}
+		best, word = m[0], line[m[2]:m[3]]
+	}
+	if best < 0 {
+		return "", false
+	}
+	return parseLevel(word), true
 }
 
 // extractTraceID returns the trace ID annotated on a line and the span of the
