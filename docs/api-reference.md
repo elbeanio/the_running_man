@@ -42,6 +42,18 @@ question — there is nothing to allocate, nothing to collide over, and an agent
 project cannot read another's logs. It also replaces the access-control problem: the socket
 is mode 0600, so reaching it means being this user on this machine.
 
+**Requests are logged where the developer can see them.** Each request from outside Running
+Man is recorded in its own `running-man` source as one line -- method, path and query,
+status, response size and time:
+
+```
+api GET /traces?since=10m 200 4.1 KB 2ms
+```
+
+It is how the developer sees what an agent is asking for, and what each answer costs its
+context. A `4xx` or `5xx` answer is logged at `warn`. Running Man's own client (the TUI)
+identifies itself with `User-Agent: running-man` and is not logged.
+
 ---
 
 ## Log Endpoints
