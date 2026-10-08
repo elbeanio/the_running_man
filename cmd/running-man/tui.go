@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -2178,6 +2179,21 @@ func TuiCommandWithManager(args []string, manager *process.Manager) {
 
 	// Create and run the TUI
 	p := tea.NewProgram(initialModel(apiURL, manager), tea.WithAltScreen())
+
+	// Quit on any shutdown signal, so the shutdown after the TUI runs. Bubble
+	// Tea quits on SIGINT and SIGTERM itself, but not on SIGHUP -- what closing
+	// the terminal sends. The process manager stopped the processes, and the
+	// TUI went on running against a terminal that was gone, holding the
+	// instance socket so the project still looked attended.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, process.ShutdownSignals...)
+	defer signal.Stop(sigs)
+	go func() {
+		if _, ok := <-sigs; ok {
+			p.Quit()
+		}
+	}()
+
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Any crash report is in %s\n", crashLogName)

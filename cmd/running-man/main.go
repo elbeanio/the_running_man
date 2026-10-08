@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/elbeanio/the_running_man/internal/api"
@@ -297,13 +296,13 @@ func shouldKeepAlive(mode string) bool {
 	}
 }
 
-// waitForInterrupt blocks until SIGINT or SIGTERM.
+// waitForInterrupt blocks until one of process.ShutdownSignals arrives.
 //
 // Registers its own channel: the process manager also watches for signals, and
 // signal.Notify delivers to every registered channel, so both see it.
 func waitForInterrupt() {
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sigChan, process.ShutdownSignals...)
 	defer signal.Stop(sigChan)
 	<-sigChan
 }
@@ -907,7 +906,7 @@ func runCommand(args []string) {
 
 	go func() {
 		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+		signal.Notify(sigChan, process.ShutdownSignals...)
 		<-sigChan
 		// The process manager handles the signal too and stops the processes;
 		// this only cleans up the marker, because a deferred call does not run

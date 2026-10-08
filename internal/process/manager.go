@@ -703,9 +703,18 @@ func (m *Manager) infoLocked(name string) (ProcessInfo, bool) {
 	return info, true
 }
 
-// setupSignalHandlers configures graceful shutdown on SIGINT/SIGTERM
+// ShutdownSignals are the signals that stop Running Man and everything it
+// manages. Every handler uses this list, so they cannot disagree.
+//
+// SIGHUP is among them because it is what closing the terminal sends -- the
+// window, or the tmux session. It was missing: SIGHUP's default action ended
+// Running Man without stopping anything it had started, and in testing nine
+// processes survived two runs in a tmux session that was killed.
+var ShutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
+
+// setupSignalHandlers stops every process on any of ShutdownSignals.
 func (m *Manager) setupSignalHandlers() {
-	signal.Notify(m.sigChan, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(m.sigChan, ShutdownSignals...)
 
 	go func() {
 		select {
