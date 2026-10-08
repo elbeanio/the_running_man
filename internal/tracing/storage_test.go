@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestSpanStorage_AddAndQuery(t *testing.T) {
+func TestSpanStorage_AddAndTraces(t *testing.T) {
 	storage := NewSpanStorage(100, time.Hour)
 
 	// Create test spans
@@ -33,32 +33,31 @@ func TestSpanStorage_AddAndQuery(t *testing.T) {
 	storage.Add(span1)
 	storage.Add(span2)
 
-	// Query all spans
-	allSpans := storage.Query(SpanQueryFilters{})
-	assert.Len(t, allSpans, 2)
+	// Every span is stored.
+	assert.Len(t, allSpans(storage), 2)
 
-	// Query by service name
-	service1Spans := storage.Query(SpanQueryFilters{ServiceName: "service1"})
-	assert.Len(t, service1Spans, 1)
-	assert.Equal(t, "trace1", service1Spans[0].TraceID)
+	// The same selections, now made per trace.
+	ids := func(f TraceFilters) []string {
+		var out []string
+		for _, tr := range storage.Traces(f) {
+			out = append(out, tr.TraceID)
+		}
+		return out
+	}
+	assert.Equal(t, []string{"trace1"}, ids(TraceFilters{ServiceName: "service1"}))
+	assert.Equal(t, []string{"trace2"}, ids(TraceFilters{Status: "error"}))
+	assert.Equal(t, []string{"trace2", "trace1"}, ids(TraceFilters{Since: time.Hour}))
+	assert.Empty(t, ids(TraceFilters{Since: 5 * time.Minute}))
+	// span_name is a substring match.
+	assert.Equal(t, []string{"trace2", "trace1"}, ids(TraceFilters{SpanName: "operation"}))
+	assert.Equal(t, []string{"trace2"}, ids(TraceFilters{SpanName: "ation2"}))
+}
 
-	// Query by trace ID
-	trace2Spans := storage.Query(SpanQueryFilters{TraceID: "trace2"})
-	assert.Len(t, trace2Spans, 1)
-	assert.Equal(t, "span2", trace2Spans[0].SpanID)
-
-	// Query by status
-	errorSpans := storage.Query(SpanQueryFilters{Status: "error"})
-	assert.Len(t, errorSpans, 1)
-	assert.Equal(t, "trace2", errorSpans[0].TraceID)
-
-	// Query by time (should get both spans)
-	recentSpans := storage.Query(SpanQueryFilters{Since: time.Hour})
-	assert.Len(t, recentSpans, 2)
-
-	// Query by older time (should get none)
-	oldSpans := storage.Query(SpanQueryFilters{Since: 5 * time.Minute})
-	assert.Len(t, oldSpans, 0)
+// allSpans is every stored span, for tests that count what eviction kept.
+func allSpans(s *SpanStorage) []*SpanEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]*SpanEntry(nil), s.spans...)
 }
 
 func TestSpanStorage_GetTrace(t *testing.T) {
@@ -120,7 +119,7 @@ func TestSpanStorage_EvictionByAge(t *testing.T) {
 	storage.Add(&SpanEntry{TraceID: "new", SpanID: "span2", Name: "new-operation",
 		ServiceName: "service1", StartTime: time.Now()})
 
-	spans := storage.Query(SpanQueryFilters{})
+	spans := allSpans(storage)
 	assert.Len(t, spans, 1)
 	assert.Equal(t, "new", spans[0].TraceID)
 }
@@ -141,55 +140,8 @@ func TestSpanStorage_EvictionBySize(t *testing.T) {
 	}
 
 	// Should only have the last 2 spans
-	spans := storage.Query(SpanQueryFilters{})
+	spans := allSpans(storage)
 	assert.Len(t, spans, 2)
 	assert.Equal(t, "b", spans[0].TraceID) // Second span
 	assert.Equal(t, "c", spans[1].TraceID) // Third span (first was evicted)
-}
-
-func TestSpanStorage_QueryWithSpanName(t *testing.T) {
-	storage := NewSpanStorage(100, time.Hour)
-
-	span1 := &SpanEntry{
-		TraceID:     "trace1",
-		SpanID:      "span1",
-		Name:        "GET /api/users",
-		ServiceName: "service1",
-		StartTime:   time.Now(),
-	}
-
-	span2 := &SpanEntry{
-		TraceID:     "trace2",
-		SpanID:      "span2",
-		Name:        "POST /api/users",
-		ServiceName: "service1",
-		StartTime:   time.Now(),
-	}
-
-	span3 := &SpanEntry{
-		TraceID:     "trace3",
-		SpanID:      "span3",
-		Name:        "GET /api/products",
-		ServiceName: "service2",
-		StartTime:   time.Now(),
-	}
-
-	storage.Add(span1)
-	storage.Add(span2)
-	storage.Add(span3)
-
-	// Query by partial span name
-	apiSpans := storage.Query(SpanQueryFilters{SpanName: "/api/"})
-	assert.Len(t, apiSpans, 3)
-
-	usersSpans := storage.Query(SpanQueryFilters{SpanName: "users"})
-	assert.Len(t, usersSpans, 2)
-
-	postSpans := storage.Query(SpanQueryFilters{SpanName: "POST"})
-	assert.Len(t, postSpans, 1)
-	assert.Equal(t, "trace2", postSpans[0].TraceID)
-
-	productsSpans := storage.Query(SpanQueryFilters{SpanName: "products"})
-	assert.Len(t, productsSpans, 1)
-	assert.Equal(t, "trace3", productsSpans[0].TraceID)
 }

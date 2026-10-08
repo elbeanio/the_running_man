@@ -1,7 +1,6 @@
 package tracing
 
 import (
-	"strings"
 	"sync"
 	"time"
 )
@@ -67,47 +66,6 @@ func (s *SpanStorage) dropOldest(n int) {
 	s.spans = s.spans[n:]
 }
 
-// Query retrieves spans matching the given filters
-func (s *SpanStorage) Query(filters SpanQueryFilters) []*SpanEntry {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// Non-nil, so an empty result serialises as [] rather than null.
-	result := []*SpanEntry{}
-	cutoff := time.Now().Add(-filters.Since)
-
-	for _, span := range s.spans {
-		// Filter by time
-		if filters.Since > 0 && span.StartTime.Before(cutoff) {
-			continue
-		}
-
-		// Filter by service name
-		if filters.ServiceName != "" && span.ServiceName != filters.ServiceName {
-			continue
-		}
-
-		// Filter by trace ID
-		if filters.TraceID != "" && span.TraceID != filters.TraceID {
-			continue
-		}
-
-		// Filter by span name (supports partial match)
-		if filters.SpanName != "" && !strings.Contains(span.Name, filters.SpanName) {
-			continue
-		}
-
-		// Filter by status
-		if filters.Status != "" && span.Status != filters.Status {
-			continue
-		}
-
-		result = append(result, span)
-	}
-
-	return result
-}
-
 // GetTrace retrieves all spans for a specific trace ID
 func (s *SpanStorage) GetTrace(traceID string) []*SpanEntry {
 	s.mu.RLock()
@@ -120,14 +78,4 @@ func (s *SpanStorage) GetTrace(traceID string) []*SpanEntry {
 		}
 	}
 	return result
-}
-
-// SpanQueryFilters defines filters for querying spans
-type SpanQueryFilters struct {
-	Since       time.Duration
-	ServiceName string
-	TraceID     string
-	SpanName    string
-	Status      string
-	Limit       int
 }
