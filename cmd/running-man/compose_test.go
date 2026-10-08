@@ -2,10 +2,13 @@ package main
 
 import (
 	"flag"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/elbeanio/the_running_man/internal/config"
+	"github.com/elbeanio/the_running_man/internal/docker"
 )
 
 // Starting containers is a consequential thing to do to someone's machine, so
@@ -100,4 +103,62 @@ func TestTracingRequested(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A service is missing when it has no running container and has not run to
+// completion: one-shot jobs (migrations, seeding) exit by design, and counting
+// them as missing would ask to start the stack on every run.
+func TestMissingServices(t *testing.T) {
+	expected := []string{"db", "db-migrate", "denodo", "keycloak", "vault-setup"}
+	running := []docker.Container{{ServiceName: "denodo"}}
+	completed := map[string]bool{"db-migrate": true}
+
+	got := missingServices(expected, running, completed)
+	want := []string{"db", "keycloak", "vault-setup"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("missing = %v, want %v", got, want)
+	}
+
+	if got := missingServices([]string{"db"}, []docker.Container{{ServiceName: "db"}}, nil); len(got) != 0 {
+		t.Errorf("nothing should be missing: %v", got)
+	}
+}
+
+// The prompt for a partly running stack names what is missing and the
+// command, and only an explicit yes counts -- the same rule as starting the
+// whole stack.
+func TestConfirmStartMissing(t *testing.T) {
+	for input, want := range map[string]bool{"y\n": true, "yes\n": true, "\n": false, "": false, "n\n": false} {
+		out := captureStdout(t, func() {
+			if got := confirmStartMissing(strings.NewReader(input), "duet",
+				[]string{"db", "keycloak"}, "docker compose up -d --no-recreate db keycloak"); got != want {
+				t.Errorf("answer %q: got %v, want %v", input, got, want)
+			}
+		})
+		for _, s := range []string{"2 services", "not running: db, keycloak", "--no-recreate db keycloak"} {
+			if !strings.Contains(out, s) {
+				t.Errorf("prompt does not mention %q:\n%s", s, out)
+			}
+		}
+	}
+}
+
+// captureStdout returns what fn printed.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stdout
+	os.Stdout = w
+	done := make(chan string)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- string(b)
+	}()
+	fn()
+	w.Close()
+	os.Stdout = saved
+	return <-done
 }

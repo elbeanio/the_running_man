@@ -238,9 +238,27 @@ container to appear, then reports that none did and suggests `docker compose ps`
 that has to bring up a database, run migrations and only then start the services behind
 them will exceed that — give it a `start_timeout` that covers a cold start.
 
-Only offered when **nothing** is running. If some expected services are up and others are
-not, the missing ones are listed and Running Man watches what exists — starting more
-services than you expected is worse than an honest warning.
+When **part** of the stack is running, Running Man offers to start just the missing
+services, by the same `start` setting, and without touching what is running:
+
+```
+[running-man] 4 services in Compose project "duet" are not running: db, jaeger, keycloak, vault
+[running-man] Running Man can start just those, leaving the running ones alone:
+
+    docker compose -f docker-compose.yml --profile denodo up -d --no-recreate db jaeger keycloak vault
+
+[running-man] They will be left running when running-man exits.
+[running-man] Start them now? [y/N]
+```
+
+`--no-recreate` means a running container is never replaced, even if its configuration has
+changed since it started. A one-shot service whose container exited cleanly — a migration,
+a seed job — counts as done, not missing, so it does not trigger the offer on every run.
+If the missing services have not all appeared within `start_timeout`, Running Man says
+which, and carries on watching what is running.
+
+Remember that a profile **adds** services: with `profiles: [denodo]`, the services with no
+profile are expected too, as with `docker compose --profile denodo up`.
 
 **Compose CLI:** prefers `docker compose` (v2), falling back to the standalone
 `docker-compose` binary.

@@ -158,3 +158,151 @@ func waitForContainers(
 		}
 	}
 }
+
+// missingServices returns the expected services with no running container that
+// have not run to completion either. One-shot services -- a migration, a seed
+// -- exit by design; counting them as missing would ask to start the stack on
+// every run.
+func missingServices(expected []string, running []docker.Container, completed map[string]bool) []string {
+	up := make(map[string]bool, len(running))
+	for _, c := range running {
+		up[c.ServiceName] = true
+	}
+	var missing []string
+	for _, name := range expected {
+		if !up[name] && !completed[name] {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
+// offerToStartMissing is called when part of the stack is running. It starts
+// the missing services, offers to, or declines to, by the same start mode as
+// offerToStartCompose -- but only those services, and never recreating a
+// running container.
+//
+// It used to offer nothing in this case: the offer was made only when no
+// container at all was running. A stack with three of eleven services up --
+// the base services stopped, a profile's left running -- was watched as it
+// was, and the missing ones were named only on the terminal, which the TUI
+// then covered.
+//
+// Failing to start them is reported, not fatal: part of the stack was running
+// before, and is still worth watching.
+func offerToStartMissing(
+	ctx context.Context,
+	cfg config.DockerComposeConfig,
+	projectName string,
+	missing []string,
+	discover func() ([]docker.Container, error),
+	completed func() map[string]bool,
+	current []docker.Container,
+) []docker.Container {
+	mode := cfg.GetStart()
+	if mode == config.ComposeStartNever {
+		return current
+	}
+	composeCmd, err := docker.FindComposeCommand(ctx)
+	if err != nil {
+		fmt.Printf("[running-man] Cannot offer to start the missing services: %v\n", err)
+		return current
+	}
+	opts := docker.ComposeOptions{
+		Files:       cfg.Files,
+		Profiles:    cfg.Profiles,
+		ProjectName: cfg.ProjectName,
+		EnvFile:     cfg.EnvFile,
+		Services:    missing,
+	}
+	command := docker.DisplayCommand(composeCmd, opts)
+
+	if mode == config.ComposeStartAsk {
+		if !stdoutIsTerminal() {
+			fmt.Printf("[running-man] Not offering to start the missing services: stdout is not a "+
+				"terminal. Use --compose-start=always, or run: %s\n", command)
+			return current
+		}
+		if !confirmStartMissing(os.Stdin, projectName, missing, command) {
+			return current
+		}
+	}
+
+	fmt.Printf("[running-man] Starting: %s\n", command)
+	out, err := docker.Up(ctx, composeCmd, opts)
+	if trimmed := strings.TrimSpace(out); trimmed != "" {
+		for _, line := range strings.Split(trimmed, "\n") {
+			fmt.Printf("    %s\n", line)
+		}
+	}
+	if err != nil {
+		fmt.Printf("[running-man] `%s` failed: %v\n", command, err)
+		return current
+	}
+
+	timeout := cfg.GetStartTimeout()
+	fmt.Printf("[running-man] Waiting for them (up to %s)...\n", timeout)
+	containers, still := waitForServices(ctx, discover, completed, missing, timeout)
+	if containers == nil {
+		containers = current
+	}
+	if len(still) > 0 {
+		fmt.Printf("[running-man] Still not running after %s: %s. Carrying on with what is.\n",
+			timeout, strings.Join(still, ", "))
+	}
+	return containers
+}
+
+// confirmStartMissing asks whether to start the missing services, showing
+// which they are and the exact command.
+func confirmStartMissing(in io.Reader, projectName string, missing []string, command string) bool {
+	fmt.Printf("\n[running-man] %d services in Compose project %q are not running: %s\n",
+		len(missing), projectName, strings.Join(missing, ", "))
+	fmt.Printf("[running-man] Running Man can start just those, leaving the running ones alone:\n\n    %s\n\n", command)
+	fmt.Printf("[running-man] They will be left running when running-man exits.\n")
+	fmt.Printf("[running-man] Start them now? [y/N] ")
+
+	answer, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil {
+		fmt.Println()
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "y", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+// waitForServices polls until every one of services is running or has run to
+// completion, or time runs out. It returns the latest running containers and
+// the services still missing.
+func waitForServices(
+	ctx context.Context,
+	discover func() ([]docker.Container, error),
+	completed func() map[string]bool,
+	services []string,
+	timeout time.Duration,
+) ([]docker.Container, []string) {
+	deadline := time.Now().Add(timeout)
+	var containers []docker.Container
+	still := services
+	for {
+		if found, err := discover(); err == nil {
+			containers = found
+			still = missingServices(services, found, completed())
+			if len(still) == 0 {
+				return containers, nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return containers, still
+		}
+		select {
+		case <-ctx.Done():
+			return containers, still
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
