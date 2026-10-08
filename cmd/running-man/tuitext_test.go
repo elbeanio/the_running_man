@@ -95,7 +95,7 @@ func TestRenderPathSurvivesEveryWidth(t *testing.T) {
 				}
 			}()
 			renderTraceList(traces, 10, w, 0, 0)
-			renderTraceDetail("abcdef1234567890", spans, logs, 10, w, 0)
+			renderTraceDetail("abcdef1234567890", spans, logs, 10, w, 0, 0)
 		}()
 	}
 

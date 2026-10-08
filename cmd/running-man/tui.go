@@ -84,6 +84,14 @@ type model struct {
 	traceLogs               []logEntry   // Logs correlated with selected trace
 	traceDetailScrollOffset int          // Scroll offset for trace detail view
 
+	// The span and value levels below the trace detail view; see tuitrace.go.
+	traceCursor int       // span row under the cursor, in tree order
+	spanFull    *fullSpan // the selected span in full, once fetched
+	attrCursor  int       // attribute under the cursor at the span level
+	spanScroll  int
+	valueKey    string // the attribute shown at the value level
+	valueScroll int
+
 	// Internal state
 	tickCount int // Count of tick messages received
 
@@ -551,7 +559,7 @@ func (m model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.mode {
 		case ModeSearch:
 			next, cmd = m.updateSearchMode(msg)
-		case ModeNormal, ModeTraceDetail:
+		case ModeNormal, ModeTraceDetail, ModeSpanDetail, ModeValueView:
 			next, cmd = m.updateNormalMode(msg)
 		default:
 			return m, nil
@@ -646,6 +654,11 @@ func (m model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case traceSpansMsg:
 		m.traceSpans = msg
 
+	case spanMsg:
+		if msg.traceID == m.selectedTraceID {
+			m.spanFull = &msg.span
+		}
+
 	case traceLogsMsg:
 		m.traceLogs = msg
 
@@ -709,7 +722,9 @@ func (m model) viewModel() string {
 	switch m.mode {
 	case ModeTraceDetail:
 		// Render trace detail view
-		content = renderTraceDetail(m.selectedTraceID, m.traceSpans, m.traceLogs, contentHeight, contentWidth, m.traceDetailScrollOffset)
+		content = renderTraceDetail(m.selectedTraceID, m.traceSpans, m.traceLogs, contentHeight, contentWidth, m.traceDetailScrollOffset, m.traceCursor)
+	case ModeSpanDetail, ModeValueView:
+		content = m.renderTraceLevel(contentHeight, contentWidth)
 	case ModeNormal:
 		// Check if we're in Traces tab
 		if m.currentSource() == "Traces" {
@@ -891,7 +906,7 @@ func renderTraceList(traces []traceSummary, height, width, scrollOffset, selecte
 // traceDetailMaxScroll is the furthest the trace detail view can scroll: its
 // rows less the window. Measured from the same rows the view draws.
 func (m model) traceDetailMaxScroll() int {
-	rows := traceDetailLines(m.selectedTraceID, m.traceSpans, m.traceLogs, m.contentWidth())
+	rows := traceDetailLines(m.selectedTraceID, m.traceSpans, m.traceLogs, m.contentWidth(), m.traceCursor)
 	return max(0, len(rows)-m.contentHeight())
 }
 
@@ -905,7 +920,7 @@ func spanFailed(status string) bool {
 // traceDetailLines builds every row of the trace detail view, one string per
 // row, for renderTraceDetail to show a window of and for the scroll keys to
 // measure.
-func traceDetailLines(traceID string, spans []spanDetail, logs []logEntry, width int) []string {
+func traceDetailLines(traceID string, spans []spanDetail, logs []logEntry, width, cursor int) []string {
 	// Build trace summary from spans
 	var traceDuration time.Duration
 	var traceStatus string
@@ -959,7 +974,7 @@ func traceDetailLines(traceID string, spans []spanDetail, logs []logEntry, width
 	// Build span tree
 	if len(spans) > 0 {
 		infoLines = append(infoLines, "Spans:")
-		infoLines = append(infoLines, renderSpanTree(spans, width))
+		infoLines = append(infoLines, strings.Join(spanLines(spans, width, cursor), "\n"))
 		infoLines = append(infoLines, "")
 	}
 
@@ -989,7 +1004,11 @@ func traceDetailLines(traceID string, spans []spanDetail, logs []logEntry, width
 	return allLines
 }
 
-func renderTraceDetail(traceID string, spans []spanDetail, logs []logEntry, height, width, scrollOffset int) string {
+// traceDetailHeaderRows is how many rows come before the first span row: the
+// title, the summary line, a blank, and "Spans:".
+const traceDetailHeaderRows = 4
+
+func renderTraceDetail(traceID string, spans []spanDetail, logs []logEntry, height, width, scrollOffset, cursor int) string {
 	if height <= 0 || width <= 0 {
 		return logStyle.Render("Invalid terminal dimensions")
 	}
@@ -998,7 +1017,7 @@ func renderTraceDetail(traceID string, spans []spanDetail, logs []logEntry, heig
 		return logStyle.Render("No trace selected")
 	}
 
-	allLines := traceDetailLines(traceID, spans, logs, width)
+	allLines := traceDetailLines(traceID, spans, logs, width, cursor)
 	infoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
 
 	// Handle scrolling with padding
@@ -1040,84 +1059,6 @@ func renderTraceDetail(traceID string, spans []spanDetail, logs []logEntry, heig
 	}
 
 	return padLines(allLines[startIdx:endIdx], height)
-}
-
-// renderSpanTree builds and renders an ASCII tree of spans
-func renderSpanTree(spans []spanDetail, width int) string {
-	// Build parent-child relationships
-	children := make(map[string][]spanDetail)
-	rootSpans := []spanDetail{}
-
-	for _, span := range spans {
-		if span.ParentSpanID == "" {
-			rootSpans = append(rootSpans, span)
-		} else {
-			children[span.ParentSpanID] = append(children[span.ParentSpanID], span)
-		}
-	}
-
-	// Sort root spans by start time
-	sort.Slice(rootSpans, func(i, j int) bool {
-		return rootSpans[i].StartTime.Before(rootSpans[j].StartTime)
-	})
-
-	// Render tree recursively
-	var lines []string
-	for i, span := range rootSpans {
-		isLast := i == len(rootSpans)-1
-		renderSpanNode(span, children, "", isLast, &lines, width)
-	}
-
-	return strings.Join(lines, "\n")
-}
-
-// renderSpanNode renders a span and its children recursively
-func renderSpanNode(span spanDetail, children map[string][]spanDetail, prefix string, isLast bool, lines *[]string, width int) {
-	// Current node prefix
-	var nodePrefix string
-	if prefix == "" {
-		nodePrefix = ""
-	} else if isLast {
-		nodePrefix = prefix + "└── "
-	} else {
-		nodePrefix = prefix + "├── "
-	}
-
-	// Format span info
-	statusSymbol := "✓"
-	if spanFailed(span.Status) {
-		statusSymbol = "✗"
-	}
-
-	spanInfo := fmt.Sprintf("%s %s (%s) %s", statusSymbol, span.Name, span.Duration, span.ServiceName)
-
-	// Truncate if needed
-	maxLineWidth := width - displayWidth(nodePrefix) - 2
-	spanInfo = truncate(spanInfo, maxLineWidth)
-
-	*lines = append(*lines, nodePrefix+spanInfo)
-
-	// Render children
-	childSpans := children[span.SpanID]
-	if len(childSpans) > 0 {
-		// Sort children by start time
-		sort.Slice(childSpans, func(i, j int) bool {
-			return childSpans[i].StartTime.Before(childSpans[j].StartTime)
-		})
-
-		// New prefix for children
-		newPrefix := prefix
-		if isLast {
-			newPrefix += "    "
-		} else {
-			newPrefix += "│   "
-		}
-
-		for i, child := range childSpans {
-			isChildLast := i == len(childSpans)-1
-			renderSpanNode(child, children, newPrefix, isChildLast, lines, width)
-		}
-	}
 }
 
 // sortSourcesWithTypes sorts sources by type (running-man, docker, process) then alphabetically.
@@ -1868,6 +1809,11 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	key := keyMsg.String()
 
+	// The trace, span and value levels claim their own keys first.
+	if nm, cmd, handled := m.updateTraceLevels(key); handled {
+		return nm, cmd
+	}
+
 	switch key {
 	case "esc", "escape": // Bubble Tea returns "esc" for escape key
 		// Back to trace list from trace detail view
@@ -2037,6 +1983,7 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mode = ModeTraceDetail
 			m.selectedTraceID = trace.TraceID
 			m.traceDetailScrollOffset = 0
+			m.traceCursor = 0
 			// Clear previous trace data
 			m.traceSpans = []spanDetail{}
 			m.traceLogs = []logEntry{}

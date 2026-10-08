@@ -2,17 +2,17 @@
    │  🏃‍➡️  running-man  ││  🔧 backend  ││  🔍  Traces  │                                            
 ┌──┴───────────────────┴┴──────────────┴┘              └───────────────────────────────────────────┐
 │ Trace: 4bf92f3577b34da6a3ce929d0e0e4736                                                          │
-│Duration: 0s | Status: ERROR | Spans: 2 | Services: backend, postgres                             │
+│Duration: 180ms | Status: ERROR | Spans: 4 | Services: backend, enricher, postgres                │
 │                                                                                                  │
 │Spans:                                                                                            │
-│✗ GET /things (0s) backend                                                                        │
-│    └── ✓ SELECT things (0s) postgres                                                             │
+│✗ GET /things          180ms      ████████████████████████████████████████████████████████████████│
+│✓ ├─ SELECT things     40ms          ██████████████                                               │
+│✗ └─ POST /enrich      110ms                           ███████████████████████████████████████    │
+│✓    └─ ChatCompletion 90ms                               ████████████████████████████████        │
 │                                                                                                  │
 │Correlated Logs (2):                                                                              │
 │[09:15:01] [info] listening on http://localhost:8080                                              │
 │[09:15:02] [warn] deprecated config key 'legacy_mode'                                             │
-│                                                                                                  │
-│                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
                                                                                                     
-ESC: Back to trace list | ↑/↓ PgUp/PgDn Home/End: Scroll | q: Quit                                  
+↑/↓: Span | Enter: Open span | PgUp/PgDn Home/End: Scroll | ESC: Back to trace list | q: Quit       

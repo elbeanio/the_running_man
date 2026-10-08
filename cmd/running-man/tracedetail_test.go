@@ -37,7 +37,7 @@ func bigTrace(failing bool) ([]spanDetail, []logEntry) {
 // every span had a tick, and every trace said OK.
 func TestTraceDetail_ShowsErrors(t *testing.T) {
 	spans, _ := bigTrace(true)
-	out := ansi.Strip(renderTraceDetail("abc", spans, nil, 40, 100, 0))
+	out := ansi.Strip(renderTraceDetail("abc", spans, nil, 40, 100, 0, -1))
 	if !strings.Contains(out, "Status: ERROR") {
 		t.Errorf("header does not report the error:\n%s", out)
 	}
@@ -59,7 +59,7 @@ func TestTraceDetail_FitsItsWindowAndScrolls(t *testing.T) {
 	spans, logs := bigTrace(false)
 	const height = 20
 
-	top := renderTraceDetail("abc", spans, logs, height, 100, 0)
+	top := renderTraceDetail("abc", spans, logs, height, 100, 0, -1)
 	if n := strings.Count(top, "\n") + 1; n != height {
 		t.Fatalf("rendered %d rows into a %d-row window", n, height)
 	}
@@ -67,7 +67,7 @@ func TestTraceDetail_FitsItsWindowAndScrolls(t *testing.T) {
 		t.Error("top of the trace not shown at offset 0")
 	}
 
-	bottom := ansi.Strip(renderTraceDetail("abc", spans, logs, height, 100, 1<<30))
+	bottom := ansi.Strip(renderTraceDetail("abc", spans, logs, height, 100, 1<<30, -1))
 	if n := strings.Count(bottom, "\n") + 1; n != height {
 		t.Fatalf("rendered %d rows at the end", n)
 	}
@@ -80,8 +80,9 @@ func TestTraceDetail_FitsItsWindowAndScrolls(t *testing.T) {
 }
 
 // End set the offset to math.MaxInt and the view clamped it only when drawing,
-// so Up after End decremented from MaxInt and appeared to do nothing, for
-// practical purposes forever. The keys now stop at the real end.
+// so scrolling back up after End appeared to do nothing. The keys now stop at
+// the real end. (Up and Down move the span cursor; PgUp, PgDn, Home and End
+// scroll the view.)
 func TestTraceDetail_ScrollKeysStopAtTheEnd(t *testing.T) {
 	m := fixtureModel(100, 20)
 	m.mode = ModeTraceDetail
@@ -98,13 +99,12 @@ func TestTraceDetail_ScrollKeysStopAtTheEnd(t *testing.T) {
 	if end != m.traceDetailMaxScroll() || end <= 0 {
 		t.Fatalf("End set offset %d, want the real end %d", end, m.traceDetailMaxScroll())
 	}
-	pressType(tea.KeyDown)
 	pressType(tea.KeyPgDown)
 	if m.traceDetailScrollOffset != end {
 		t.Errorf("scrolled past the end: %d, end %d", m.traceDetailScrollOffset, end)
 	}
-	pressType(tea.KeyUp)
-	if m.traceDetailScrollOffset != end-1 {
-		t.Errorf("Up after End: offset %d, want %d", m.traceDetailScrollOffset, end-1)
+	pressType(tea.KeyPgUp)
+	if want := max(0, end-m.pageSize()); m.traceDetailScrollOffset != want {
+		t.Errorf("PgUp after End: offset %d, want %d", m.traceDetailScrollOffset, want)
 	}
 }

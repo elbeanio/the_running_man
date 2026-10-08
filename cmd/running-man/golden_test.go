@@ -142,6 +142,26 @@ func fixtureTraces() []traceSummary {
 	}
 }
 
+// fixtureSpans is a small trace with real timings: a request, a query and a
+// call inside it, overlapping, one failing -- enough for a waterfall to show.
+func fixtureSpans() []spanDetail {
+	at, _ := time.Parse(time.RFC3339, "2026-10-04T09:15:03Z")
+	ms := func(n int) time.Duration { return time.Duration(n) * time.Millisecond }
+	span := func(id, parent, name, svc, status string, start, dur int, attrs map[string]string) spanDetail {
+		return spanDetail{SpanID: id, ParentSpanID: parent, Name: name, ServiceName: svc, Status: status,
+			StartTime: at.Add(ms(start)), EndTime: at.Add(ms(start + dur)), Duration: ms(dur), Attributes: attrs}
+	}
+	return []spanDetail{
+		span("a1", "", "GET /things", "backend", "error", 0, 180, map[string]string{"http.route": "/things", "http.status_code": "500"}),
+		span("b2", "a1", "SELECT things", "postgres", "ok", 10, 40, map[string]string{"db.statement": "SELECT * FROM things"}),
+		span("c3", "a1", "POST /enrich", "enricher", "error", 60, 110, nil),
+		span("d4", "c3", "ChatCompletion", "enricher", "ok", 70, 90, map[string]string{
+			"llm.model_name": "gpt-4.1",
+			"input.value":    `[{"role":"user","content":[{"type":"text","text":"Describe this chart"},{"type":"image_url","image_url":{"url":"data:image/png;base64,` + strings.Repeat("iVBORw0KGgo", 400) + `"}}]}]`,
+		}),
+	}
+}
+
 // fixtureModel builds a model at a fixed size with fixed content.
 func fixtureModel(width, height int) model {
 	m := initialModel("http://localhost", nil)
@@ -214,10 +234,7 @@ func TestGoldenFrames(t *testing.T) {
 			m.selectedSource = 2
 			m.mode = ModeTraceDetail
 			m.selectedTraceID = "4bf92f3577b34da6a3ce929d0e0e4736"
-			m.traceSpans = []spanDetail{
-				{SpanID: "a1", Name: "GET /things", ServiceName: "backend", Status: "error"},
-				{SpanID: "b2", ParentSpanID: "a1", Name: "SELECT things", ServiceName: "postgres", Status: "ok"},
-			}
+			m.traceSpans = fixtureSpans()
 			m.traceLogs = fixtureLogs()[:2]
 			return m
 		}},
@@ -278,6 +295,16 @@ func TestFramesFitTheirWidth(t *testing.T) {
 		"traces":       func(m model) string { m.selectedSource = 2; return m.View() },
 		"search":       func(m model) string { m.mode = ModeSearch; m.searchQuery = "connect"; return m.View() },
 		"trace-detail": func(m model) string { m.mode = ModeTraceDetail; m.selectedSource = 2; return m.View() },
+		"span-detail": func(m model) string {
+			s := spanLevelModel(ModeSpanDetail)
+			s.width, s.height = m.width, m.height
+			return s.View()
+		},
+		"value-view": func(m model) string {
+			s := spanLevelModel(ModeValueView)
+			s.width, s.height = m.width, m.height
+			return s.View()
+		},
 		"startup": func(m model) string {
 			s := startupModel(m.width, m.height, startupStopped())
 			return s.View()

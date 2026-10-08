@@ -88,8 +88,20 @@ func (m model) helpText() string {
 
 	case ModeTraceDetail:
 		return fitToWidth(m.width,
-			"ESC: Back to trace list | ↑/↓ PgUp/PgDn Home/End: Scroll | q: Quit",
-			"ESC: back | ↑/↓: scroll | q: quit",
+			"↑/↓: Span | Enter: Open span | PgUp/PgDn Home/End: Scroll | ESC: Back to trace list | q: Quit",
+			"↑/↓: span | Enter: open | PgUp/PgDn: scroll | ESC: back | q: quit",
+			"Enter: open | ESC: back | q: quit",
+			"q: quit")
+	case ModeSpanDetail:
+		return fitToWidth(m.width,
+			"↑/↓ PgUp/PgDn Home/End: Attribute | Enter: Open value | ESC: Back to trace | q: Quit",
+			"↑/↓: attribute | Enter: open | ESC: back | q: quit",
+			"Enter: open | ESC: back | q: quit",
+			"q: quit")
+	case ModeValueView:
+		return fitToWidth(m.width,
+			"↑/↓ PgUp/PgDn Home/End: Scroll | ESC: Back to span | q: Quit",
+			"↑/↓: scroll | ESC: back | q: quit",
 			"ESC: back | q: quit",
 			"q: quit")
 	}
