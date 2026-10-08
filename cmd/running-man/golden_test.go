@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
@@ -130,11 +131,14 @@ func fixtureLogs() []logEntry {
 }
 
 func fixtureTraces() []traceSummary {
+	at := func(s string) time.Time { t, _ := time.Parse(time.RFC3339, s); return t }
 	return []traceSummary{
-		{TraceID: "4bf92f3577b34da6a3ce929d0e0e4736", Status: "error",
-			Services: []string{"backend", "postgres"}},
-		{TraceID: "00f067aa0ba902b7a3ce929d0e0e4736", Status: "ok",
-			Services: []string{"backend"}},
+		{TraceID: "00f067aa0ba902b7a3ce929d0e0e4736", RootSpan: "chat.turn",
+			Summary: "Show me the revenue by region for last quarter", Duration: 8659 * time.Millisecond,
+			SpanCount: 15, Status: "ok", Services: []string{"backend"}, StartTime: at("2026-10-04T09:16:10Z")},
+		{TraceID: "4bf92f3577b34da6a3ce929d0e0e4736", RootSpan: "GET /things",
+			Summary: "/things", Duration: 182 * time.Millisecond, SpanCount: 2, ErrorCount: 1,
+			Status: "error", Services: []string{"backend", "postgres"}, StartTime: at("2026-10-04T09:15:03Z")},
 	}
 }
 

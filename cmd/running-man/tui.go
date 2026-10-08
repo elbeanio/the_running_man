@@ -23,6 +23,7 @@ import (
 	"github.com/elbeanio/the_running_man/internal/parser"
 	"github.com/elbeanio/the_running_man/internal/process"
 	"github.com/elbeanio/the_running_man/internal/termout"
+	"github.com/elbeanio/the_running_man/internal/tracing"
 )
 
 const (
@@ -128,12 +129,15 @@ type logEntry struct {
 }
 
 type traceSummary struct {
-	TraceID   string
-	Duration  time.Duration
-	Status    string
-	Services  []string
-	StartTime time.Time
-	SpanCount int
+	TraceID    string
+	RootSpan   string
+	Summary    string
+	Duration   time.Duration
+	Status     string
+	Services   []string
+	StartTime  time.Time
+	SpanCount  int
+	ErrorCount int
 }
 
 type spanDetail struct {
@@ -364,109 +368,30 @@ func (m model) isTraceView() bool {
 
 func fetchTraces(apiURL string) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := apiClient.Get(apiURL + "/traces")
-		if err != nil {
-			return errMsg{err}
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return errMsg{err}
-		}
-
-		// Parse the response
+		// Summaries, newest first, straight from the API: decoded into the
+		// API's own type, so the two cannot disagree about field names.
 		var response struct {
-			Traces []struct {
-				TraceID      string            `json:"trace_id"`
-				SpanID       string            `json:"span_id"`
-				ParentSpanID string            `json:"parent_span_id"`
-				Name         string            `json:"name"`
-				Kind         string            `json:"kind"`
-				StartTime    time.Time         `json:"start_time"`
-				EndTime      time.Time         `json:"end_time"`
-				Duration     string            `json:"duration"` // Duration as string like "1.23456789s"
-				Status       string            `json:"status"`
-				StatusCode   string            `json:"status_code"`
-				ServiceName  string            `json:"service_name"`
-				Attributes   map[string]string `json:"attributes"`
-			} `json:"traces"`
-			Count int `json:"count"`
+			Traces []tracing.TraceSummary `json:"traces"`
 		}
-
-		if err := json.Unmarshal(body, &response); err != nil {
+		if err := getJSON(apiURL+"/traces", &response); err != nil {
 			return errMsg{err}
 		}
-
-		// Aggregate spans by trace ID
-		traceMap := make(map[string]*traceSummary)
-		for _, span := range response.Traces {
-			summary, exists := traceMap[span.TraceID]
-			if !exists {
-				// Parse duration from string
-				duration, _ := time.ParseDuration(span.Duration)
-
-				summary = &traceSummary{
-					TraceID:   span.TraceID,
-					Duration:  duration,
-					Status:    span.Status,
-					Services:  []string{span.ServiceName},
-					StartTime: span.StartTime,
-					SpanCount: 1,
-				}
-				traceMap[span.TraceID] = summary
-			} else {
-				// Update existing summary
-				summary.SpanCount++
-
-				// Update duration if this span is longer
-				duration, _ := time.ParseDuration(span.Duration)
-				if duration > summary.Duration {
-					summary.Duration = duration
-				}
-
-				// Update status if this span has error
-				if spanFailed(span.Status) {
-					summary.Status = "error"
-				}
-
-				// Add service if not already in list
-				found := false
-				for _, s := range summary.Services {
-					if s == span.ServiceName {
-						found = true
-						break
-					}
-				}
-				if !found && span.ServiceName != "" {
-					summary.Services = append(summary.Services, span.ServiceName)
-				}
-
-				// Update start time if earlier
-				if span.StartTime.Before(summary.StartTime) {
-					summary.StartTime = span.StartTime
-				}
+		traces := make([]traceSummary, len(response.Traces))
+		for i, t := range response.Traces {
+			d, _ := time.ParseDuration(t.Duration)
+			traces[i] = traceSummary{
+				TraceID: t.TraceID, RootSpan: t.RootSpan, Summary: t.Summary,
+				Duration: d, Status: t.Status, Services: t.Services,
+				StartTime: t.StartTime, SpanCount: t.SpanCount, ErrorCount: t.ErrorCount,
 			}
 		}
-
-		// Convert map to slice
-		summaries := make([]traceSummary, 0, len(traceMap))
-		for _, summary := range traceMap {
-			summaries = append(summaries, *summary)
-		}
-
-		// Sort by start time (newest first)
-		sort.Slice(summaries, func(i, j int) bool {
-			return summaries[i].StartTime.After(summaries[j].StartTime)
-		})
-
-		return tracesMsg(summaries)
+		return tracesMsg(traces)
 	}
 }
 
 func fetchTraceSpans(apiURL, traceID string) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := apiClient.Get(apiURL + "/traces?" + url.Values{"trace_id": {traceID}}.Encode())
+		resp, err := apiClient.Get(apiURL + "/traces/" + url.PathEscape(traceID))
 		if err != nil {
 			return errMsg{err}
 		}
@@ -479,7 +404,7 @@ func fetchTraceSpans(apiURL, traceID string) tea.Cmd {
 
 		// Parse the response
 		var response struct {
-			Traces []struct {
+			Spans []struct {
 				TraceID      string            `json:"trace_id"`
 				SpanID       string            `json:"span_id"`
 				ParentSpanID string            `json:"parent_span_id"`
@@ -492,7 +417,7 @@ func fetchTraceSpans(apiURL, traceID string) tea.Cmd {
 				StatusCode   string            `json:"status_code"`
 				ServiceName  string            `json:"service_name"`
 				Attributes   map[string]string `json:"attributes"`
-			} `json:"traces"`
+			} `json:"spans"`
 			Count int `json:"count"`
 		}
 
@@ -501,8 +426,8 @@ func fetchTraceSpans(apiURL, traceID string) tea.Cmd {
 		}
 
 		// Convert to spanDetail
-		spans := make([]spanDetail, len(response.Traces))
-		for i, span := range response.Traces {
+		spans := make([]spanDetail, len(response.Spans))
+		for i, span := range response.Spans {
 			duration, _ := time.ParseDuration(span.Duration)
 			spans[i] = spanDetail{
 				SpanID:       span.SpanID,
@@ -697,7 +622,20 @@ func (m model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tracesMsg:
+		// Keep the selection on the same trace. Newest come first, so a new
+		// trace arriving moved every index down one, and the highlight
+		// silently landed on a different trace.
+		selected := ""
+		if t, ok := m.selectedTrace(); ok {
+			selected = t.TraceID
+		}
 		m.traces = msg
+		for i, t := range m.traces {
+			if t.TraceID == selected {
+				m.selectedTraceIdx = i
+				break
+			}
+		}
 		// Reset trace scroll offset
 		m.traceScrollOffset = 0
 		// Same hazard as the sources list: spans age out past max_span_age, so
@@ -809,6 +747,16 @@ func (m model) viewModel() string {
 	return lipgloss.JoinVertical(lipgloss.Left, components...)
 }
 
+// pad fits s to exactly w display columns: cut with "…" if longer, padded
+// with spaces if shorter.
+func pad(s string, w int) string {
+	s = truncate(s, w)
+	if gap := w - displayWidth(s); gap > 0 {
+		s += strings.Repeat(" ", gap)
+	}
+	return s
+}
+
 func renderTraceList(traces []traceSummary, height, width, scrollOffset, selectedIdx int) string {
 	if height <= 0 || width <= 0 {
 		return logStyle.Render("Invalid terminal dimensions")
@@ -818,71 +766,83 @@ func renderTraceList(traces []traceSummary, height, width, scrollOffset, selecte
 		return logStyle.Render("No traces yet...")
 	}
 
-	// Calculate column widths
-	// Trace ID: 20 chars max (same as in log view)
-	// Duration: 12 chars (e.g., "1.23456789s")
-	// Status: 8 chars
-	// Services: remaining width
-	traceIDWidth := 20
-	durationWidth := 12
-	statusWidth := 8
-	servicesWidth := width - traceIDWidth - durationWidth - statusWidth - 6 // 6 for spacing
-
-	if servicesWidth < 10 {
-		servicesWidth = 10
-		traceIDWidth = width - durationWidth - statusWidth - servicesWidth - 6
-		if traceIDWidth < 10 {
-			traceIDWidth = 10
+	// Columns, chosen so the row says what the trace was: when it started,
+	// its root span, a summary (the user's message, the route, the query),
+	// how long it took, how many spans, how many failed. The trace ID used to
+	// lead, truncated, and identified nothing; it is in the detail header.
+	const (
+		startW    = 8 // 15:04:05
+		durationW = 8
+		spansW    = 5
+		errorsW   = 6
+	)
+	rootW := len("Root span")
+	multiService := false
+	seen := map[string]bool{}
+	for _, t := range traces {
+		rootW = max(rootW, displayWidth(t.RootSpan))
+		for _, svc := range t.Services {
+			seen[svc] = true
 		}
 	}
+	multiService = len(seen) > 1
+	rootW = min(rootW, 28)
+	servicesW := 0
+	if multiService {
+		servicesW = 16
+	}
+	fixed := startW + rootW + durationW + spansW + errorsW + 2*5
+	if servicesW > 0 {
+		fixed += servicesW + 2
+	}
+	summaryW := width - fixed
+	showSummary := summaryW >= 10
 
-	// Create header
+	row := func(start, root, summary, duration, spans, errs, services string) string {
+		cells := []string{pad(start, startW), pad(root, rootW)}
+		if showSummary {
+			cells = append(cells, pad(summary, summaryW))
+		}
+		cells = append(cells, pad(duration, durationW), pad(spans, spansW), pad(errs, errorsW))
+		if servicesW > 0 {
+			cells = append(cells, pad(services, servicesW))
+		}
+		return truncate(strings.Join(cells, "  "), width)
+	}
+
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("15")).
 		Background(lipgloss.Color("236"))
-
-	header := headerStyle.Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s",
-		traceIDWidth, "Trace ID",
-		durationWidth, "Duration",
-		statusWidth, "Status",
-		servicesWidth, "Services"))
+	header := headerStyle.Render(row("Start", "Root span", "Summary", "Duration", "Spans", "Errors", "Services"))
 
 	// Collect all lines
 	allLines := []string{header}
 
 	for i, trace := range traces {
-		// Truncate trace ID if needed
-		displayTraceID := truncate(trace.TraceID, traceIDWidth)
+		errs := ""
+		if trace.ErrorCount > 0 {
+			errs = fmt.Sprintf("%d", trace.ErrorCount)
+		}
+		line := row(
+			// In the timestamp's own offset, as log lines are shown.
+			trace.StartTime.Format("15:04:05"),
+			trace.RootSpan,
+			parser.SanitiseLine(trace.Summary),
+			trace.Duration.String(),
+			fmt.Sprintf("%d", trace.SpanCount),
+			errs,
+			strings.Join(trace.Services, ", "),
+		)
 
-		// Format duration
-		durationStr := trace.Duration.String()
-		durationStr = truncate(durationStr, durationWidth)
-
-		// Format status
-		statusStr := trace.Status
-		statusStr = truncate(statusStr, statusWidth)
-
-		// Format services (comma-separated)
-		servicesStr := strings.Join(trace.Services, ", ")
-		servicesStr = truncate(servicesStr, servicesWidth)
-
-		// Apply selection style
 		lineStyle := logStyle
 		if i == selectedIdx {
 			lineStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("15")). // White
 				Background(lipgloss.Color("57"))  // Purple
-		} else if spanFailed(trace.Status) {
+		} else if trace.ErrorCount > 0 {
 			lineStyle = errorLogStyle
 		}
-
-		line := fmt.Sprintf("%-*s  %-*s  %-*s  %-*s",
-			traceIDWidth, displayTraceID,
-			durationWidth, durationStr,
-			statusWidth, statusStr,
-			servicesWidth, servicesStr)
-
 		allLines = append(allLines, lineStyle.Render(line))
 	}
 
