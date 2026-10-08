@@ -207,3 +207,61 @@ func TestJSON_StackTracePromotesLevel(t *testing.T) {
 		}
 	}
 }
+
+// A line that states its own level is that level. Keyword matching guessed
+// instead, and guessed from the wrong words: uvicorn's logger is called
+// "uvicorn.error", so every one of its INFO lines was an error -- seen on a
+// real FastAPI backend, where "Uvicorn running on http://0.0.0.0:8000" and
+// "Application startup complete." were both in /errors. And uvicorn writes to
+// stderr, so its plain "INFO:" lines were raised to warn.
+func TestPlainText_ExplicitLevelWins(t *testing.T) {
+	p := NewPlainTextParser()
+	for _, tc := range []struct {
+		line   string
+		stderr bool
+		want   LogLevel
+	}{
+		// Python logging's default format, from the backend that showed this.
+		{"2026-10-08 18:04:24,616 - uvicorn.error - INFO - Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)", true, LevelInfo},
+		{"2026-10-08 18:04:25,944 - uvicorn.error - INFO - Application startup complete.", true, LevelInfo},
+		{"2026-10-08 18:04:25,944 - duet.app - ERROR - denodo pool exhausted", false, LevelError},
+		{"2026-10-08 18:04:25,944 - duet.app - WARNING - slow query", false, LevelWarn},
+		{"2026-10-08 18:04:25,944 - app - CRITICAL - out of memory", false, LevelError},
+		// uvicorn's own format: the level and a colon first.
+		{"INFO:     Will watch for changes in these directories: ['/src']", true, LevelInfo},
+		{"ERROR:    Exception in ASGI application", true, LevelError},
+		// logfmt / slog text.
+		{`time=2026-10-08T12:00:00Z level=warn msg="slow request"`, false, LevelWarn},
+		{`level=info msg="request failed, retrying"`, false, LevelInfo},
+		// Java-style, from Denodo.
+		{"[VDP] 2177 [main] INFO  2026-10-08T17:04:31.793 server.start [] - Starting Denodo Platform 9.4.0", false, LevelInfo},
+		{"[VDP] 2177 [main] ERROR 2026-10-08T17:04:31.793 server.start [] - could not bind", false, LevelError},
+		// Django.
+		{"2026-10-08 12:00:00 WARNING django.request: Not Found: /favicon.ico", false, LevelWarn},
+		// Bracketed, any case.
+		{"[error] boom", false, LevelError},
+		{"[Info] connection failed to replica, using primary", false, LevelInfo},
+	} {
+		if e := p.Parse("s", tc.line, time.Now(), tc.stderr); e.Level != tc.want {
+			t.Errorf("%q (stderr=%v) classified as %s, want %s", tc.line, tc.stderr, e.Level, tc.want)
+		}
+	}
+}
+
+// Only an explicit level counts as one. The word in passing, in lower case or
+// in a sentence, still leaves the line to the keyword rules.
+func TestPlainText_LevelWordsInPassingAreNotExplicit(t *testing.T) {
+	p := NewPlainTextParser()
+	for _, tc := range []struct {
+		line string
+		want LogLevel
+	}{
+		{"for more info see the docs; build failed", LevelError},
+		{"Tests: 41 passed, 1 failed", LevelError},
+		{"loading info panel", LevelInfo},
+	} {
+		if e := p.Parse("s", tc.line, time.Now(), false); e.Level != tc.want {
+			t.Errorf("%q classified as %s, want %s", tc.line, e.Level, tc.want)
+		}
+	}
+}

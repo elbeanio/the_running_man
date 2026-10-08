@@ -78,7 +78,9 @@ so the developer and the agent are looking at the same run.
 - **Log entry** — one captured line, parsed: **timestamp**, **level**, **source**, source
   type, **message**, **raw**, optional **stacktrace** and **trace ID**.
 - **Level** — `debug`, `info`, `warn` or `error`. **The single authority on whether an
-  entry is an error**; `/errors` selects on it. A stack trace found at a lower level
+  entry is an error**; `/errors` selects on it. A line that **states its own level**
+  (`INFO:`, `- WARNING -`, `level=error`, `[debug]`) is that level, whatever words follow;
+  otherwise it is judged by keywords. A stack trace found at a lower level
   promotes the entry to `error`. A line that arrived on **stderr** and matched nothing else
   is recorded as `warn`, never `error` — stderr is weak evidence, since many tools write
   progress there — so `warn` is worth checking when `/errors` looks thin.
