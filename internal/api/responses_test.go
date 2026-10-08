@@ -27,7 +27,12 @@ func TestEmptyListsAreArraysNotNull(t *testing.T) {
 		"/traces/nosuchtrace/logs": "logs",
 	} {
 		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		req := httptest.NewRequest("GET", path, nil)
+		// As Running Man's own client, so the request is not logged: an
+		// agent's call is logged into the buffer, and the earlier paths would
+		// leave /logs not empty, depending on map order.
+		req.Header.Set("User-Agent", InternalUserAgent)
+		handler.ServeHTTP(rec, req)
 
 		var body map[string]json.RawMessage
 		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
