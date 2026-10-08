@@ -1,0 +1,18 @@
+   ┌───────────────────┐┌──────────────┐┌──────────────┐                                            
+   │  🏃‍➡️  running-man  ││  🔧 backend  ││  🔍  Traces  │                                            
+┌──┴───────────────────┴┴──────────────┴┘              └───────────────────────────────────────────┐
+│ Span: ChatCompletion                                                                             │
+│enricher · CLIENT · ok · 90ms · +70ms into the trace                                              │
+│                                                                                                  │
+│Attributes (2):                                                                                   │
+│› input.value     [{"role":"user","content":[{"type":"text","text":"Describe this ch...     4.4 KB│
+│  llm.model_name  gpt-4.1                                                                         │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                                                    
+↑/↓ PgUp/PgDn Home/End: Attribute | Enter: Open value | ESC: Back to trace | q: Quit                
