@@ -575,3 +575,21 @@ func TestConfig_Validate_ShellMustBeExecutable(t *testing.T) {
 		t.Error("a relative path should be rejected")
 	}
 }
+
+func TestTracingConfig_MaxSpanBytes(t *testing.T) {
+	if err := (&TracingConfig{MaxSpanBytes: -1}).Validate(); err == nil ||
+		!strings.Contains(err.Error(), "max_span_bytes cannot be negative") {
+		t.Errorf("max_span_bytes -1: err = %v, want a refusal naming the key", err)
+	}
+
+	var tc TracingConfig
+	if err := yaml.Unmarshal([]byte("max_span_bytes: 1048576\n"), &tc); err != nil {
+		t.Fatal(err)
+	}
+	if got := tc.GetMaxSpanBytes(); got != 1<<20 {
+		t.Errorf("max_span_bytes: 1048576 read as %d", got)
+	}
+	if got := (&TracingConfig{}).GetMaxSpanBytes(); got != DefaultMaxSpanBytes {
+		t.Errorf("unset max_span_bytes = %d, want the default %d", got, DefaultMaxSpanBytes)
+	}
+}

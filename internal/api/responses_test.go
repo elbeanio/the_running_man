@@ -16,7 +16,7 @@ import (
 // documented examples assume an array. Reproduced against a live instance.
 func TestEmptyListsAreArraysNotNull(t *testing.T) {
 	buffer := storage.NewRingBuffer(10, time.Minute, 1024)
-	spans := tracing.NewSpanStorage(10, time.Minute)
+	spans := tracing.NewSpanStorage(10, time.Minute, 1<<30)
 	server := NewServer(buffer, "/projects/p", nil, nil, spans)
 	handler := server.routes()
 
@@ -54,7 +54,7 @@ func TestEmptyListsAreArraysNotNull(t *testing.T) {
 // errors" is what a caller means. /traces took spans[:limit], the oldest N --
 // the two endpoints disagreed on what limit meant.
 func TestTracesLimitKeepsTheMostRecent(t *testing.T) {
-	spans := tracing.NewSpanStorage(100, time.Hour)
+	spans := tracing.NewSpanStorage(100, time.Hour, 1<<30)
 	base := time.Now().Add(-time.Minute)
 	for i := 0; i < 10; i++ {
 		at := base.Add(time.Duration(i) * time.Second)
