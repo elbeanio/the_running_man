@@ -1,21 +1,41 @@
+version: "2"
+run:
+  tests: true
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck
     - govet
+    - ineffassign
     - staticcheck
     - unused
-    - gosimple
-    - ineffassign
-    - typecheck
-
-issues:
-  exclude-rules:
-    # Exclude errcheck for defer statements in tests (cleanup)
-    - path: _test\.go$
-      linters:
-        - errcheck
-
-run:
-  timeout: 5m
-  tests: true
+  settings:
+    staticcheck:
+      # What v1 ran: staticcheck (SA) and gosimple (S1), which v2 merged into
+      # one linter. v2 adds the quick-fix (QF) and style (ST) suggestions by
+      # default; turning those on is a separate decision from the upgrade.
+      checks:
+        - "SA*"
+        - "S1*"
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - errcheck
+        path: _test\.go$
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

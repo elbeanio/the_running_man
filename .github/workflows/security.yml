@@ -32,7 +32,11 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.25'
+        go-version: '1.27'
+        # The latest 1.27 patch, not whatever the runner has cached: govulncheck
+        # checks the standard library of the Go it runs on, and an old patch
+        # release fails it on advisories already fixed.
+        check-latest: true
         cache-dependency-path: go.sum
     
     - name: Install dependencies
@@ -110,7 +114,8 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.25'
+        go-version: '1.27'
+        check-latest: true
     
     - name: Install go-licenses
       run: go install github.com/google/go-licenses@latest
