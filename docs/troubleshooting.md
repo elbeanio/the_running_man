@@ -36,7 +36,7 @@ export PATH="$HOME/go/bin:$PATH"
 2. Verify installation:
 ```bash
 go version
-# Should show Go 1.21 or later
+# Should show Go 1.27 or later
 ```
 
 ### Permission Denied
