@@ -121,6 +121,11 @@ so the developer and the agent are looking at the same run.
   on its own for either.
 - **Max age / max entries / max bytes** — the three retention limits: how old, how many,
   how large. Whichever binds first wins.
+- **Span storage** — where **spans** are held, separately from the ring buffer, under its
+  own retention limits: `tracing.max_span_age`, `max_spans` and `max_span_bytes`. Far
+  longer by default than the ring buffer's (24 hours against 30 minutes), because a trace
+  is compared with one from hours later to confirm a fix, where a log line is read while it
+  is current.
 
 ## Tracing
 

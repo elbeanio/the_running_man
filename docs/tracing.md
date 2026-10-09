@@ -282,11 +282,14 @@ tracing:
   # OTLP receiver port (default: 4318)
   port: 4321  # Use if 4318 is occupied
 
-  # Maximum spans to store (default: 10000)
+  # Maximum spans to store (default: 50000)
   max_spans: 5000
 
-  # How long to keep spans (default: 30m)
+  # How long to keep spans (default: 24h)
   max_span_age: 1h
+
+  # Maximum total bytes of spans (default: 268435456 = 256MB)
+  max_span_bytes: 104857600
 ```
 
 ### Command Line Flags
@@ -443,20 +446,25 @@ def process_request(request_id):
 
 **"Environment variables not set"**: Ensure tracing is enabled (default is true).
 
-**"Trace storage full"**: Increase `max_spans` in configuration or reduce retention time.
+**"A trace I was looking at has gone"**: it was evicted by one of the three limits. Check
+`traces` in `/health`: `total_bytes` near `max_bytes` means the byte limit is binding, so
+raise `max_span_bytes`.
 
 ### Performance Considerations
 
-**Storage estimates:**
-- Span size: ~0.5KB (limited attributes)
-- 100 spans/minute: ~30KB/30min
-- Default limit: 10,000 spans (~5MB)
+**Storage estimates**, from a real LLM agent (OpenInference instrumentation):
+- Most spans are under 1KB.
+- A span from an LLM call averages about 250KB, and grows with the conversation, because
+  each call carries every message so far.
+- One agent turn with several LLM and tool calls: 0.5 to 3MB.
+
+Spans are held in memory, so `max_span_bytes` is what bounds memory: by default 256MB,
+which is dozens of agent turns. A service sending many small spans hits `max_spans` first.
 
 **If you need more capacity:**
 ```yaml
 tracing:
-  max_spans: 50000  # Increase limit
-  max_span_age: 1h  # Reduce retention
+  max_span_bytes: 536870912  # 512MB
 ```
 
 ## Architecture
