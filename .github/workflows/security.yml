@@ -52,7 +52,11 @@ jobs:
       with:
         results_file: results.sarif
         results_format: sarif
-        publish_results: true
+        # Off: publishing signs the results through OIDC, which needs
+        # id-token: write and a job holding nothing but Scorecard's approved
+        # steps. This job runs govulncheck too, so signing failed with
+        # "expired_token" and the job went red with no vulnerability found.
+        publish_results: false
       env:
         GITHUB_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
