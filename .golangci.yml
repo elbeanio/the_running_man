@@ -11,12 +11,20 @@ linters:
     - unused
   settings:
     staticcheck:
-      # What v1 ran: staticcheck (SA) and gosimple (S1), which v2 merged into
-      # one linter. v2 adds the quick-fix (QF) and style (ST) suggestions by
-      # default; turning those on is a separate decision from the upgrade.
+      # staticcheck's own defaults, which CI ran as a separate step until the
+      # staticcheck release could not read Go 1.27: SA, S1 (gosimple, merged in
+      # by v2) and ST, less the style checks it leaves off. Not v2's default,
+      # which adds the quick-fix (QF) suggestions -- a separate decision.
       checks:
         - "SA*"
         - "S1*"
+        - "ST*"
+        - "-ST1000"
+        - "-ST1003"
+        - "-ST1016"
+        - "-ST1020"
+        - "-ST1021"
+        - "-ST1022"
   exclusions:
     generated: lax
     presets:
