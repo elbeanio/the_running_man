@@ -22,7 +22,7 @@ graph TB
         OTEL_REC[OTEL Receiver<br/>Port 4318]
         PARSER[Log Parser]
         BUFFER[(Ring Buffer<br/>30min / 50MB)]
-        TRACE_STORE[(Trace Storage<br/>30min / 10k spans)]
+        TRACE_STORE[(Trace Storage<br/>24h / 256MB)]
         API[API Server<br/>REST, port 9000]
         TUI[TUI Viewer]
         
@@ -150,7 +150,7 @@ OpenTelemetry tracing support for distributed tracing.
 
 2. **Trace Storage (`storage.go`)**
    - In-memory storage for spans with configurable retention
-   - Default: 10,000 spans or 30 minutes
+   - Default: 24 hours, 256MB or 50,000 spans, whichever binds first
    - Query capabilities by trace ID, service name, span name, status
    - Automatic correlation with logs via `trace_id` field
 

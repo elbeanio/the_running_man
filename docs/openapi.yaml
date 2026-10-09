@@ -67,7 +67,7 @@ paths:
   /health:
     get:
       summary: Get system health and statistics
-      description: Returns system health status, uptime, buffer statistics, and available log sources
+      description: Returns system health status, uptime, log buffer and span storage statistics, and available log sources
       tags:
         - health
       responses:
@@ -89,6 +89,14 @@ paths:
                   max_age: "1h0m0s"
                   oldest_entry: "2026-02-09T22:00:00Z"
                   newest_entry: "2026-02-09T23:23:45Z"
+                traces:
+                  total_spans: 1830
+                  total_bytes: 41943040
+                  max_spans: 50000
+                  max_bytes: 268435456
+                  max_age: "24h0m0s"
+                  oldest_span: "2026-02-09T21:30:00Z"
+                  newest_span: "2026-02-09T23:23:40Z"
                 sources:
                   - name: "running-man"
                     entry_count: 150
@@ -804,6 +812,8 @@ components:
           description: Uptime in seconds
         buffer:
           $ref: '#/components/schemas/BufferStats'
+        traces:
+          $ref: '#/components/schemas/SpanStats'
         sources:
           type: array
           items:
@@ -814,6 +824,22 @@ components:
         - uptime_seconds
         - buffer
         - sources
+
+    SpanStats:
+      type: object
+      description: |
+        Span storage against its retention limits: max_spans, max_span_bytes and
+        max_span_age. Whichever binds first evicts the oldest spans. Absent when tracing
+        is disabled.
+      properties:
+        total_spans: {type: integer}
+        total_bytes: {type: integer, description: "The bytes of the held spans' strings: IDs, names, attribute and event keys and values"}
+        max_spans: {type: integer}
+        max_bytes: {type: integer}
+        max_age: {type: string, example: "24h0m0s"}
+        oldest_span: {type: string, format: date-time, nullable: true, description: "When the oldest held span arrived"}
+        newest_span: {type: string, format: date-time, nullable: true, description: "When the newest held span arrived"}
+      required: [total_spans, total_bytes, max_spans, max_bytes, max_age, oldest_span, newest_span]
 
     TraceSummary:
       type: object

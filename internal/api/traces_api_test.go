@@ -13,7 +13,7 @@ import (
 
 func traceServer(t *testing.T) (*Server, string) {
 	t.Helper()
-	st := tracing.NewSpanStorage(100, time.Hour)
+	st := tracing.NewSpanStorage(100, time.Hour, 1<<30)
 	at := time.Now().Add(-time.Minute)
 	big := strings.Repeat("x", 5000)
 	st.Add(&tracing.SpanEntry{TraceID: "t1", SpanID: "root", Name: "chat.turn", ServiceName: "duet",
@@ -122,5 +122,37 @@ func TestTracesAPI_LogsStillServed(t *testing.T) {
 	s, _ := traceServer(t)
 	if code, body := get(t, s, "/traces/t1/logs"); code != 200 || body["logs"] == nil {
 		t.Errorf("logs: %d %v", code, body)
+	}
+}
+
+// /health reported the log buffer against its limits but said nothing about
+// spans, so nobody could see how close traces were to being evicted.
+func TestHealthReportsSpanStorage(t *testing.T) {
+	s, _ := traceServer(t)
+	_, body := get(t, s, "/health")
+
+	var traces struct {
+		TotalSpans int    `json:"total_spans"`
+		TotalBytes int64  `json:"total_bytes"`
+		MaxSpans   int    `json:"max_spans"`
+		MaxBytes   int64  `json:"max_bytes"`
+		MaxAge     string `json:"max_age"`
+		OldestSpan string `json:"oldest_span"`
+	}
+	if err := json.Unmarshal(body["traces"], &traces); err != nil {
+		t.Fatalf("no traces block in /health: %v", err)
+	}
+	if traces.TotalSpans != 2 || traces.TotalBytes < 5000 || traces.MaxSpans != 100 ||
+		traces.MaxBytes != 1<<30 || traces.MaxAge != "1h0m0s" || traces.OldestSpan == "" {
+		t.Errorf("traces block = %+v", traces)
+	}
+}
+
+// Tracing disabled: no traces block rather than one of zeroes, which would read
+// as "tracing is on and nothing has arrived".
+func TestHealthOmitsSpanStorageWithoutTracing(t *testing.T) {
+	s := NewServer(storage.NewRingBuffer(10, time.Minute, 1<<20), testProjectDir, nil, nil, nil)
+	if _, body := get(t, s, "/health"); body["traces"] != nil {
+		t.Errorf("traces block present with tracing disabled: %s", body["traces"])
 	}
 }

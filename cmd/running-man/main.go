@@ -466,6 +466,7 @@ func runCommand(args []string) {
 	finalTracingPort := *tracingPort
 	finalMaxSpans := config.DefaultMaxSpans
 	finalMaxSpanAge := config.DefaultMaxSpanAge
+	finalMaxSpanBytes := int64(config.DefaultMaxSpanBytes)
 
 	// Simple logic: CLI flag overrides config
 	// If user specifies --tracing=false, disable regardless of config
@@ -487,6 +488,7 @@ func runCommand(args []string) {
 		}
 		finalMaxSpans = cfg.Tracing.GetMaxSpans()
 		finalMaxSpanAge = cfg.Tracing.GetMaxSpanAgeDuration()
+		finalMaxSpanBytes = cfg.Tracing.GetMaxSpanBytes()
 	} else {
 		// No config file, use CLI flag value (defaults to true)
 		// finalTracingEnabled already set to *tracingEnabled
@@ -589,7 +591,7 @@ func runCommand(args []string) {
 	var tracingReceiver *tracing.Receiver
 	var spanStorage *tracing.SpanStorage
 	if finalTracingEnabled {
-		spanStorage = tracing.NewSpanStorage(finalMaxSpans, finalMaxSpanAge)
+		spanStorage = tracing.NewSpanStorage(finalMaxSpans, finalMaxSpanAge, finalMaxSpanBytes)
 		tracingReceiver = tracing.NewReceiver(spanStorage, buffer, finalTracingPort)
 
 		// Bound here, before the process manager is built, because the port that
