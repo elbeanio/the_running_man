@@ -563,7 +563,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		{
 			"path":        "/traces",
 			"method":      "GET",
-			"description": "Trace summaries, newest first, no span attributes (since, service, span_name, status=error|ok, limit)",
+			"description": "Trace summaries, newest first, no span attributes (since, service, span_name, status=error|ok, limit); kept 24h and across restarts, listed in restarts",
 		},
 		{
 			"path":        "/traces/{id}",
@@ -578,7 +578,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		{
 			"path":        "/traces/{id}/logs",
 			"method":      "GET",
-			"description": "Get all logs correlated with a specific trace",
+			"description": "Logs correlated with a trace; a note says when they were lost to a restart",
 		},
 		{
 			"path":        "/openapi.yaml",
