@@ -167,6 +167,10 @@ func (m *Marker) Write(projectDir string) error {
 	if err := enc.Encode(m); err != nil {
 		return fmt.Errorf("encoding marker: %w", err)
 	}
+	if err := WriteGitignore(projectDir); err != nil {
+		return err
+	}
+
 	data := buf.Bytes()
 
 	final := filepath.Join(dir, FileName)
@@ -209,8 +213,30 @@ func Remove(projectDir string) error {
 	if err := os.Remove(filepath.Join(dir, FileName)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing marker: %w", err)
 	}
+	// The .gitignore goes too when nothing else is left for it to protect,
+	// so a clean exit without saved traces leaves no directory behind.
+	if entries, err := os.ReadDir(dir); err == nil && len(entries) == 1 && entries[0].Name() == gitignoreName {
+		_ = os.Remove(filepath.Join(dir, gitignoreName))
+	}
 	// Best effort: fails harmlessly if anything else lives here.
 	_ = os.Remove(dir)
+	return nil
+}
+
+const gitignoreName = ".gitignore"
+
+// WriteGitignore makes .running-man/ ignore everything in it. Saved spans hold
+// prompts, SQL and data, and must never be committed by accident, whatever the
+// project's own .gitignore says. Written on every start, so a deleted or edited
+// one is put back.
+func WriteGitignore(projectDir string) error {
+	dir := filepath.Join(projectDir, DirName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", dir, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, gitignoreName), []byte("*\n"), 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", gitignoreName, err)
+	}
 	return nil
 }
 

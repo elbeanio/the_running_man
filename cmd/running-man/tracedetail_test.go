@@ -37,7 +37,7 @@ func bigTrace(failing bool) ([]spanDetail, []logEntry) {
 // every span had a tick, and every trace said OK.
 func TestTraceDetail_ShowsErrors(t *testing.T) {
 	spans, _ := bigTrace(true)
-	out := ansi.Strip(renderTraceDetail("abc", spans, nil, 40, 100, 0, -1))
+	out := ansi.Strip(renderTraceDetail("abc", spans, nil, "", 40, 100, 0, -1))
 	if !strings.Contains(out, "Status: ERROR") {
 		t.Errorf("header does not report the error:\n%s", out)
 	}
@@ -59,7 +59,7 @@ func TestTraceDetail_FitsItsWindowAndScrolls(t *testing.T) {
 	spans, logs := bigTrace(false)
 	const height = 20
 
-	top := renderTraceDetail("abc", spans, logs, height, 100, 0, -1)
+	top := renderTraceDetail("abc", spans, logs, "", height, 100, 0, -1)
 	if n := strings.Count(top, "\n") + 1; n != height {
 		t.Fatalf("rendered %d rows into a %d-row window", n, height)
 	}
@@ -67,7 +67,7 @@ func TestTraceDetail_FitsItsWindowAndScrolls(t *testing.T) {
 		t.Error("top of the trace not shown at offset 0")
 	}
 
-	bottom := ansi.Strip(renderTraceDetail("abc", spans, logs, height, 100, 1<<30, -1))
+	bottom := ansi.Strip(renderTraceDetail("abc", spans, logs, "", height, 100, 1<<30, -1))
 	if n := strings.Count(bottom, "\n") + 1; n != height {
 		t.Fatalf("rendered %d rows at the end", n)
 	}

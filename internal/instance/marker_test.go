@@ -133,12 +133,12 @@ func TestMarker_WriteIsAtomicAndLeavesNoTempFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read dir: %v", err)
 	}
-	if len(entries) != 1 || entries[0].Name() != FileName {
-		names := make([]string, 0, len(entries))
-		for _, e := range entries {
-			names = append(names, e.Name())
-		}
-		t.Errorf("expected only %s, got %v", FileName, names)
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if strings.Join(names, " ") != ".gitignore "+FileName {
+		t.Errorf("expected only .gitignore and %s, got %v", FileName, names)
 	}
 }
 
@@ -221,5 +221,35 @@ func TestSocketPath_SameProjectThroughASymlink(t *testing.T) {
 
 	if got, want := SocketPath(alias), SocketPath(deep); got != want {
 		t.Errorf("symlinked route resolved to a different socket:\n  via symlink: %s\n  via real:    %s", got, want)
+	}
+}
+
+// Span contents -- prompts, SQL, data -- are saved under .running-man/, which
+// must never end up in a repository by accident, whatever the project's own
+// .gitignore says.
+func TestGitignore_IgnoresEverythingAndCleansUp(t *testing.T) {
+	dir := t.TempDir()
+	if err := New("/s", dir, nil).Write(dir); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, DirName, ".gitignore"))
+	if err != nil || string(data) != "*\n" {
+		t.Fatalf(".gitignore = %q, %v; want \"*\\n\"", data, err)
+	}
+
+	// With saved traces, the directory stays on a clean exit, and so does the
+	// .gitignore protecting them.
+	os.MkdirAll(filepath.Join(dir, DirName, "traces"), 0o700)
+	Remove(dir)
+	if _, err := os.Stat(filepath.Join(dir, DirName, ".gitignore")); err != nil {
+		t.Errorf(".gitignore removed while traces remain: %v", err)
+	}
+
+	// Without them, a clean exit still leaves nothing behind.
+	os.RemoveAll(filepath.Join(dir, DirName, "traces"))
+	New("/s", dir, nil).Write(dir)
+	Remove(dir)
+	if _, err := os.Stat(filepath.Join(dir, DirName)); !os.IsNotExist(err) {
+		t.Errorf("%s left behind with nothing in it but .gitignore", DirName)
 	}
 }

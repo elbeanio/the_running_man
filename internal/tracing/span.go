@@ -54,6 +54,28 @@ func (s SpanEntry) MarshalJSON() ([]byte, error) {
 	})
 }
 
+// UnmarshalJSON reads what MarshalJSON writes, the duration included, so a span
+// written to disk reads back the same.
+func (s *SpanEntry) UnmarshalJSON(data []byte) error {
+	type Alias SpanEntry
+	aux := struct {
+		Duration string `json:"duration"`
+		*Alias
+	}{Alias: (*Alias)(s)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.Duration == "" {
+		return nil
+	}
+	d, err := time.ParseDuration(aux.Duration)
+	if err != nil {
+		return fmt.Errorf("span duration %q: %w", aux.Duration, err)
+	}
+	s.Duration = d
+	return nil
+}
+
 // SpanEvent represents an event within a span
 type SpanEvent struct {
 	Name       string            `json:"name"`

@@ -467,6 +467,7 @@ func runCommand(args []string) {
 	finalMaxSpans := config.DefaultMaxSpans
 	finalMaxSpanAge := config.DefaultMaxSpanAge
 	finalMaxSpanBytes := int64(config.DefaultMaxSpanBytes)
+	finalPersistSpans := true
 
 	// Simple logic: CLI flag overrides config
 	// If user specifies --tracing=false, disable regardless of config
@@ -489,6 +490,7 @@ func runCommand(args []string) {
 		finalMaxSpans = cfg.Tracing.GetMaxSpans()
 		finalMaxSpanAge = cfg.Tracing.GetMaxSpanAgeDuration()
 		finalMaxSpanBytes = cfg.Tracing.GetMaxSpanBytes()
+		finalPersistSpans = cfg.Tracing.PersistEnabled()
 	} else {
 		// No config file, use CLI flag value (defaults to true)
 		// finalTracingEnabled already set to *tracingEnabled
@@ -592,6 +594,9 @@ func runCommand(args []string) {
 	var spanStorage *tracing.SpanStorage
 	if finalTracingEnabled {
 		spanStorage = tracing.NewSpanStorage(finalMaxSpans, finalMaxSpanAge, finalMaxSpanBytes)
+		if finalPersistSpans {
+			attachSpanDisk(spanStorage, projectDir, finalMaxSpanAge, finalMaxSpanBytes, buffer)
+		}
 		tracingReceiver = tracing.NewReceiver(spanStorage, buffer, finalTracingPort)
 
 		// Bound here, before the process manager is built, because the port that
@@ -1130,4 +1135,33 @@ func markerProcesses(configs []process.ProcessConfig) []instance.Process {
 		})
 	}
 	return out
+}
+
+// attachSpanDisk keeps spans under .running-man/traces/ so traces survive a
+// restart, then reads back what earlier runs left, in the background: up to
+// max_span_bytes of JSON takes seconds, and processes should not wait for it.
+// A disk that cannot be opened costs persistence, not tracing.
+func attachSpanDisk(spans *tracing.SpanStorage, projectDir string, maxAge time.Duration, maxBytes int64, logs tracing.LogSink) {
+	// Before anything is written: span contents must never be committed.
+	if err := instance.WriteGitignore(projectDir); err != nil {
+		termout.Errorf("Traces will not be kept across restarts: %v\n", err)
+		return
+	}
+	dir := filepath.Join(projectDir, instance.DirName, "traces")
+	started := time.Now()
+	disk, err := tracing.OpenDisk(dir, started, maxAge, maxBytes, logs)
+	if err != nil {
+		termout.Errorf("Traces will not be kept across restarts: %v\n", err)
+		return
+	}
+	spans.AttachDisk(disk, started)
+	go spans.LoadFromDisk()
+	go func() {
+		// Expiry also runs whenever a segment rolls; this is for an instance
+		// receiving nothing, whose old segments would otherwise outstay
+		// max_span_age.
+		for range time.Tick(time.Minute) {
+			spans.ExpireDisk()
+		}
+	}()
 }

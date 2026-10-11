@@ -156,3 +156,88 @@ func TestHealthOmitsSpanStorageWithoutTracing(t *testing.T) {
 		t.Errorf("traces block present with tracing disabled: %s", body["traces"])
 	}
 }
+
+// restartedServer is a server over span storage that has been through a
+// restart: one trace from the earlier run, loaded back from disk, and one from
+// this run.
+func restartedServer(t *testing.T) (*Server, time.Time) {
+	t.Helper()
+	dir := t.TempDir()
+	open := func() *tracing.SpanStorage {
+		started := time.Now()
+		d, err := tracing.OpenDisk(dir, started, time.Hour, 1<<30, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st := tracing.NewSpanStorage(100, time.Hour, 1<<30)
+		st.AttachDisk(d, started)
+		st.LoadFromDisk()
+		return st
+	}
+	open().Add(&tracing.SpanEntry{TraceID: "earlier", SpanID: "a", Name: "chat.turn", StartTime: time.Now()})
+	time.Sleep(time.Millisecond)
+	restart := time.Now()
+	st := open()
+	st.Add(&tracing.SpanEntry{TraceID: "now", SpanID: "b", Name: "chat.turn", StartTime: time.Now()})
+	return NewServer(storage.NewRingBuffer(10, time.Minute, 1<<20), testProjectDir, nil, nil, st), restart
+}
+
+// The TUI draws a line in the trace list where Running Man restarted, and an
+// agent can see which traces predate it.
+func TestTracesListsRestarts(t *testing.T) {
+	s, restart := restartedServer(t)
+	_, body := get(t, s, "/traces")
+
+	var restarts []time.Time
+	if err := json.Unmarshal(body["restarts"], &restarts); err != nil {
+		t.Fatalf("no restarts in /traces: %v", err)
+	}
+	if len(restarts) != 1 || restarts[0].Before(restart) {
+		t.Errorf("restarts = %v, want one, at or after %v", restarts, restart)
+	}
+
+	s, _ = traceServer(t)
+	if _, body := get(t, s, "/traces"); string(body["restarts"]) != "[]" {
+		t.Errorf("without persistence restarts = %s, want []", body["restarts"])
+	}
+}
+
+// Logs are not kept across a restart, so a trace from before one has none.
+// Saying so beats an empty list that reads as "this trace logged nothing".
+func TestTraceLogsExplainsLogsLostToARestart(t *testing.T) {
+	s, _ := restartedServer(t)
+
+	_, body := get(t, s, "/traces/earlier/logs")
+	var note string
+	json.Unmarshal(body["note"], &note)
+	if !strings.Contains(note, "restart") {
+		t.Errorf("note for a trace from before the restart = %q", note)
+	}
+	if _, body := get(t, s, "/traces/now/logs"); body["note"] != nil {
+		t.Errorf("note on a trace from this run: %s", body["note"])
+	}
+}
+
+func TestHealthReportsSpanPersistence(t *testing.T) {
+	s, _ := restartedServer(t)
+	_, body := get(t, s, "/health")
+	var traces struct {
+		Persisted    bool   `json:"persisted"`
+		Loading      *bool  `json:"loading"`
+		SkippedLines *int   `json:"skipped_lines"`
+		DiskBytes    int64  `json:"disk_bytes"`
+		Dir          string `json:"dir"`
+	}
+	json.Unmarshal(body["traces"], &traces)
+	if !traces.Persisted || traces.Loading == nil || *traces.Loading || traces.SkippedLines == nil ||
+		traces.DiskBytes == 0 || traces.Dir == "" {
+		t.Errorf("traces block = %s", body["traces"])
+	}
+
+	s, _ = traceServer(t)
+	_, body = get(t, s, "/health")
+	json.Unmarshal(body["traces"], &traces)
+	if traces.Persisted {
+		t.Error("persisted reported without a disk")
+	}
+}

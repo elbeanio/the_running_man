@@ -165,7 +165,12 @@ curl --unix-socket "$SOCK" "http://localhost/health"
     "max_bytes": 268435456,
     "max_age": "24h0m0s",
     "oldest_span": "2026-10-09T09:01:12Z",
-    "newest_span": "2026-10-09T11:29:58Z"
+    "newest_span": "2026-10-09T11:29:58Z",
+    "persisted": true,
+    "dir": "/home/dev/myapp/.running-man/traces",
+    "disk_bytes": 52428800,
+    "loading": false,
+    "skipped_lines": 0
   },
   "sources": [
     {"name": "backend", "entry_count": 1100, "last_seen": "2026-10-09T11:29:59Z"},
@@ -176,7 +181,11 @@ curl --unix-socket "$SOCK" "http://localhost/health"
 
 `traces` is absent when tracing is disabled. `oldest_span` and `newest_span` are when the
 spans arrived, which is what `max_age` is measured against, and are `null` when no spans
-are held.
+are held. `persisted` says spans are kept on disk, so traces survive a restart; the fields
+after it appear only when it is `true`. `loading` is `true` while earlier runs' spans are
+still being read back, so a trace missing from `/traces` may be on its way.
+`skipped_lines` counts saved lines that could not be read, such as half a line from a
+crash.
 
 ---
 
@@ -261,6 +270,7 @@ curl --unix-socket "$SOCK" "http://localhost/traces?since=10m&status=error"
 ```json
 {
   "count": 1,
+  "restarts": ["2026-10-08T19:50:00Z"],
   "traces": [
     {
       "trace_id": "a52b1a91528093522205536890ef2f09",
@@ -279,6 +289,9 @@ curl --unix-socket "$SOCK" "http://localhost/traces?since=10m&status=error"
 
 `summary` is the root span's `input.value`, `http.route`, `http.target` or `db.statement`
 -- the first present -- on one line, at most 120 characters; absent if it has none of them.
+
+`restarts` lists when Running Man restarted, newest first, among the traces held: traces
+are kept across a restart, their logs are not. Empty unless spans are kept on disk.
 
 ### GET /traces/{trace_id}
 
@@ -328,7 +341,18 @@ from `truncated` how large it is. 404 for an unknown trace or span.
 
 ### GET /traces/{trace_id}/logs
 
-Every log entry carrying this trace ID.
+Every log entry carrying this trace ID. For a trace from before Running Man restarted, the
+response also carries a `note` saying its logs are gone: logs are not kept across a
+restart, and an empty list would otherwise read as "this trace logged nothing".
+
+```json
+{
+  "trace_id": "a52b1a91528093522205536890ef2f09",
+  "logs": [],
+  "count": 0,
+  "note": "This trace is from before Running Man restarted. Logs are not kept across a restart, so its correlated logs are gone."
+}
+```
 
 ---
 

@@ -527,7 +527,16 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LogsResponse'
+                allOf:
+                  - $ref: '#/components/schemas/LogsResponse'
+                  - type: object
+                    properties:
+                      trace_id: {type: string}
+                      note:
+                        type: string
+                        description: |
+                          Present for a trace from before Running Man restarted: logs
+                          are not kept across a restart, so its correlated logs are gone.
 
 components:
   schemas:
@@ -839,7 +848,12 @@ components:
         max_age: {type: string, example: "24h0m0s"}
         oldest_span: {type: string, format: date-time, nullable: true, description: "When the oldest held span arrived"}
         newest_span: {type: string, format: date-time, nullable: true, description: "When the newest held span arrived"}
-      required: [total_spans, total_bytes, max_spans, max_bytes, max_age, oldest_span, newest_span]
+        persisted: {type: boolean, description: "Spans are kept on disk, so traces survive a restart. The fields below appear only when true."}
+        dir: {type: string, description: "Where the segments are"}
+        disk_bytes: {type: integer}
+        loading: {type: boolean, description: "Earlier runs' spans are still being read back; a trace missing from /traces may be on its way"}
+        skipped_lines: {type: integer, description: "Saved lines that could not be read, such as half a line from a crash"}
+      required: [total_spans, total_bytes, max_spans, max_bytes, max_age, oldest_span, newest_span, persisted]
 
     TraceSummary:
       type: object
@@ -864,7 +878,13 @@ components:
       properties:
         traces: {type: array, items: {$ref: '#/components/schemas/TraceSummary'}}
         count: {type: integer}
-      required: [traces, count]
+        restarts:
+          type: array
+          items: {type: string, format: date-time}
+          description: |
+            When Running Man restarted, newest first, among the traces held. Traces are kept
+            across a restart, their logs are not. Empty unless spans are kept on disk.
+      required: [traces, count, restarts]
 
     Span:
       type: object
