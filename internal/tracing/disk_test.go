@@ -210,6 +210,29 @@ func TestDisk_WriteFailureIsReportedOnceAndCaptureContinues(t *testing.T) {
 	}
 }
 
+// Closing a finished segment can fail, and then its last spans may not have
+// reached the disk. That was ignored; it is reported now.
+func TestDisk_FailedCloseOfAFinishedSegmentIsReported(t *testing.T) {
+	dir, c := t.TempDir(), &clock{time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)}
+	logs := &sink{}
+	s := run(t, dir, c, 1<<30, logs)
+	s.Add(&SpanEntry{TraceID: "a"})
+
+	s.disk.cur.Close() // so the roll's own Close fails
+	c.advance(61 * time.Minute)
+	s.Add(&SpanEntry{TraceID: "b"})
+
+	if len(logs.entries) != 1 || !strings.Contains(logs.entries[0].Message, "closing") {
+		t.Fatalf("want one report of the failed close, got %+v", logs.entries)
+	}
+	if n := len(segments(t, dir)); n != 2 {
+		t.Errorf("%d segments; a failed close must not stop the next segment", n)
+	}
+	if got := heldIDs(s); got != "a b" {
+		t.Errorf("memory holds %q", got)
+	}
+}
+
 // Spans that arrive while earlier runs' spans are loading are newer than all
 // of them: the loaded spans go before, or age eviction, which stops at the
 // first span that is not old, would stop early.

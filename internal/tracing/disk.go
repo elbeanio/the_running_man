@@ -115,9 +115,16 @@ func listSegments(dir string) ([]string, error) {
 }
 
 // roll closes the current segment and starts the next, header first.
+//
+// A failed close of the finished segment is reported but does not stop the
+// next one: its last spans may not have reached the disk, which the developer
+// should know, and the spans to come can still be saved.
 func (d *Disk) roll() error {
 	if d.cur != nil {
-		d.cur.Close()
+		if err := d.cur.Close(); err != nil {
+			d.report(parser.LevelError, fmt.Sprintf(
+				"Error closing %s; its last spans may not survive a restart: %v", filepath.Join(d.dir, d.curName), err))
+		}
 		d.cur = nil
 	}
 	now := d.now()
@@ -129,8 +136,7 @@ func (d *Disk) roll() error {
 	header, _ := json.Marshal(segmentHeader{Format: diskFormat, RunningManStarted: d.run})
 	n, err := f.Write(append(header, '\n'))
 	if err != nil {
-		f.Close()
-		return err
+		return errors.Join(err, f.Close())
 	}
 	d.cur, d.curName, d.curOpened, d.curSize = f, name, now, int64(n)
 	return nil
@@ -156,7 +162,8 @@ func (d *Disk) append(sp *SpanEntry) (rolled bool) {
 	}
 	if err != nil {
 		if d.cur != nil {
-			d.cur.Close()
+			// Joined, so the one report carries both failures.
+			err = errors.Join(err, d.cur.Close())
 			d.cur = nil // retried by a roll on the next span
 		}
 		if !d.failing {
