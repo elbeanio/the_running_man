@@ -229,6 +229,13 @@ func TestGoldenFrames(t *testing.T) {
 			m.selectedSource = 2 // Traces
 			return m
 		}},
+		{"traces-restart", func() model {
+			m := fixtureModel(100, 20)
+			m.selectedSource = 2
+			restart, _ := time.Parse(time.RFC3339, "2026-10-04T09:15:30Z")
+			m.traceRestarts = []time.Time{restart}
+			return m
+		}},
 		{"trace-detail", func() model {
 			m := fixtureModel(100, 20)
 			m.selectedSource = 2

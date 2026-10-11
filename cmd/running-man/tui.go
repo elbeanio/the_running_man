@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/elbeanio/the_running_man/internal/api"
 	"github.com/elbeanio/the_running_man/internal/instance"
 	"github.com/elbeanio/the_running_man/internal/parser"
@@ -75,6 +76,7 @@ type model struct {
 
 	// Trace view state
 	traces            []traceSummary // List of trace summaries
+	traceRestarts     []time.Time    // When Running Man restarted, among the traces
 	traceScrollOffset int            // Scroll offset for trace list
 	selectedTraceIdx  int            // Selected trace index in list
 
@@ -82,6 +84,7 @@ type model struct {
 	selectedTraceID         string       // ID of selected trace for detail view
 	traceSpans              []spanDetail // Spans for selected trace
 	traceLogs               []logEntry   // Logs correlated with selected trace
+	traceLogsNote           string       // Why there are none, when the API says
 	traceDetailScrollOffset int          // Scroll offset for trace detail view
 
 	// The span and value levels below the trace detail view; see tuitrace.go.
@@ -192,9 +195,15 @@ type logsMsg struct {
 	limited bool
 	logs    []logEntry
 }
-type tracesMsg []traceSummary
+type tracesMsg struct {
+	traces   []traceSummary
+	restarts []time.Time
+}
 type traceSpansMsg []spanDetail
-type traceLogsMsg []logEntry
+type traceLogsMsg struct {
+	logs []logEntry
+	note string
+}
 type errMsg struct{ err error }
 type tickMsg time.Time
 
@@ -379,7 +388,8 @@ func fetchTraces(apiURL string) tea.Cmd {
 		// Summaries, newest first, straight from the API: decoded into the
 		// API's own type, so the two cannot disagree about field names.
 		var response struct {
-			Traces []tracing.TraceSummary `json:"traces"`
+			Traces   []tracing.TraceSummary `json:"traces"`
+			Restarts []time.Time            `json:"restarts"`
 		}
 		if err := getJSON(apiURL+"/traces", &response); err != nil {
 			return errMsg{err}
@@ -393,7 +403,7 @@ func fetchTraces(apiURL string) tea.Cmd {
 				StartTime: t.StartTime, SpanCount: t.SpanCount, ErrorCount: t.ErrorCount,
 			}
 		}
-		return tracesMsg(traces)
+		return tracesMsg{traces: traces, restarts: response.Restarts}
 	}
 }
 
@@ -474,13 +484,14 @@ func fetchTraceLogs(apiURL, traceID string) tea.Cmd {
 			TraceID string     `json:"trace_id"`
 			Logs    []logEntry `json:"logs"`
 			Count   int        `json:"count"`
+			Note    string     `json:"note"`
 		}
 
 		if err := json.Unmarshal(body, &response); err != nil {
 			return errMsg{err}
 		}
 
-		return traceLogsMsg(response.Logs)
+		return traceLogsMsg{logs: response.Logs, note: response.Note}
 	}
 }
 
@@ -637,7 +648,7 @@ func (m model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if t, ok := m.selectedTrace(); ok {
 			selected = t.TraceID
 		}
-		m.traces = msg
+		m.traces, m.traceRestarts = msg.traces, msg.restarts
 		for i, t := range m.traces {
 			if t.TraceID == selected {
 				m.selectedTraceIdx = i
@@ -660,7 +671,7 @@ func (m model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case traceLogsMsg:
-		m.traceLogs = msg
+		m.traceLogs, m.traceLogsNote = msg.logs, msg.note
 
 	case tickMsg:
 		m.tickCount++
@@ -722,14 +733,14 @@ func (m model) viewModel() string {
 	switch m.mode {
 	case ModeTraceDetail:
 		// Render trace detail view
-		content = renderTraceDetail(m.selectedTraceID, m.traceSpans, m.traceLogs, contentHeight, contentWidth, m.traceDetailScrollOffset, m.traceCursor)
+		content = renderTraceDetail(m.selectedTraceID, m.traceSpans, m.traceLogs, m.traceLogsNote, contentHeight, contentWidth, m.traceDetailScrollOffset, m.traceCursor)
 	case ModeSpanDetail, ModeValueView:
 		content = m.renderTraceLevel(contentHeight, contentWidth)
 	case ModeNormal:
 		// Check if we're in Traces tab
 		if m.currentSource() == "Traces" {
 			// Render trace list
-			content = renderTraceList(m.traces, contentHeight, contentWidth, m.traceScrollOffset, m.selectedTraceIdx)
+			content = renderTraceList(m.traces, m.traceRestarts, contentHeight, contentWidth, m.traceScrollOffset, m.selectedTraceIdx)
 		} else if m.currentSource() == startupTab {
 			content = renderStartup(m.startupRows, contentHeight, contentWidth)
 		} else {
@@ -772,7 +783,7 @@ func pad(s string, w int) string {
 	return s
 }
 
-func renderTraceList(traces []traceSummary, height, width, scrollOffset, selectedIdx int) string {
+func renderTraceList(traces []traceSummary, restarts []time.Time, height, width, scrollOffset, selectedIdx int) string {
 	if height <= 0 || width <= 0 {
 		return logStyle.Render("Invalid terminal dimensions")
 	}
@@ -785,8 +796,14 @@ func renderTraceList(traces []traceSummary, height, width, scrollOffset, selecte
 	// its root span, a summary (the user's message, the route, the query),
 	// how long it took, how many spans, how many failed. The trace ID used to
 	// lead, truncated, and identified nothing; it is in the detail header.
+	// Traces are kept for a day and across restarts, so 10:00 yesterday and
+	// 10:00 today can both be listed. The date is shown once they span days.
+	clock := "15:04:05"
+	if spansDays(traces, restarts) {
+		clock = "Jan 02 15:04:05"
+	}
+	startW := len(clock)
 	const (
-		startW    = 8 // 15:04:05
 		durationW = 8
 		spansW    = 5
 		errorsW   = 6
@@ -831,17 +848,32 @@ func renderTraceList(traces []traceSummary, height, width, scrollOffset, selecte
 		Background(lipgloss.Color("236"))
 	header := headerStyle.Render(row("Start", "Root span", "Summary", "Duration", "Spans", "Errors", "Services"))
 
-	// Collect all lines
+	// Collect all lines. rowOf maps a trace to its line, which differs from
+	// its index once restart lines sit between traces.
 	allLines := []string{header}
+	rowOf := make([]int, len(traces))
+	dividerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	divider := func(at time.Time) {
+		label := " Running Man restarted " + at.Format(strings.TrimSuffix(clock, ":05")) + " "
+		allLines = append(allLines, dividerStyle.Render(truncate("──"+label+strings.Repeat("─", max(width-len(label)-2, 0)), width)))
+	}
+	// Restarts newest first, like the traces. Each is drawn above the newest
+	// trace that began before it; one newer than every trace goes at the top.
+	ri := 0
 
 	for i, trace := range traces {
+		for ri < len(restarts) && !restarts[ri].Before(trace.StartTime) {
+			divider(restarts[ri])
+			ri++
+		}
+		rowOf[i] = len(allLines)
 		errs := ""
 		if trace.ErrorCount > 0 {
 			errs = fmt.Sprintf("%d", trace.ErrorCount)
 		}
 		line := row(
 			// In the timestamp's own offset, as log lines are shown.
-			trace.StartTime.Format("15:04:05"),
+			trace.StartTime.Format(clock),
 			trace.RootSpan,
 			parser.SanitiseLine(trace.Summary),
 			trace.Duration.String(),
@@ -882,9 +914,17 @@ func renderTraceList(traces []traceSummary, height, width, scrollOffset, selecte
 		return padLines(allLines, height)
 	}
 
-	// Calculate start index based on scrollOffset
-	// scrollOffset = 0 means show top
-	startIdx := scrollOffset
+	// Calculate start index based on scrollOffset, a trace index. Mapped to
+	// its line, less one, which is where it pointed before restart lines took
+	// rows of their own. Then moved down if that leaves the selection below
+	// the window: restart lines above it can push it off the bottom.
+	startIdx := 0
+	if scrollOffset > 0 && scrollOffset < len(rowOf) {
+		startIdx = rowOf[scrollOffset] - 1
+	}
+	if selectedIdx >= 0 && selectedIdx < len(rowOf) && rowOf[selectedIdx] >= startIdx+height {
+		startIdx = rowOf[selectedIdx] - height + 1
+	}
 	endIdx := startIdx + height
 
 	// Clamp to valid ranges
@@ -906,7 +946,7 @@ func renderTraceList(traces []traceSummary, height, width, scrollOffset, selecte
 // traceDetailMaxScroll is the furthest the trace detail view can scroll: its
 // rows less the window. Measured from the same rows the view draws.
 func (m model) traceDetailMaxScroll() int {
-	rows := traceDetailLines(m.selectedTraceID, m.traceSpans, m.traceLogs, m.contentWidth(), m.traceCursor)
+	rows := traceDetailLines(m.selectedTraceID, m.traceSpans, m.traceLogs, m.traceLogsNote, m.contentWidth(), m.traceCursor)
 	return max(0, len(rows)-m.contentHeight())
 }
 
@@ -920,7 +960,7 @@ func spanFailed(status string) bool {
 // traceDetailLines builds every row of the trace detail view, one string per
 // row, for renderTraceDetail to show a window of and for the scroll keys to
 // measure.
-func traceDetailLines(traceID string, spans []spanDetail, logs []logEntry, width, cursor int) []string {
+func traceDetailLines(traceID string, spans []spanDetail, logs []logEntry, logsNote string, width, cursor int) []string {
 	// Build trace summary from spans
 	var traceDuration time.Duration
 	var traceStatus string
@@ -987,6 +1027,9 @@ func traceDetailLines(traceID string, spans []spanDetail, logs []logEntry, width
 			line = truncate(line, width-2)
 			infoLines = append(infoLines, line)
 		}
+	} else if logsNote != "" {
+		// Wrapped, not cut: it is the explanation of an empty section.
+		infoLines = append(infoLines, strings.Split(ansi.Wordwrap(logsNote, max(width-2, 10), ""), "\n")...)
 	} else {
 		infoLines = append(infoLines, "No correlated logs")
 	}
@@ -1008,7 +1051,7 @@ func traceDetailLines(traceID string, spans []spanDetail, logs []logEntry, width
 // title, the summary line, a blank, and "Spans:".
 const traceDetailHeaderRows = 4
 
-func renderTraceDetail(traceID string, spans []spanDetail, logs []logEntry, height, width, scrollOffset, cursor int) string {
+func renderTraceDetail(traceID string, spans []spanDetail, logs []logEntry, logsNote string, height, width, scrollOffset, cursor int) string {
 	if height <= 0 || width <= 0 {
 		return logStyle.Render("Invalid terminal dimensions")
 	}
@@ -1017,7 +1060,7 @@ func renderTraceDetail(traceID string, spans []spanDetail, logs []logEntry, heig
 		return logStyle.Render("No trace selected")
 	}
 
-	allLines := traceDetailLines(traceID, spans, logs, width, cursor)
+	allLines := traceDetailLines(traceID, spans, logs, logsNote, width, cursor)
 	infoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
 
 	// Handle scrolling with padding
@@ -1987,6 +2030,7 @@ func (m model) updateNormalMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Clear previous trace data
 			m.traceSpans = []spanDetail{}
 			m.traceLogs = []logEntry{}
+			m.traceLogsNote = ""
 			// Fetch trace details
 			return m, tea.Batch(
 				fetchTraceSpans(m.apiURL, m.selectedTraceID),
@@ -2145,4 +2189,26 @@ func TuiCommandWithManager(args []string, manager *process.Manager) {
 		fmt.Fprintf(os.Stderr, "Any crash report is in %s\n", crashLogName)
 		os.Exit(1)
 	}
+}
+
+// spansDays reports whether the traces and restarts fall on more than one day,
+// in their own offsets, as they are shown.
+func spansDays(traces []traceSummary, restarts []time.Time) bool {
+	day := ""
+	for _, t := range append(traceTimes(traces), restarts...) {
+		d := t.Format("2006-01-02")
+		if day != "" && d != day {
+			return true
+		}
+		day = d
+	}
+	return false
+}
+
+func traceTimes(traces []traceSummary) []time.Time {
+	out := make([]time.Time, len(traces))
+	for i, t := range traces {
+		out[i] = t.StartTime
+	}
+	return out
 }

@@ -94,8 +94,8 @@ func TestRenderPathSurvivesEveryWidth(t *testing.T) {
 					t.Fatalf("trace views (width=%d) panicked: %v", w, r)
 				}
 			}()
-			renderTraceList(traces, 10, w, 0, 0)
-			renderTraceDetail("abcdef1234567890", spans, logs, 10, w, 0, 0)
+			renderTraceList(traces, nil, 10, w, 0, 0)
+			renderTraceDetail("abcdef1234567890", spans, logs, "", 10, w, 0, 0)
 		}()
 	}
 

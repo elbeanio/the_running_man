@@ -42,7 +42,7 @@ func TestTracesShrinkingUnderTheSelection(t *testing.T) {
 	m.traces = []traceSummary{{TraceID: "a"}, {TraceID: "b"}, {TraceID: "c"}}
 	m.selectedTraceIdx = 2
 
-	next, _ := m.Update(tracesMsg([]traceSummary{{TraceID: "a"}}))
+	next, _ := m.Update(tracesMsg{traces: []traceSummary{{TraceID: "a"}}})
 	got := next.(model)
 
 	if got.lastPanic != "" {
