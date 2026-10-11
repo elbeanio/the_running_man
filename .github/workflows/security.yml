@@ -32,7 +32,11 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.25'
+        go-version: '1.27'
+        # The latest 1.27 patch, not whatever the runner has cached: govulncheck
+        # checks the standard library of the Go it runs on, and an old patch
+        # release fails it on advisories already fixed.
+        check-latest: true
         cache-dependency-path: go.sum
     
     - name: Install dependencies
@@ -48,7 +52,11 @@ jobs:
       with:
         results_file: results.sarif
         results_format: sarif
-        publish_results: true
+        # Off: publishing signs the results through OIDC, which needs
+        # id-token: write and a job holding nothing but Scorecard's approved
+        # steps. This job runs govulncheck too, so signing failed with
+        # "expired_token" and the job went red with no vulnerability found.
+        publish_results: false
       env:
         GITHUB_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -110,7 +118,8 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.25'
+        go-version: '1.27'
+        check-latest: true
     
     - name: Install go-licenses
       run: go install github.com/google/go-licenses@latest

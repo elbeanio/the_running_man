@@ -39,7 +39,7 @@ One copy of the stack. One record of what it did. Visible to everyone working on
 go install github.com/elbeanio/the_running_man/cmd/running-man@latest
 ```
 
-Requires Go 1.25+ on Linux or macOS. Windows is not supported: process supervision uses
+Requires Go 1.27+ on Linux or macOS. Windows is not supported: process supervision uses
 `Setsid`, `syscall.Kill` and `ps`/`lsof`.
 
 ## Quick start

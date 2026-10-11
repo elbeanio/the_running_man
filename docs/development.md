@@ -10,7 +10,7 @@ This guide covers how to build, test, and contribute to The Running Man.
 
 ### Prerequisites
 
-- **Go 1.21+** - [Download Go](https://go.dev/dl/)
+- **Go 1.27+** - [Download Go](https://go.dev/dl/)
 - **Git** - For version control
 - **Docker** (optional) - For Docker integration testing
 
