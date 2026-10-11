@@ -28,8 +28,13 @@ const (
 	// Tracing defaults
 	DefaultTracingEnabled = true
 	DefaultTracingPort    = 4318
-	DefaultMaxSpans       = 10000
-	DefaultMaxSpanAge     = 30 * time.Minute
+	DefaultMaxSpans       = 50000
+	DefaultMaxSpanAge     = 24 * time.Hour
+	// Spans are kept far longer than logs, because a trace is compared with
+	// another from hours later to confirm a fix, where a log line is read while
+	// it is current. Bytes is the binding limit: one LLM span can be 400 KB,
+	// so a count alone does not bound memory.
+	DefaultMaxSpanBytes = 256 * 1024 * 1024 // 256MB
 
 	// socketDirName and socketFileName mirror internal/instance, for the
 	// api_port rejection message. Duplicated rather than imported to keep
@@ -87,12 +92,15 @@ type TracingConfig struct {
 	// OTLP HTTP receiver port (default: 4318)
 	Port int `yaml:"port,omitempty"`
 
-	// Maximum number of spans to keep in memory (default: 10000)
+	// Maximum number of spans to keep in memory (default: 50000)
 	MaxSpans int `yaml:"max_spans,omitempty"`
 
 	// Maximum age of spans to keep (e.g., "30m", "1h", "24h")
-	// Default: 30m
+	// Default: 24h
 	MaxSpanAge string `yaml:"max_span_age,omitempty"`
+
+	// Maximum total bytes of spans to keep (default: 268435456 = 256MB)
+	MaxSpanBytes int64 `yaml:"max_span_bytes,omitempty"`
 }
 
 // ProcessConfig represents a single process configuration in YAML.
@@ -308,6 +316,10 @@ func (tc *TracingConfig) Validate() error {
 		return fmt.Errorf("max_spans cannot be negative, got %d", tc.MaxSpans)
 	}
 
+	if tc.MaxSpanBytes < 0 {
+		return fmt.Errorf("max_span_bytes cannot be negative, got %d", tc.MaxSpanBytes)
+	}
+
 	// Validate max_span_age duration if specified
 	if tc.MaxSpanAge != "" {
 		d, err := time.ParseDuration(tc.MaxSpanAge)
@@ -339,6 +351,14 @@ func (tc *TracingConfig) GetMaxSpans() int {
 		return DefaultMaxSpans
 	}
 	return tc.MaxSpans
+}
+
+// GetMaxSpanBytes returns the max span bytes or the default.
+func (tc *TracingConfig) GetMaxSpanBytes() int64 {
+	if tc.MaxSpanBytes == 0 {
+		return DefaultMaxSpanBytes
+	}
+	return tc.MaxSpanBytes
 }
 
 // GetMaxSpanAgeDuration returns the max span age duration or the default.

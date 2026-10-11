@@ -386,7 +386,7 @@ git push origin feature/new-feature
 ### Memory Usage
 
 - **Ring buffer**: Configurable size (default 50MB)
-- **Trace storage**: Configurable span count (default 10,000)
+- **Trace storage**: Configurable size (default 256MB, 50,000 spans, 24 hours)
 - **Process management**: Minimal overhead per process
 
 ### Optimization Tips

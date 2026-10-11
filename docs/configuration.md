@@ -48,8 +48,9 @@ shell: /bin/sh
 tracing:
   enabled: true
   port: 4318
-  max_spans: 10000
-  max_span_age: 30m
+  max_spans: 50000
+  max_span_age: 24h
+  max_span_bytes: 268435456
 ```
 
 ## Configuration Options
@@ -426,8 +427,18 @@ OpenTelemetry tracing configuration.
   4318 as well — Arize Phoenix, the OpenTelemetry Collector, Jaeger — so change this if one
   of them is already running. A conflict fails at startup rather than silently disabling
   tracing.
-- `max_spans` (integer): Maximum spans to store (default: `10000`)
-- `max_span_age` (duration): How long to keep spans (default: `30m`). Must be **positive**.
+- `max_spans` (integer): Maximum spans to store (default: `50000`)
+- `max_span_age` (duration): How long to keep spans (default: `24h`). Must be **positive**.
+  Far longer than log `retention`, because a trace is often compared with one from hours
+  later, to confirm a fix.
+- `max_span_bytes` (integer): Maximum total bytes of spans to keep (default: `268435456` =
+  256MB). Usually the limit that binds: a span from an LLM call, carrying the whole
+  conversation, can be hundreds of KB. A span is counted by the bytes of its strings (IDs,
+  names, attribute and event keys and values). A single span larger than the limit is
+  still kept, on its own.
+
+Whichever of the three limits binds first evicts the oldest spans. `/health` reports what
+is held against them under `traces`.
 
 **Example:**
 ```yaml
@@ -436,6 +447,7 @@ tracing:
   port: 4321  # If 4318 is occupied
   max_spans: 5000
   max_span_age: 1h
+  max_span_bytes: 104857600  # 100MB
 ```
 
 ## Environment variables Running Man reads

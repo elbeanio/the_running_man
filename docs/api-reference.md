@@ -131,7 +131,8 @@ curl --unix-socket "$SOCK" "http://localhost/errors?since=1h&context=5"
 
 ### GET /health
 
-System status and buffer statistics.
+System status, the instance's identity, and what the log buffer and span storage hold
+against their retention limits.
 
 **Example:**
 ```bash
@@ -142,33 +143,40 @@ curl --unix-socket "$SOCK" "http://localhost/health"
 ```json
 {
   "status": "ok",
-  "uptime": "2h30m",
+  "pid": 12345,
+  "project": "/home/dev/myapp",
+  "started": "2026-10-09T09:00:00Z",
+  "uptime": "2h30m0s",
+  "uptime_seconds": 9000,
+  "otlp_endpoint": "http://localhost:4318",
   "buffer": {
-    "entries": 1247,
-    "size_bytes": 524288,
-    "oldest": "2024-01-15T08:00:00Z"
+    "total_entries": 1247,
+    "total_bytes": 524288,
+    "max_entries": 10000,
+    "max_bytes": 52428800,
+    "max_age": "30m0s",
+    "oldest_entry": "2026-10-09T11:00:00Z",
+    "newest_entry": "2026-10-09T11:29:59Z"
   },
-  "tracing": {
-    "enabled": true,
-    "spans": 245,
-    "traces": 42
+  "traces": {
+    "total_spans": 1830,
+    "total_bytes": 41943040,
+    "max_spans": 50000,
+    "max_bytes": 268435456,
+    "max_age": "24h0m0s",
+    "oldest_span": "2026-10-09T09:01:12Z",
+    "newest_span": "2026-10-09T11:29:58Z"
   },
   "sources": [
-    {
-      "name": "backend",
-      "type": "process",
-      "status": "running",
-      "pid": 12345
-    },
-    {
-      "name": "postgres",
-      "type": "docker",
-      "status": "running",
-      "container_id": "abc123"
-    }
+    {"name": "backend", "entry_count": 1100, "last_seen": "2026-10-09T11:29:59Z"},
+    {"name": "running-man", "entry_count": 147, "last_seen": "2026-10-09T11:29:00Z"}
   ]
 }
 ```
+
+`traces` is absent when tracing is disabled. `oldest_span` and `newest_span` are when the
+spans arrived, which is what `max_age` is measured against, and are `null` when no spans
+are held.
 
 ---
 

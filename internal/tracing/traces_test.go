@@ -81,7 +81,7 @@ func TestSummarise_RootWithMissingParent(t *testing.T) {
 }
 
 func TestTraces_FiltersAndOrder(t *testing.T) {
-	st := NewSpanStorage(100, time.Hour)
+	st := NewSpanStorage(100, time.Hour, 1<<30)
 	for _, sp := range chatTurn() {
 		st.Add(sp)
 	}

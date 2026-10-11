@@ -253,7 +253,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	stats := s.buffer.Stats()
 	sources := s.buffer.GetSources()
 
-	s.writeJSON(w, map[string]interface{}{
+	health := map[string]interface{}{
 		"status": "ok",
 		// Identity, so a caller can verify *which* instance answered instead of
 		// assuming. A reply proving only that something is alive is what let a
@@ -274,7 +274,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"newest_entry":  stats.NewestEntry,
 		},
 		"sources": sources,
-	})
+	}
+	if s.traceStorage != nil {
+		ts := s.traceStorage.Stats()
+		health["traces"] = map[string]interface{}{
+			"total_spans": ts.TotalSpans,
+			"total_bytes": ts.TotalBytes,
+			"max_spans":   ts.MaxSpans,
+			"max_bytes":   ts.MaxBytes,
+			"max_age":     ts.MaxAge.String(),
+			"oldest_span": ts.OldestSpan,
+			"newest_span": ts.NewestSpan,
+		}
+	}
+	s.writeJSON(w, health)
 }
 
 func (s *Server) writeJSON(w http.ResponseWriter, data interface{}) {

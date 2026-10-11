@@ -34,6 +34,10 @@ type SpanEntry struct {
 	// legitimately starts long before it is exported. Unexported, so it is not
 	// part of the API.
 	receivedAt time.Time
+
+	// storedSize is size() when the span was stored, so eviction subtracts
+	// exactly what was added even if the span is changed afterwards.
+	storedSize int64
 }
 
 // MarshalJSON implements custom JSON marshaling for SpanEntry, rendering the
@@ -216,4 +220,27 @@ func timestampToTime(nanos uint64) time.Time {
 	seconds := int64(nanos / 1_000_000_000)
 	nanosRemainder := int64(nanos % 1_000_000_000)
 	return time.Unix(seconds, nanosRemainder)
+}
+
+// size is what a span counts against max_span_bytes: the bytes of its strings.
+// Go's own overhead (map buckets, slice headers) varies with the runtime and is
+// left out, as the ring buffer counts only a log line's text.
+func (s *SpanEntry) size() int64 {
+	n := len(s.TraceID) + len(s.SpanID) + len(s.ParentSpanID) + len(s.Name) + len(s.Kind) +
+		len(s.Status) + len(s.StatusCode) + len(s.ServiceName) + mapSize(s.Attributes)
+	for _, e := range s.Events {
+		n += len(e.Name) + mapSize(e.Attributes)
+	}
+	for _, l := range s.Links {
+		n += len(l.TraceID) + len(l.SpanID) + mapSize(l.Attributes)
+	}
+	return int64(n)
+}
+
+func mapSize(m map[string]string) int {
+	n := 0
+	for k, v := range m {
+		n += len(k) + len(v)
+	}
+	return n
 }

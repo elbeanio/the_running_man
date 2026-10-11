@@ -28,7 +28,7 @@ import (
 )
 
 func TestReceiver_StartStop(t *testing.T) {
-	storage := NewSpanStorage(100, time.Hour)
+	storage := NewSpanStorage(100, time.Hour, 1<<30)
 	receiver := NewReceiver(storage, nil, 0) // Port 0 for random port
 
 	// Start receiver
@@ -41,7 +41,7 @@ func TestReceiver_StartStop(t *testing.T) {
 }
 
 func TestReceiver_HealthEndpoint(t *testing.T) {
-	storage := NewSpanStorage(100, time.Hour)
+	storage := NewSpanStorage(100, time.Hour, 1<<30)
 	receiver := NewReceiver(storage, nil, 0)
 
 	err := receiver.Start()
@@ -55,7 +55,7 @@ func TestReceiver_HealthEndpoint(t *testing.T) {
 }
 
 func TestReceiver_HandleTraces_Protobuf(t *testing.T) {
-	storage := NewSpanStorage(100, time.Hour)
+	storage := NewSpanStorage(100, time.Hour, 1<<30)
 	receiver := NewReceiver(storage, nil, 0)
 
 	err := receiver.Start()
@@ -108,7 +108,7 @@ func TestReceiver_HandleTraces_Protobuf(t *testing.T) {
 }
 
 func TestReceiver_HandleTraces_JSON(t *testing.T) {
-	storage := NewSpanStorage(100, time.Hour)
+	storage := NewSpanStorage(100, time.Hour, 1<<30)
 	receiver := NewReceiver(storage, nil, 0)
 
 	err := receiver.Start()
@@ -164,7 +164,7 @@ func TestReceiver_HandleTraces_JSON(t *testing.T) {
 }
 
 func TestReceiver_ProcessTraceRequest(t *testing.T) {
-	storage := NewSpanStorage(100, time.Hour)
+	storage := NewSpanStorage(100, time.Hour, 1<<30)
 	receiver := NewReceiver(storage, nil, 0)
 
 	// Create a trace request with multiple spans
@@ -477,7 +477,7 @@ func (c *captureSink) Append(e *parser.LogEntry) { c.entries = append(c.entries,
 // entries carrying service, level and the correlating trace id.
 func TestReceiver_ProcessLogsRequest(t *testing.T) {
 	sink := &captureSink{}
-	receiver := NewReceiver(NewSpanStorage(100, time.Hour), sink, 0)
+	receiver := NewReceiver(NewSpanStorage(100, time.Hour, 1<<30), sink, 0)
 
 	req := &collectorlogsv1.ExportLogsServiceRequest{
 		ResourceLogs: []*logsv1.ResourceLogs{
@@ -580,7 +580,7 @@ func TestReceiver_StartFailsWhenPortIsTaken(t *testing.T) {
 
 	port := blocker.Addr().(*net.TCPAddr).Port
 
-	r := NewReceiver(NewSpanStorage(10, time.Minute), nil, port)
+	r := NewReceiver(NewSpanStorage(10, time.Minute, 1<<30), nil, port)
 	err = r.Start()
 
 	if err == nil {
@@ -597,7 +597,7 @@ func TestReceiver_StartFailsWhenPortIsTaken(t *testing.T) {
 }
 
 func TestReceiver_StartSucceedsOnAFreePort(t *testing.T) {
-	r := NewReceiver(NewSpanStorage(10, time.Minute), nil, freePort(t))
+	r := NewReceiver(NewSpanStorage(10, time.Minute, 1<<30), nil, freePort(t))
 	if err := r.Start(); err != nil {
 		t.Fatalf("Start() on a free port: %v", err)
 	}
@@ -625,7 +625,7 @@ func TestReceiver_WaitForReadyRejectsAForeignServer(t *testing.T) {
 	}
 
 	// A receiver that was never started, pointed at the impostor's port.
-	r := NewReceiver(NewSpanStorage(10, time.Minute), nil, port)
+	r := NewReceiver(NewSpanStorage(10, time.Minute, 1<<30), nil, port)
 
 	err = r.WaitForReady(600 * time.Millisecond)
 	if err == nil {
@@ -658,7 +658,7 @@ func TestStartOnFreePort_MovesAsideWhenBusy(t *testing.T) {
 	defer blocker.Close()
 	busy := blocker.Addr().(*net.TCPAddr).Port
 
-	r := NewReceiver(NewSpanStorage(10, time.Minute), nil, busy)
+	r := NewReceiver(NewSpanStorage(10, time.Minute, 1<<30), nil, busy)
 	if err := r.StartOnFreePort(5); err != nil {
 		t.Fatalf("StartOnFreePort should have found a free port: %v", err)
 	}
@@ -687,7 +687,7 @@ func TestStartOnFreePort_GivesUpWithTheRange(t *testing.T) {
 	}
 	defer second.Close()
 
-	r := NewReceiver(NewSpanStorage(10, time.Minute), nil, busy)
+	r := NewReceiver(NewSpanStorage(10, time.Minute, 1<<30), nil, busy)
 	err = r.StartOnFreePort(2)
 	if err == nil {
 		r.Stop(context.Background())

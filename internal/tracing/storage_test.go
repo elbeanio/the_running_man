@@ -8,7 +8,7 @@ import (
 )
 
 func TestSpanStorage_AddAndTraces(t *testing.T) {
-	storage := NewSpanStorage(100, time.Hour)
+	storage := NewSpanStorage(100, time.Hour, 1<<30)
 
 	// Create test spans
 	span1 := &SpanEntry{
@@ -61,7 +61,7 @@ func allSpans(s *SpanStorage) []*SpanEntry {
 }
 
 func TestSpanStorage_GetTrace(t *testing.T) {
-	storage := NewSpanStorage(100, time.Hour)
+	storage := NewSpanStorage(100, time.Hour, 1<<30)
 
 	// Create spans for the same trace
 	span1 := &SpanEntry{
@@ -110,7 +110,7 @@ func TestSpanStorage_EvictionByAge(t *testing.T) {
 	// the span gone on the next Add -- which is how any span longer than the
 	// retention window was discarded the moment it was exported. See
 	// retention_test.go.
-	storage := NewSpanStorage(100, 50*time.Millisecond)
+	storage := NewSpanStorage(100, 50*time.Millisecond, 1<<30)
 
 	storage.Add(&SpanEntry{TraceID: "old", SpanID: "span1", Name: "old-operation",
 		ServiceName: "service1", StartTime: time.Now()})
@@ -125,7 +125,7 @@ func TestSpanStorage_EvictionByAge(t *testing.T) {
 }
 
 func TestSpanStorage_EvictionBySize(t *testing.T) {
-	storage := NewSpanStorage(2, time.Hour) // Max 2 spans
+	storage := NewSpanStorage(2, time.Hour, 1<<30) // Max 2 spans
 
 	// Add 3 spans
 	for i := 0; i < 3; i++ {

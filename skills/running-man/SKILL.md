@@ -163,6 +163,10 @@ curl -s --unix-socket "$SOCK" http://localhost/traces/TRACE_ID/spans/SPAN_ID
 curl -s --unix-socket "$SOCK" http://localhost/traces/TRACE_ID/logs
 ```
 
+Traces are kept for 24 hours by default (logs for 30 minutes), so a trace from before a
+fix is usually still there to compare with one from after it: find both with
+`/traces?since=...`. `traces` in `/health` shows what is held against the limits.
+
 ## Notes
 
 - **Discovering the API:** `curl -s --unix-socket "$SOCK" http://localhost/` lists every
