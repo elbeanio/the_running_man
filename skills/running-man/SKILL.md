@@ -163,9 +163,13 @@ curl -s --unix-socket "$SOCK" http://localhost/traces/TRACE_ID/spans/SPAN_ID
 curl -s --unix-socket "$SOCK" http://localhost/traces/TRACE_ID/logs
 ```
 
-Traces are kept for 24 hours by default (logs for 30 minutes), so a trace from before a
-fix is usually still there to compare with one from after it: find both with
-`/traces?since=...`. `traces` in `/health` shows what is held against the limits.
+Traces are kept for 24 hours by default, on disk, so they survive Running Man restarting;
+logs are kept for 30 minutes, in memory, and do not. A trace from before a fix is usually
+still there to compare with one from after it: find both with `/traces?since=...`.
+`restarts` in that response says when Running Man restarted, and a trace from before a
+restart has no correlated logs -- `/traces/TRACE_ID/logs` says so in a `note`. Just after a
+restart, `traces.loading` in `/health` is `true` while older traces are still being read
+back.
 
 ## Notes
 

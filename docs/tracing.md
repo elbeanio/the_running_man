@@ -290,7 +290,42 @@ tracing:
 
   # Maximum total bytes of spans (default: 268435456 = 256MB)
   max_span_bytes: 104857600
+
+  # Keep spans on disk, so traces survive a restart (default: true)
+  persist: true
 ```
+
+### Traces across restarts
+
+Spans are written to `.running-man/traces/` as they arrive, and read back when Running
+Man starts, so a trace from before a fix is still there to compare with one from after
+it, even if Running Man was restarted in between. Logs are not kept this way: they serve
+the app that is running now.
+
+- **What is on disk:** JSON-lines files ("segments"), one started every hour or at 16MB,
+  each beginning with a header that names the format and when its Running Man started.
+  The directory is `0700` and the files `0600`.
+- **Never committed:** Running Man writes `.running-man/.gitignore` containing `*` on every
+  start, whatever the project's own `.gitignore` says. Span contents include prompts, SQL
+  and data.
+- **Expiry:** the same limits as in memory. A segment is deleted once its newest span is
+  past `max_span_age`, and the oldest go first while the total is past `max_span_bytes`.
+  Expiry runs on startup, whenever a segment is started, and every minute, so nothing
+  builds up on an idle instance. Whole segments are deleted, so a span can outlive
+  `max_span_age` by up to an hour.
+- **Loading:** in the background, so processes start at once. Until `traces.loading` in
+  `/health` is `false`, an older trace may not be listed yet.
+- **Unreadable lines** -- half a line from a crash mid-write, or a format a later version
+  wrote -- are skipped and counted in `traces.skipped_lines` in `/health`. They never stop
+  Running Man starting.
+- **If the disk fails:** the error is reported once in the running-man tab, and capture
+  carries on in memory.
+- **Restarts:** `/traces` lists them under `restarts`, and the TUI draws a line in the trace
+  list at each. A trace from before a restart has lost its correlated logs;
+  `/traces/{id}/logs` says so in a `note`, and the trace detail view shows it.
+
+To start afresh, stop Running Man and delete `.running-man/traces/`. To keep nothing on
+disk, set `persist: false`.
 
 ### Command Line Flags
 
@@ -458,8 +493,10 @@ raise `max_span_bytes`.
   each call carries every message so far.
 - One agent turn with several LLM and tool calls: 0.5 to 3MB.
 
-Spans are held in memory, so `max_span_bytes` is what bounds memory: by default 256MB,
-which is dozens of agent turns. A service sending many small spans hits `max_spans` first.
+Spans are held in memory as well as on disk, so `max_span_bytes` bounds both: by default
+256MB, which is dozens of agent turns. On disk the JSON takes somewhat more than the
+count, which measures only the spans' strings. A service sending many small spans hits
+`max_spans` first.
 
 **If you need more capacity:**
 ```yaml
@@ -476,8 +513,8 @@ tracing:
    - Supports JSON and Protobuf formats
    - Health endpoint for readiness checks
 
-2. **Trace Storage** (`internal/tracing/storage.go`)
-   - In-memory storage with configurable retention
+2. **Trace Storage** (`internal/tracing/storage.go`, `disk.go`)
+   - In memory, and on disk under `.running-man/traces/`, with configurable retention
    - Query capabilities by trace ID, service, status
    - Automatic correlation with logs
 

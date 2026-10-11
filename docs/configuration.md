@@ -436,9 +436,12 @@ OpenTelemetry tracing configuration.
   conversation, can be hundreds of KB. A span is counted by the bytes of its strings (IDs,
   names, attribute and event keys and values). A single span larger than the limit is
   still kept, on its own.
+- `persist` (boolean): Keep spans on disk, so traces survive a restart (default: `true`).
+  See [Traces across restarts](tracing.md#traces-across-restarts). Set `false` for a
+  project whose span contents (prompts, SQL, data) should not be written anywhere.
 
-Whichever of the three limits binds first evicts the oldest spans. `/health` reports what
-is held against them under `traces`.
+Whichever of the three limits binds first evicts the oldest spans, from memory and from
+disk alike. `/health` reports what is held against them under `traces`.
 
 **Example:**
 ```yaml

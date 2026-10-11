@@ -54,8 +54,13 @@ Two readings that were considered and rejected:
 - **Per-project, not machine-wide.** Running Man is a process runner scoped to one
   project directory. Anything wanting a machine-wide view of many projects is a
   different product.
-- **In-memory only.** Ring buffer, 30 minutes or 50MB by default. No database, no
-  persistence across restarts. The buffer outliving a crashed app is the feature.
+- **Logs in memory only; traces on disk, bounded.** Logs live in the ring buffer, 30
+  minutes or 50MB by default, and do not survive a restart: they serve the app that is
+  running now, and the buffer outliving a crashed app is the feature. Spans are kept on
+  disk under `.running-man/traces/`, 24 hours or 256MB by default, and do survive one:
+  a trace is the record of one request, and is compared with one from hours later to
+  confirm a fix. Different data for different purposes (decided 2026-10-09). Still no
+  database: segment files, read back on start.
 - **The developer must not lose visibility as a side effect of how a session starts.**
   Today this means the developer normally starts Running Man, since the TUI belongs to
   the starting process.
@@ -84,7 +89,9 @@ Two readings that were considered and rejected:
   chat window. Visibility is the whole scope.
 - **Production observability.** This is a local development tool. Not a monitoring
   product, not a hosted service, no multi-user concerns.
-- **Persistence or long-term analytics.** No historical storage, no trend analysis.
+- **Long-term storage or analytics.** No history beyond the retention limits, no trend
+  analysis. Keeping traces across a restart, for a day, is in scope; keeping them for
+  weeks, or querying across them, is not.
 - **MCP.** Removed deliberately (see phases). The scope was wrong: MCP wants a central
   dispatch server and this is a per-project runner. If MCP returns it will be against a
   differently shaped product.
@@ -104,8 +111,9 @@ internal/api/           REST query endpoints
 internal/config/        YAML config and auto-discovery
 ```
 
-Capture sources (processes, Docker containers, OTLP spans) all land in the ring buffer.
-The REST API and the TUI are both readers of that buffer.
+Capture sources (processes, Docker containers, OTLP log records) land in the ring buffer;
+OTLP spans land in span storage, which is also written to disk. The REST API and the TUI
+are both readers of the two.
 
 **The REST API is the agent-facing interface.** It is self-describing: `/` lists the
 endpoints and `/docs` serves OpenAPI. `/logs` takes `since`, `level`, `source`,

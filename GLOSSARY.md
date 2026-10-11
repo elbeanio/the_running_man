@@ -113,8 +113,9 @@ so the developer and the agent are looking at the same run.
 ## Storage
 
 - **Ring buffer** — the single in-memory circular store holding every entry from every
-  **source**. Oldest entries are evicted first. There is no database and nothing survives
-  an instance exiting; the buffer outliving a *crashed app* is the point.
+  **source**. Oldest entries are evicted first. There is no database and no entry survives
+  an instance exiting; the buffer outliving a *crashed app* is the point. Spans are not in
+  it: see **span storage**.
 - **Retention limits** — collectively, the bounds on what the ring buffer keeps: **max
   age**, **max entries**, **max bytes**. Configured under `limits:`. Use "retention
   limits" for the policy and the specific limit name for one of them — never "retention"
@@ -125,7 +126,13 @@ so the developer and the agent are looking at the same run.
   own retention limits: `tracing.max_span_age`, `max_spans` and `max_span_bytes`. Far
   longer by default than the ring buffer's (24 hours against 30 minutes), because a trace
   is compared with one from hours later to confirm a fix, where a log line is read while it
-  is current.
+  is current. Also written to disk (`tracing.persist`, on by default), so spans survive a
+  restart.
+- **Segment** — one file of saved spans under `.running-man/traces/`, written by one
+  instance and started afresh hourly or at 16MB. Retention limits delete whole segments,
+  so a span can outlive `max_span_age` by up to an hour.
+- **Restart** — in the trace list and `/traces`, the start of a later instance, among the
+  traces held. Traces from before it have lost their correlated logs.
 
 ## Tracing
 
