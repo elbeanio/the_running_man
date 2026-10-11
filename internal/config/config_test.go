@@ -593,3 +593,19 @@ func TestTracingConfig_MaxSpanBytes(t *testing.T) {
 		t.Errorf("unset max_span_bytes = %d, want the default %d", got, DefaultMaxSpanBytes)
 	}
 }
+
+// Persistence is on unless turned off: span contents on disk is the point of
+// the feature, and `persist: false` is for a project that does not want them
+// written anywhere.
+func TestTracingConfig_Persist(t *testing.T) {
+	if !(&TracingConfig{}).PersistEnabled() {
+		t.Error("persist unset should mean on")
+	}
+	var tc TracingConfig
+	if err := yaml.Unmarshal([]byte("persist: false\n"), &tc); err != nil {
+		t.Fatal(err)
+	}
+	if tc.PersistEnabled() {
+		t.Error("persist: false read as on")
+	}
+}

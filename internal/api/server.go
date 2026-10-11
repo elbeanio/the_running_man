@@ -277,7 +277,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.traceStorage != nil {
 		ts := s.traceStorage.Stats()
-		health["traces"] = map[string]interface{}{
+		block := map[string]interface{}{
 			"total_spans": ts.TotalSpans,
 			"total_bytes": ts.TotalBytes,
 			"max_spans":   ts.MaxSpans,
@@ -285,7 +285,17 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"max_age":     ts.MaxAge.String(),
 			"oldest_span": ts.OldestSpan,
 			"newest_span": ts.NewestSpan,
+			"persisted":   ts.Persisted,
 		}
+		if ts.Persisted {
+			block["dir"] = ts.Dir
+			block["disk_bytes"] = ts.DiskBytes
+			// Earlier runs' spans are read back in the background: until this
+			// is false, a trace missing from /traces may still be on its way.
+			block["loading"] = ts.Loading
+			block["skipped_lines"] = ts.SkippedLines
+		}
+		health["traces"] = block
 	}
 	s.writeJSON(w, health)
 }
@@ -636,6 +646,9 @@ func (s *Server) handleTraces(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, map[string]interface{}{
 		"traces": traces,
 		"count":  len(traces),
+		// When Running Man restarted, among the traces held: traces survive a
+		// restart, their logs do not.
+		"restarts": s.traceStorage.Restarts(),
 	})
 }
 
@@ -721,9 +734,15 @@ func (s *Server) handleTraceLogs(w http.ResponseWriter, r *http.Request, traceID
 	// Get logs for this trace from the buffer
 	logs := s.buffer.GetLogsByTraceID(traceID)
 
-	s.writeJSON(w, map[string]interface{}{
+	resp := map[string]interface{}{
 		"trace_id": traceID,
 		"logs":     logs,
 		"count":    len(logs),
-	})
+	}
+	// Spans are kept across a restart and logs are not, so an empty list here
+	// would read as "this trace logged nothing" when the logs are simply gone.
+	if s.traceStorage != nil && s.traceStorage.FromEarlierRun(traceID) {
+		resp["note"] = "This trace is from before Running Man restarted. Logs are not kept across a restart, so its correlated logs are gone."
+	}
+	s.writeJSON(w, resp)
 }

@@ -101,6 +101,10 @@ type TracingConfig struct {
 
 	// Maximum total bytes of spans to keep (default: 268435456 = 256MB)
 	MaxSpanBytes int64 `yaml:"max_span_bytes,omitempty"`
+
+	// Keep spans on disk under .running-man/traces/, so traces survive a
+	// restart (default: true)
+	Persist *bool `yaml:"persist,omitempty"`
 }
 
 // ProcessConfig represents a single process configuration in YAML.
@@ -372,6 +376,11 @@ func (tc *TracingConfig) GetMaxSpanAgeDuration() time.Duration {
 		return DefaultMaxSpanAge
 	}
 	return duration
+}
+
+// PersistEnabled returns whether spans are kept on disk. On unless set false.
+func (tc *TracingConfig) PersistEnabled() bool {
+	return tc.Persist == nil || *tc.Persist
 }
 
 // IsEnabled returns whether tracing is enabled.
