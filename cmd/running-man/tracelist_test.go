@@ -46,7 +46,7 @@ func TestTraceList_DrawsALineAtEachRestart(t *testing.T) {
 	traces := fixtureTraces() // 09:16:10, then 09:15:03
 	lines := listLines(traces, []time.Time{at("2026-10-04T09:15:30Z")}, 10, 0, 0)
 
-	newer, divider, older := indexOf(lines, "chat.turn"), indexOf(lines, "Running Man restarted 09:15"), indexOf(lines, "GET /things")
+	newer, divider, older := indexOf(lines, "chat.turn"), indexOf(lines, "Running Man restarted 09:15:30"), indexOf(lines, "GET /things")
 	if !(newer >= 0 && newer < divider && divider < older) {
 		t.Errorf("want the line between the two traces:\n%s", strings.Join(lines, "\n"))
 	}
@@ -56,7 +56,7 @@ func TestTraceList_DrawsALineAtEachRestart(t *testing.T) {
 // listed is from this run.
 func TestTraceList_RestartAfterEveryTrace(t *testing.T) {
 	lines := listLines(fixtureTraces(), []time.Time{at("2026-10-04T10:00:00Z")}, 10, 0, 0)
-	if d, first := indexOf(lines, "Running Man restarted 10:00"), indexOf(lines, "chat.turn"); d < 0 || d > first {
+	if d, first := indexOf(lines, "Running Man restarted 10:00:00"), indexOf(lines, "chat.turn"); d < 0 || d > first {
 		t.Errorf("want the line above the first trace:\n%s", strings.Join(lines, "\n"))
 	}
 }

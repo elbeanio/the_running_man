@@ -854,7 +854,7 @@ func renderTraceList(traces []traceSummary, restarts []time.Time, height, width,
 	rowOf := make([]int, len(traces))
 	dividerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	divider := func(at time.Time) {
-		label := " Running Man restarted " + at.Format(strings.TrimSuffix(clock, ":05")) + " "
+		label := " Running Man restarted " + at.Format(clock) + " "
 		allLines = append(allLines, dividerStyle.Render(truncate("──"+label+strings.Repeat("─", max(width-len(label)-2, 0)), width)))
 	}
 	// Restarts newest first, like the traces. Each is drawn above the newest
