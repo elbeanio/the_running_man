@@ -86,9 +86,18 @@ curl -s --unix-socket "$SOCK" 'http://localhost/logs?source=app-*&since=5m'
 curl -s --unix-socket "$SOCK" 'http://localhost/logs?level=error,warn&since=10m'
 ```
 
-Useful parameters on `/logs` and `/errors`: `since` (`30s`, `5m`, `1h`), `source`
-(comma-separated, globs allowed), `level`, `contains`, `exclude`, `limit` (default 1000,
-`limit=0` for everything).
+Parameters on `/logs`: `since` (`30s`, `5m`, `1h`, or a number of seconds), `source`
+(comma-separated, globs allowed), `level`, `contains` (matches the message or the raw
+line), `exclude` (source names, globs allowed), `limit` (default 1000, `limit=0` for
+everything). `/errors` takes only `since` and `limit`.
+
+**Your own requests are in the logs.** Every call you make to this API is recorded, so the
+developer can see what you asked for: source `running-man`, as one line such as
+`api GET /logs?since=5m 200 12.4 KB 3ms`, at `warn` when the answer was a 4xx or 5xx. A
+`/logs` query across every source returns your earlier calls among the results, and a
+`contains=` search can match the query you sent before. Add `exclude=running-man` to
+leave them out -- it also leaves out Running Man's own notices, but not a process's exit,
+which is recorded under the process's own name. `/errors` never includes them.
 
 **A process exiting non-zero is recorded by Running Man itself** — look for
 `Process "name" failed: exited with code N` in `/errors`. So `/errors` tells you something

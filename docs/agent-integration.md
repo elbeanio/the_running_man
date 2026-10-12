@@ -5,9 +5,9 @@
 ---
 
 Running Man exposes everything it captures over a **REST API**, which is the interface
-coding agents use. It is self-describing: `GET /` lists every endpoint and `/docs` serves
-interactive OpenAPI documentation, so an agent can discover the whole surface with one
-request and no prior knowledge.
+coding agents use. It is self-describing: `GET /` lists every endpoint and
+`/openapi.yaml` serves the full OpenAPI specification, so an agent can discover the whole
+surface with one request and no prior knowledge.
 
 There is deliberately no MCP server and no agent-facing CLI. An MCP server existed until
 it was removed: its scope was wrong for a per-project process runner, and the REST API
@@ -47,11 +47,11 @@ curl --unix-socket "$SOCK" http://localhost/health
 
 #### 1. Error Investigation
 ```bash
-# Recent errors with context
+# Recent errors (/errors takes only since and limit)
 curl --unix-socket "$SOCK" "http://localhost/errors?since=10m"
 
-# Search for specific error patterns
-curl --unix-socket "$SOCK" "http://localhost/logs?contains='connection failed'&since=15m"
+# Search for specific error patterns (URL-encode spaces)
+curl --unix-socket "$SOCK" "http://localhost/logs?contains=connection%20failed&since=15m"
 ```
 
 #### 2. Cross-Source Search
@@ -63,14 +63,24 @@ curl --unix-socket "$SOCK" "http://localhost/logs?source=app-*&since=5m"
 curl --unix-socket "$SOCK" "http://localhost/logs?source=api,worker,database&since=2m"
 ```
 
-#### 3. Trace-Log Correlation
+#### 3. Traces, a level at a time
 ```bash
-# Find traces with errors
+# Which trace? Summaries, newest first, no attributes
 curl --unix-socket "$SOCK" "http://localhost/traces?status=error&since=5m"
+
+# What happened in it? Every span, values cut at 1 KB and 8 KB a span
+curl --unix-socket "$SOCK" "http://localhost/traces/{trace_id}"
+
+# One span in full, nothing cut -- can be hundreds of KB
+curl --unix-socket "$SOCK" "http://localhost/traces/{trace_id}/spans/{span_id}"
 
 # Get all logs for a specific trace
 curl --unix-socket "$SOCK" "http://localhost/traces/{trace_id}/logs"
 ```
+
+Traces are kept for 24 hours and across restarts; logs are kept for 30 minutes and not
+across a restart. `/traces` lists `restarts`, and `/traces/{id}/logs` carries a `note` for
+a trace whose logs were lost to one. See [tracing.md](tracing.md).
 
 #### 4. Process Management
 ```bash
@@ -135,9 +145,18 @@ respond, the instance died without cleaning up and the file can be ignored.
 *which* instance answered rather than assuming. If `project` is not the directory being
 worked in, the answer belongs to something else.
 
+### Your own requests are logged
+
+Every request from outside Running Man is recorded in the `running-man` source, one line
+each -- `api GET /logs?since=5m 200 12.4 KB 3ms` -- so the developer can see what an agent
+is asking for and how much each answer costs it. Running Man's own TUI is not logged. An
+agent reading `/logs` across every source therefore sees its own earlier requests;
+`exclude=running-man` leaves them out, along with Running Man's other notices. `/errors`
+never includes them.
+
 ### API Features
 - **Glob pattern support**: Use `*` in source names (e.g., `app-*`)
-- **Flexible time filters**: `since` parameter accepts durations like "30s", "5m", "1h"
+- **Flexible time filters**: `since` accepts durations like "30s", "5m", "1h", or a number of seconds
 - **Multi-source queries**: Comma-separated source lists
 - **Trace correlation**: Automatic trace ID extraction from logs
 - **OpenAPI specification**: the full spec at `/openapi.yaml`
