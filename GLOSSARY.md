@@ -176,8 +176,9 @@ so the developer and the agent are looking at the same run.
 
 ## Interfaces
 
-- **REST API** — the query interface (default port 9000), and the agent-facing interface.
-  Self-describing: `/` lists endpoints, `/docs` serves OpenAPI. The only programmatic
+- **REST API** — the query interface, served on a Unix socket in the project, and the
+  agent-facing interface. Self-describing: `/` lists endpoints, `/openapi.yaml` serves the
+  OpenAPI specification. The only programmatic
   path — there is deliberately no agent-facing CLI.
 - **TUI** — the interactive terminal viewer, one tab per **source**, owned by the process
   that started the instance.

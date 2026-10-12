@@ -214,9 +214,9 @@ A report names the function, the error and the stack. If the file is absent, the
 TUI did not crash — the instance was stopped some other way, or the process was
 killed.
 
-The TUI no longer exits on a panic while drawing: it keeps the session, shows a
+The TUI no longer exits on a panic while drawing: it keeps running, shows a
 warning in the footer naming the crash log, and carries on. A panic while
-handling a message discards that message rather than the session.
+handling a message discards that message rather than ending the instance.
 
 ### The display is corrupted or garbled
 
@@ -233,7 +233,7 @@ gone blank.
   `build done`.
 - Running Man printing over its own frame. The OTLP receiver logged a line per
   request, so an instrumented application corrupted the display continuously.
-  Nothing but the TUI writes to the terminal during a session now.
+  Nothing but the TUI writes to the terminal while an instance runs now.
 
 If it still happens:
 
