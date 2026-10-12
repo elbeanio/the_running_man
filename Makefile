@@ -25,13 +25,13 @@ test-coverage:
 	@echo "Running tests with coverage..."
 	@go test ./... -cover -timeout $(TEST_TIMEOUT)
 
-# Run integration tests
+# Run the integration tests: the ones tagged `integration`, which use Docker and
+# real processes and signals. -count=1 because a cached pass says nothing about
+# the Docker daemon now. The phase scripts this used to run were deleted long ago.
+INTEGRATION_TIMEOUT ?= 5m
 test-integration:
-	@echo "Running Phase 1 integration tests..."
-	@./test_phase1.sh
-	@echo ""
-	@echo "Running Phase 2 integration tests..."
-	@./test_phase2.sh
+	@echo "Running integration tests..."
+	@go test -tags integration -count=1 ./... -timeout $(INTEGRATION_TIMEOUT)
 
 # Run tests with race detector
 test-race:
@@ -109,7 +109,7 @@ help:
 	@echo "  build            - Build the binary (default)"
 	@echo "  test             - Run unit tests"
 	@echo "  test-coverage    - Run tests with coverage"
-	@echo "  test-integration - Run integration test scripts"
+	@echo "  test-integration - Run the integration-tagged tests (needs Docker)"
 	@echo "  test-race        - Run tests with race detector"
 	@echo "  clean            - Remove build artifacts"
 	@echo "  deps             - Install/update dependencies"
