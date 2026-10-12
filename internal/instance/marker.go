@@ -141,6 +141,8 @@ func New(socketPath string, projectDir string, processes []Process) *Marker {
 			"all_endpoints":  curl("", "/"),
 			"api_spec":       curl("", "/openapi.yaml"),
 			"traces":         curl("", "/traces?since=10m"),
+			"one_trace":      curl("", "/traces/TRACE_ID"),
+			"one_span":       curl("", "/traces/TRACE_ID/spans/SPAN_ID"),
 			"logs_for_trace": curl("", "/traces/TRACE_ID/logs"),
 		},
 	}

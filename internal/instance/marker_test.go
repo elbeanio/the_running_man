@@ -253,3 +253,20 @@ func TestGitignore_IgnoresEverythingAndCleansUp(t *testing.T) {
 		t.Errorf("%s left behind with nothing in it but .gitignore", DirName)
 	}
 }
+
+// The traces API comes in three levels, and an agent reading the marker should
+// find all three: the hints stopped at the summaries and the logs, so the level
+// that says what happened in a trace had to be found some other way.
+func TestMarker_HintsCoverEveryTraceLevel(t *testing.T) {
+	m := New("/p/.running-man/api.sock", "/p", nil)
+	want := map[string]string{
+		"traces":    "/traces?since=10m",
+		"one_trace": "/traces/TRACE_ID",
+		"one_span":  "/traces/TRACE_ID/spans/SPAN_ID",
+	}
+	for key, path := range want {
+		if !strings.HasSuffix(strings.Trim(m.Hints[key], "'"), "http://localhost"+path) {
+			t.Errorf("hint %q = %q, want one ending in %s", key, m.Hints[key], path)
+		}
+	}
+}
