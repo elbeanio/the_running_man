@@ -174,7 +174,8 @@ func fixtureModel(width, height int) model {
 	}
 	m.selectedSource = 1 // backend
 	m.logs = fixtureLogs()
-	m.traces = fixtureTraces()
+	m.traces = oldestFirst() // as the TUI holds them, opened on the newest
+	m.selectedTraceIdx = len(m.traces) - 1
 	m.showTraceIDs = true
 	return m
 }

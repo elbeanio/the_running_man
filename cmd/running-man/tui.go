@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -641,22 +642,34 @@ func (m model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tracesMsg:
-		// Keep the selection on the same trace. Newest come first, so a new
-		// trace arriving moved every index down one, and the highlight
-		// silently landed on a different trace.
-		selected := ""
+		// The API lists newest first, so an agent's ?limit=N gets the latest.
+		// The TUI lists oldest first, down the screen, like every log tab.
+		traces, restarts := slices.Clone(msg.traces), slices.Clone(msg.restarts)
+		slices.Reverse(traces)
+		slices.Reverse(restarts)
+
+		// On the newest trace -- where the list opens -- the selection follows
+		// new ones, as a log tab follows its tail. Anywhere else it stays on
+		// its trace, and the window moves with it: traces aging out at the top
+		// shift every index up.
+		following := len(m.traces) == 0 || m.selectedTraceIdx >= len(m.traces)-1
+		selected, was := "", m.selectedTraceIdx
 		if t, ok := m.selectedTrace(); ok {
 			selected = t.TraceID
 		}
-		m.traces, m.traceRestarts = msg.traces, msg.restarts
-		for i, t := range m.traces {
-			if t.TraceID == selected {
-				m.selectedTraceIdx = i
-				break
+		m.traces, m.traceRestarts = traces, restarts
+		if following {
+			m.selectedTraceIdx = len(m.traces) - 1
+			m.traceScrollOffset = max(len(m.traces)-(m.pageSize()-1), 0) // less the header row
+		} else {
+			for i, t := range m.traces {
+				if t.TraceID == selected {
+					m.selectedTraceIdx = i
+					break
+				}
 			}
+			m.traceScrollOffset = max(m.traceScrollOffset+m.selectedTraceIdx-was, 0)
 		}
-		// Reset trace scroll offset
-		m.traceScrollOffset = 0
 		// Same hazard as the sources list: spans age out past max_span_age, so
 		// this list shrinks on its own and the selection can be left past the
 		// end.
@@ -857,12 +870,12 @@ func renderTraceList(traces []traceSummary, restarts []time.Time, height, width,
 		label := " Running Man restarted " + at.Format(clock) + " "
 		allLines = append(allLines, dividerStyle.Render(truncate("──"+label+strings.Repeat("─", max(width-len(label)-2, 0)), width)))
 	}
-	// Restarts newest first, like the traces. Each is drawn above the newest
-	// trace that began before it; one newer than every trace goes at the top.
+	// Restarts oldest first, like the traces. Each is drawn above the first
+	// trace that began after it; one newer than every trace goes at the bottom.
 	ri := 0
 
 	for i, trace := range traces {
-		for ri < len(restarts) && !restarts[ri].Before(trace.StartTime) {
+		for ri < len(restarts) && restarts[ri].Before(trace.StartTime) {
 			divider(restarts[ri])
 			ri++
 		}
@@ -892,6 +905,9 @@ func renderTraceList(traces []traceSummary, restarts []time.Time, height, width,
 		}
 		allLines = append(allLines, lineStyle.Render(line))
 	}
+	for ; ri < len(restarts); ri++ {
+		divider(restarts[ri])
+	}
 
 	// Handle scrolling with padding
 	totalLines := len(allLines)
@@ -914,33 +930,35 @@ func renderTraceList(traces []traceSummary, restarts []time.Time, height, width,
 		return padLines(allLines, height)
 	}
 
-	// Calculate start index based on scrollOffset, a trace index. Mapped to
-	// its line, less one, which is where it pointed before restart lines took
-	// rows of their own. Then moved down if that leaves the selection below
-	// the window: restart lines above it can push it off the bottom.
+	// The header stays put and only the rows below it scroll: the list opens
+	// on the newest trace, at the bottom, so it usually opens scrolled.
+	body, rows := allLines[1:], height-1
+	if rows < 1 {
+		return padLines(allLines[:1], height)
+	}
+	for i := range rowOf {
+		rowOf[i]-- // now an index into body
+	}
+
+	// Start at scrollOffset, a trace index, mapped to its row: restart lines
+	// take rows of their own. Then moved so the selection is in view, which
+	// the restart lines can otherwise push out of it.
 	startIdx := 0
 	if scrollOffset > 0 && scrollOffset < len(rowOf) {
-		startIdx = rowOf[scrollOffset] - 1
+		startIdx = rowOf[scrollOffset]
 	}
-	if selectedIdx >= 0 && selectedIdx < len(rowOf) && rowOf[selectedIdx] >= startIdx+height {
-		startIdx = rowOf[selectedIdx] - height + 1
-	}
-	endIdx := startIdx + height
-
-	// Clamp to valid ranges
-	if startIdx < 0 {
-		startIdx = 0
-		endIdx = height
-	}
-	if endIdx > totalLines {
-		endIdx = totalLines
-		startIdx = endIdx - height
-		if startIdx < 0 {
-			startIdx = 0
+	if selectedIdx >= 0 && selectedIdx < len(rowOf) {
+		if rowOf[selectedIdx] >= startIdx+rows {
+			startIdx = rowOf[selectedIdx] - rows + 1
+		}
+		if rowOf[selectedIdx] < startIdx {
+			startIdx = rowOf[selectedIdx]
 		}
 	}
+	startIdx = max(min(startIdx, len(body)-rows), 0)
+	endIdx := min(startIdx+rows, len(body))
 
-	return padLines(allLines[startIdx:endIdx], height)
+	return padLines(append([]string{allLines[0]}, body[startIdx:endIdx]...), height)
 }
 
 // traceDetailMaxScroll is the furthest the trace detail view can scroll: its
