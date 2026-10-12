@@ -18,7 +18,13 @@ Running Man automatically searches for configuration files in this order:
 
 There is no user-level configuration file.
 
-Unknown keys are ignored without a warning, so a misspelt key silently has no effect.
+An unknown key is an error at startup, naming the key and its line -- a misspelt key, or one
+from another tool, would otherwise silently do nothing:
+
+```
+Error loading config: failed to parse config file ./running-man.yml: yaml: unmarshal errors:
+  line 4: field shell not found in type config.ProcessConfig
+```
 
 ### Example Configuration
 
@@ -358,9 +364,8 @@ gets one under the temp directory instead; `.running-man/instance.json` records 
 [Network exposure](api-reference.md#network-exposure).
 
 `api_port` was removed. A config that still sets it is **rejected at startup** with a
-message naming the replacement, rather than ignored — YAML parsing silently drops unknown
-keys, and quietly disregarding it would leave you believing you had moved a port that no
-longer exists.
+message naming the replacement, rather than the generic unknown-key error: quietly
+disregarding it would leave you believing you had moved a port that no longer exists.
 
 ### Log Retention
 

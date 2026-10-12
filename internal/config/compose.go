@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"reflect"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -90,6 +92,11 @@ func (d *DockerComposeConfig) UnmarshalYAML(value *yaml.Node) error {
 		// A distinct type avoids recursing into this method.
 		type raw DockerComposeConfig
 		var r raw
+		// Node.Decode does not carry the file decoder's KnownFields, so the
+		// keys are checked here, or this mapping alone would ignore typos.
+		if err := knownKeys(value, reflect.TypeOf(r)); err != nil {
+			return err
+		}
 		if err := value.Decode(&r); err != nil {
 			return fmt.Errorf("docker_compose: %w", err)
 		}
@@ -202,4 +209,45 @@ func (d *DockerComposeConfig) ExpandEnv() {
 	}
 	d.ProjectName = expandEnv(d.ProjectName)
 	d.EnvFile = expandEnv(d.EnvFile)
+}
+
+// knownKeys reports the first key in a mapping, at any depth, that t has no
+// yaml field for -- in the words and with the line yaml.v3's KnownFields uses.
+func knownKeys(node *yaml.Node, t reflect.Type) error {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch {
+	case node.Kind == yaml.MappingNode && t.Kind() == reflect.Struct:
+		fields := map[string]reflect.Type{}
+		for i := range t.NumField() {
+			name, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ",")
+			if name != "" && name != "-" {
+				fields[name] = t.Field(i).Type
+			}
+		}
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			key, val := node.Content[i], node.Content[i+1]
+			ft, ok := fields[key.Value]
+			if !ok {
+				return fmt.Errorf("line %d: field %s not found in type %s", key.Line, key.Value, t.Name())
+			}
+			if err := knownKeys(val, ft); err != nil {
+				return err
+			}
+		}
+	case node.Kind == yaml.MappingNode && t.Kind() == reflect.Map:
+		for i := 1; i < len(node.Content); i += 2 {
+			if err := knownKeys(node.Content[i], t.Elem()); err != nil {
+				return err
+			}
+		}
+	case node.Kind == yaml.SequenceNode && t.Kind() == reflect.Slice:
+		for _, item := range node.Content {
+			if err := knownKeys(item, t.Elem()); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

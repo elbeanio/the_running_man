@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -239,7 +240,7 @@ func main() {
 	case "tui":
 		TuiCommand(os.Args[2:])
 	case "version":
-		fmt.Println("The Running Man v0.1.0 (Phase 1)")
+		fmt.Println("The Running Man " + buildVersion(debug.ReadBuildInfo))
 		os.Exit(0)
 	case "help", "--help", "-h":
 		printUsage()
