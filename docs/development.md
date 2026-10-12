@@ -27,9 +27,6 @@ cd the_running_man
 # Build for current platform
 go build -o running-man ./cmd/running-man
 
-# Build with version information
-go build -ldflags "-X main.version=$(git describe --tags)" -o running-man ./cmd/running-man
-
 # Install to $GOPATH/bin
 go install ./cmd/running-man
 ```
@@ -125,16 +122,20 @@ dlv debug ./cmd/running-man -- run --process "python app.py"
 the_running_man/
 ├── cmd/running-man/          # CLI entry point
 │   ├── main.go              # Command parsing, orchestration
-│   └── tui.go               # Bubble Tea TUI viewer
+│   ├── compose.go           # Offering to start a Compose stack
+│   └── tui*.go              # Bubble Tea TUI: layout, startup screen, traces, text
 │
 ├── internal/                # Core packages
-│   ├── api/                # HTTP server, REST endpoints
-│   ├── config/             # YAML schema, loading, validation
-│   ├── docker/             # Compose parsing, log streaming
+│   ├── api/                # HTTP server on a Unix socket, REST endpoints, call log
+│   ├── config/             # YAML schema, loading, validation, depends_on
+│   ├── docker/             # Compose parsing and commands, log streaming, readiness
+│   ├── health/             # Healthchecks for depends_on
+│   ├── instance/           # The instance marker and .running-man/.gitignore
 │   ├── parser/             # Format detection, extraction
-│   ├── process/            # Wrapper, manager, shell execution
+│   ├── process/            # Wrapper, manager, startup order, ports
 │   ├── storage/            # Ring buffer implementation
-│   └── tracing/            # OTEL receiver, trace storage
+│   ├── termout/            # Terminal output while the TUI owns the screen
+│   └── tracing/            # OTLP receiver, span storage, disk segments, traces API
 │
 ├── docs/                   # Documentation
 ├── running-man.yml         # Example configuration
@@ -144,30 +145,35 @@ the_running_man/
 ### Key Packages
 
 #### `internal/api`
-- **server.go** - HTTP server implementation
-- **handlers.go** - REST API handlers
+- **server.go** - Routes and REST API handlers
+- **socket.go** - Serving on the project's Unix socket
+- **calllog.go** - Logging external agents' API calls to the running-man source
 
 #### `internal/tracing`
 - **receiver.go** - OTLP HTTP receiver
-- **storage.go** - Span storage and querying
+- **storage.go** - Span storage and its retention limits
+- **disk.go** - Spans saved to `.running-man/traces/`, read back on start
+- **traces.go** - Trace summaries, trimming and lookup for the API
 - **env.go** - Environment variable injection
 
 #### `internal/process`
 - **manager.go** - Process lifecycle management
 - **wrapper.go** - Process execution and output capture
-- **config.go** - Process configuration
+- **startup.go** - Starting processes in dependency order
 
 #### `internal/parser`
-- **parser.go** - Log format detection
-- **formats/** - Specific format parsers (python, json, plain)
+- **parser.go** - `MultiParser`: per-stream state, and choosing a format per line
+- **json.go**, **plaintext.go**, **python.go** - The format parsers (Python tracebacks
+  are grouped across lines)
 
 ## Adding New Features
 
 ### Adding a New API Endpoint
 
-1. **Add route** in `internal/api/server.go`:
+1. **Add route** in `routes()` in `internal/api/server.go`, and an entry in the endpoint
+   list `handleRoot` serves:
 ```go
-router.Get("/new-endpoint", s.handleNewEndpoint)
+mux.HandleFunc("/new-endpoint", s.handleNewEndpoint)
 ```
 
 2. **Implement handler**:
@@ -181,27 +187,19 @@ func (s *Server) handleNewEndpoint(w http.ResponseWriter, r *http.Request) {
 
 3. **Add tests** in `internal/api/server_test.go`.
 
+4. **Document it** in `docs/api-reference.md` and `docs/openapi.yaml`, then re-sync the
+   copy the server embeds:
+```bash
+go generate ./internal/api
+```
+
 ### Adding a New Log Parser
 
-1. **Create parser** in `internal/parser/formats/`:
-```go
-package formats
-
-type NewFormatParser struct{}
-
-func (p *NewFormatParser) Parse(line string, timestamp time.Time) *storage.LogEntry {
-    // Parse logic
-}
-```
-
-2. **Register parser** in `internal/parser/parser.go`:
-```go
-func NewMultiParser() *MultiParser {
-    p := &MultiParser{}
-    p.Register(&formats.NewFormatParser{})
-    return p
-}
-```
+The parsers are plain types in `internal/parser` -- `JSONParser`, `PlainTextParser`, and
+the Python traceback grouping -- and `MultiParser` in `parser.go` decides which applies to
+each line, keeping per-stream state for multi-line entries. A new format is a new parser
+type there, called from `MultiParser.parse`, returning `*parser.LogEntry`. Tests sit
+alongside, in `internal/parser/*_test.go`.
 
 ## Code Style
 
@@ -214,8 +212,8 @@ go fmt ./...
 # Run go vet for static analysis
 go vet ./...
 
-# Run staticcheck for additional checks
-staticcheck ./...
+# Lint: golangci-lint v2, which runs staticcheck among others (as CI does)
+make lint
 ```
 
 ### Naming Conventions
@@ -252,10 +250,13 @@ go mod tidy
 
 ### Current Dependencies
 
-- **go.opentelemetry.io/proto/otlp** - OpenTelemetry protobufs
-- **github.com/docker/docker** - Docker client
-- **github.com/charmbracelet/bubbletea** - TUI framework
+- **go.opentelemetry.io/proto/otlp**, **google.golang.org/protobuf** - OTLP messages
+- **github.com/moby/moby/client**, **github.com/moby/moby/api** - Docker client
+- **github.com/charmbracelet/bubbletea**, **bubbles**, **lipgloss**, **x/ansi** - TUI
 - **gopkg.in/yaml.v3** - YAML parsing
+- **github.com/kballard/go-shellquote** - Splitting `--process` commands
+- **github.com/mattn/go-isatty** - Terminal detection
+- **github.com/stretchr/testify** - Tests
 
 ## Debugging
 
@@ -284,9 +285,9 @@ running-man run --tracing-port 4321
 
 ### Debug Logging
 
-Enable debug logging with environment variable:
+Enable debug logging with an environment variable:
 ```bash
-./running-man run --process "python app.py"
+RUNNING_MAN_DEBUG=1 ./running-man run --process "python app.py"
 ```
 
 Debug output includes:
@@ -307,33 +308,21 @@ The Running Man uses semantic versioning: `MAJOR.MINOR.PATCH`
 
 ### Creating a Release
 
-1. **Update version** in code if needed
-2. **Run tests**:
+No binaries are built or published: a release is a `v*` tag, and the SBOM workflow
+(`.github/workflows/sbom.yml`) attaches software bills of materials to it. Users install
+with `go install` or build from source. The version `running-man version` prints is a
+string in `cmd/running-man/main.go`, updated by hand.
+
+1. **Run the gates**:
 ```bash
-go test ./...
+make test && make test-race && make lint
 go test -tags=integration ./...
 ```
 
-3. **Build binaries**:
-```bash
-./scripts/build-release.sh
-```
+2. **Update the version string** in `cmd/running-man/main.go`, and the documentation if
+   needed.
 
-4. **Create GitHub release** with:
-   - Release notes
-   - Binary attachments
-   - Checksums
-
-5. **Update documentation** if needed
-
-### Release Checklist
-
-- [ ] All tests pass
-- [ ] Documentation updated
-- [ ] Version tags updated
-- [ ] Binaries built for all platforms
-- [ ] Release notes written
-- [ ] GitHub release created
+3. **Tag and push** the tag.
 
 ## Contributing
 

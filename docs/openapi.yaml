@@ -7,8 +7,10 @@ info:
     Running Man is a dev observability tool that aggregates logs from multiple sources
     (processes and Docker containers) and provides a unified API for querying them.
     
-    **Security Note**: This API is designed for local development use only and runs on localhost
-    without authentication. It should not be exposed to public networks.
+    **Security Note**: This API is for local development. It is served on a Unix socket in the
+    project directory (`.running-man/api.sock`, mode 0600), not a TCP port, and has no
+    authentication: reaching the socket requires being this user on this machine. Use
+    `curl --unix-socket`; the host in the URL is ignored.
   version: 1.0.0
   license:
     name: MIT
@@ -52,6 +54,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  name: {type: string, example: "The Running Man API"}
+                  version: {type: string, example: "1.0"}
                   endpoints:
                     type: array
                     items:
@@ -79,8 +83,12 @@ paths:
                 $ref: '#/components/schemas/HealthResponse'
               example:
                 status: ok
+                pid: 12345
+                project: "/home/dev/myapp"
+                started: "2026-02-09T22:00:00Z"
                 uptime: "1h23m45s"
                 uptime_seconds: 5025
+                otlp_endpoint: "http://localhost:4318"
                 buffer:
                   total_entries: 15420
                   total_bytes: 2458960
@@ -97,6 +105,11 @@ paths:
                   max_age: "24h0m0s"
                   oldest_span: "2026-02-09T21:30:00Z"
                   newest_span: "2026-02-09T23:23:40Z"
+                  persisted: true
+                  dir: "/home/dev/myapp/.running-man/traces"
+                  disk_bytes: 52428800
+                  loading: false
+                  skipped_lines: 0
                 sources:
                   - name: "running-man"
                     entry_count: 150
@@ -147,7 +160,7 @@ paths:
             example: "test-*"
         - name: contains
           in: query
-          description: Filter logs containing this text in the message
+          description: Filter logs containing this text in the message or the raw line
           required: false
           schema:
             type: string
@@ -175,16 +188,17 @@ paths:
                   - timestamp: "2026-02-09T23:15:30Z"
                     level: "error"
                     source: "my-api"
+                    source_type: "process"
                     message: "Failed to connect to database"
                     raw: "[2026-02-09 23:15:30] ERROR: Failed to connect to database"
-                    stacktrace: ""
                   - timestamp: "2026-02-09T23:15:32Z"
                     level: "warn"
                     source: "my-api"
+                    source_type: "process"
                     message: "Retrying connection in 5s"
                     raw: "[2026-02-09 23:15:32] WARN: Retrying connection in 5s"
-                    stacktrace: ""
                 count: 2
+                limit: 1000
         '400':
           description: Invalid query parameters
           content:
@@ -314,7 +328,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
-                error: "Invalid process name"
+                error: "invalid process name: only letters, numbers, dashes, and underscores allowed"
         '404':
           description: Process not found
           content:
@@ -322,7 +336,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
-                error: "Process not found: my-api"
+                error: "Process 'my-api' not found. Available: worker, frontend"
         '503':
           description: Process manager not available
           content:
@@ -362,7 +376,7 @@ paths:
                   process:
                     $ref: '#/components/schemas/ProcessInfo'
               example:
-                message: "Process restarted successfully"
+                message: "Process 'my-api' restarted successfully"
                 process:
                   name: "my-api"
                   command: "python server.py"
@@ -418,11 +432,11 @@ paths:
                 properties:
                   message:
                     type: string
-                  stopped_count:
+                  count:
                     type: integer
               example:
-                message: "All processes stopped"
-                stopped_count: 2
+                message: "Stopped 2 process(es) successfully"
+                count: 2
         '503':
           description: Process manager not available
           content:
@@ -527,11 +541,12 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/LogsResponse'
-                  - type: object
-                    properties:
+                type: object
+                required: [trace_id, logs, count]
+                properties:
                       trace_id: {type: string}
+                      logs: {type: array, items: {$ref: '#/components/schemas/LogEntry'}}
+                      count: {type: integer}
                       note:
                         type: string
                         description: |
@@ -755,6 +770,10 @@ components:
         name:
           type: string
           description: Name of the source
+        type:
+          type: string
+          enum: [process, docker, system, traces, otlp]
+          description: What kind of source it is
         entry_count:
           type: integer
           description: Number of log entries from this source
@@ -819,6 +838,18 @@ components:
         uptime_seconds:
           type: integer
           description: Uptime in seconds
+        pid:
+          type: integer
+          description: The instance's process ID, to confirm which instance answered
+        project:
+          type: string
+          description: The project directory the instance supervises
+        started:
+          type: string
+          format: date-time
+        otlp_endpoint:
+          type: string
+          description: Where to export telemetry; empty when tracing is disabled
         buffer:
           $ref: '#/components/schemas/BufferStats'
         traces:
@@ -908,6 +939,14 @@ components:
             properties:
               name: {type: string}
               timestamp: {type: string, format: date-time}
+              attributes: {type: object, additionalProperties: {type: string}}
+        links:
+          type: array
+          items:
+            type: object
+            properties:
+              trace_id: {type: string}
+              span_id: {type: string}
               attributes: {type: object, additionalProperties: {type: string}}
         truncated:
           type: object

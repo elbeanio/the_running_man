@@ -14,11 +14,7 @@ Welcome to The Running Man! This guide will help you get started with the dev ob
 go install github.com/elbeanio/the_running_man/cmd/running-man@latest
 ```
 
-### Option 2: Download Binary
-
-Download the latest binary from the [Releases page](https://github.com/elbeanio/the_running_man/releases) and add it to your PATH.
-
-### Option 3: Build from Source
+### Option 2: Build from Source
 
 ```bash
 git clone https://github.com/elbeanio/the_running_man.git
@@ -30,8 +26,7 @@ sudo mv running-man /usr/local/bin/  # Or add to your PATH
 ### Verify Installation
 
 ```bash
-running-man --version
-# Should show version information
+running-man version
 ```
 
 ## Your First Run
@@ -47,7 +42,7 @@ This will:
 1. Start the Python HTTP server
 2. Launch the TUI (Terminal User Interface) showing logs in real-time
 3. Capture all stdout/stderr output
-4. Make logs available via API on port 9000
+4. Make logs available over the API, on a Unix socket in the project directory
 
 ### Multiple Processes
 
@@ -100,14 +95,25 @@ The Terminal User Interface (TUI) provides real-time log viewing:
 ### Navigation
 - **Tab / →** - Switch to next source
 - **Shift+Tab / ←** - Switch to previous source
+- **↑/↓, PgUp/PgDn, Home/End** - Scroll; End returns to following the newest output
+- **/ or Ctrl+F** - Search the current source; **n/p** for the next and previous match
+- **t** - Show or hide trace IDs on log lines
+- **r** - Restart the current source's process
 - **q** - Quit TUI (stops all processes)
-- **↑/↓** - Scroll through logs (when not in follow mode)
+
+The help line at the bottom always shows the keys for the current view.
 
 ### Features
-- **Color-coded log levels** (ERROR=red, WARN=yellow, INFO=white, DEBUG=gray)
-- **Real-time updates** - New logs appear automatically
-- **Source filtering** - Each process/container in separate tab
-- **Follow mode** - Automatically scrolls to newest logs
+- **One tab per source** - each process and container, plus `running-man` for Running
+  Man's own messages and **Traces** when tracing is on
+- **Errors in red**; requests from coding agents to the API appear in cyan in the
+  `running-man` tab, prefixed `api `
+- **Follow mode** - each tab follows its newest output until you scroll up
+- **Startup screen** - with `depends_on`, a startup tab shows each process waiting for its
+  dependencies
+- **Traces tab** - traces oldest to newest, opening on the newest. Enter opens a trace as a
+  waterfall of its spans; Enter again opens a span's attributes, and again a whole value.
+  Esc steps back a level.
 
 ### Headless Mode
 
@@ -159,17 +165,18 @@ curl --unix-socket "$SOCK" "http://localhost/processes"
 # Multiple filters
 curl --unix-socket "$SOCK" "http://localhost/logs?since=5m&source=backend&level=error&contains=timeout"
 
-# Pagination
-curl --unix-socket "$SOCK" "http://localhost/logs?limit=100&offset=0"
+# The newest 100 matching entries (default 1000; limit=0 for all)
+curl --unix-socket "$SOCK" "http://localhost/logs?limit=100"
 
-# Time ranges
-curl --unix-socket "$SOCK" "http://localhost/logs?since=2024-01-15T10:00:00Z&until=2024-01-15T11:00:00Z"
+# A time window back from now: a duration, or a number of seconds
+curl --unix-socket "$SOCK" "http://localhost/logs?since=1h"
 ```
 
 ## Point your agent at it
 
 While an instance is running, `.running-man/instance.json` sits in the project root with
-the API URL, the configured processes and ready-to-run `curl` hints. Agents find it on
+the API socket path, the OTLP endpoint, the configured processes and ready-to-run `curl`
+hints. Agents find it on
 their own.
 
 Install the skill so yours knows when to look:
@@ -182,9 +189,10 @@ See **[Agent integration](agent-integration.md)**.
 
 ## Tracing
 
-Tracing is on by default. Running Man runs an OTLP receiver on port 4318 and injects the
-matching `OTEL_*` variables into the processes it starts, so an instrumented app finds it
-without configuration.
+Tracing is on by default. Running Man runs an OTLP receiver on port 4318 -- or the next
+free port, if something else holds it -- and injects the matching `OTEL_*` variables into
+the processes it starts, so an instrumented app finds it without configuration. Traces are
+kept for 24 hours, on disk, so they survive a restart.
 
 ```bash
 curl -s --unix-socket "$SOCK" 'http://localhost/traces?since=10m'

@@ -54,6 +54,11 @@ It is how the developer sees what an agent is asking for, and what each answer c
 context. A `4xx` or `5xx` answer is logged at `warn`. Running Man's own client (the TUI)
 identifies itself with `User-Agent: running-man` and is not logged.
 
+A caller therefore finds its own earlier requests in `/logs` when it reads every source,
+and a `contains=` search can match the query it sent before. `exclude=running-man` leaves
+them out, along with Running Man's other notices; a process's exit is recorded under the
+process's own name and is not affected. `/errors` never includes them.
+
 ---
 
 ## Log Endpoints
@@ -63,10 +68,11 @@ identifies itself with `User-Agent: running-man` and is not logged.
 Query log entries with filters.
 
 **Query Parameters:**
-- `since` - Time window (e.g., `30s`, `5m`, `1h`, `2024-01-15T10:00:00Z`)
+- `since` - Time window back from now: a duration (`30s`, `5m`, `1h`) or a number of
+  seconds. Not a timestamp; that is a 400.
 - `source` - Filter by source name (e.g., `backend`, `postgres`, `docker-*`)
 - `level` - Filter by level (comma-separated: `error,warn`)
-- `contains` - Text search in message content
+- `contains` - Text search in the message or the raw line
 - `exclude` - Exclude sources by name or glob (comma-separated)
 - `limit` - Maximum entries to return, **most recent first excluded last** — that is, the
   newest matches are kept (default: `1000`, `limit=0` for no limit)
@@ -91,39 +97,49 @@ curl --unix-socket "$SOCK" "http://localhost/logs?limit=0"
 **Response:**
 ```json
 {
-  "count": 5,
+  "count": 1,
+  "limit": 1000,
   "logs": [
     {
       "timestamp": "2024-01-15T10:30:00Z",
       "level": "error",
       "source": "backend",
+      "source_type": "process",
       "message": "Database connection failed",
       "raw": "2024-01-15 10:30:00 ERROR Database connection failed",
-      "stacktrace": "",
-      "trace_id": "abc123def456"  # If correlated with trace
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736"
     }
   ]
 }
 ```
 
+`source_type` is `process`, `docker`, `system` (Running Man itself) or `otlp`.
+`stacktrace` and `trace_id` appear only when there is one.
+
 ---
 
 ### GET /errors
 
-Recent error entries (convenience endpoint, equivalent to `/logs?level=error`).
+Error entries, the same as `/logs?level=error`.
 
 **Query Parameters:**
-- `since` - Time window (default: `5m`)
-- `source` - Filter by source
-- `limit` - Max entries (default: 50)
-- `context` - Lines before/after each error (default: 10)
+- `since` - Time window, as for `/logs` (default: none, the whole buffer)
+- `limit` - Max entries, the most recent kept (default: `1000`, `limit=0` for no limit)
+
+Nothing else: for a source, a search or context around an error, use `/logs`.
 
 **Example:**
 ```bash
-curl --unix-socket "$SOCK" "http://localhost/errors?since=1h&context=5"
+curl --unix-socket "$SOCK" "http://localhost/errors?since=1h"
 ```
 
-**Response:** Same format as `/logs`
+**Response:**
+```json
+{
+  "count": 1,
+  "errors": [ { "timestamp": "...", "level": "error", "source": "backend", "message": "..." } ]
+}
+```
 
 ---
 
@@ -173,8 +189,8 @@ curl --unix-socket "$SOCK" "http://localhost/health"
     "skipped_lines": 0
   },
   "sources": [
-    {"name": "backend", "entry_count": 1100, "last_seen": "2026-10-09T11:29:59Z"},
-    {"name": "running-man", "entry_count": 147, "last_seen": "2026-10-09T11:29:00Z"}
+    {"name": "backend", "type": "process", "entry_count": 1100, "last_seen": "2026-10-09T11:29:59Z"},
+    {"name": "running-man", "type": "system", "entry_count": 147, "last_seen": "2026-10-09T11:29:00Z"}
   ]
 }
 ```
@@ -236,6 +252,37 @@ or one of three from `depends_on`: `pending` (not started; a dependency is not r
 a dependency never became ready; `startup_error` says why). `dependencies` lists the
 Compose services processes depend on -- `pending`, `checking`, `ready` or `failed`, with
 `detail` when failed. `ports` are observed, not configured.
+
+### GET /processes/{name}
+
+One process, in the same shape as an item of `/processes`. A name is letters, digits, `-`
+and `_`; anything else is a 400, and an unknown name a 404 listing the real ones:
+
+```json
+{ "error": "Process 'api' not found. Available: backend, frontend" }
+```
+
+### POST /processes/{name}/restart
+
+Restarts one process, leaving the rest alone.
+
+```bash
+curl -s -X POST --unix-socket "$SOCK" http://localhost/processes/backend/restart
+```
+
+```json
+{ "message": "Process 'backend' restarted successfully", "process": { "name": "backend", "status": "running" } }
+```
+
+### POST /processes/stop-all
+
+Stops every managed process. Running Man itself keeps running, and serving their logs.
+
+```json
+{ "message": "Stopped 2 process(es) successfully", "count": 2 }
+```
+
+The process endpoints answer 405 to the wrong method.
 
 ---
 
@@ -358,28 +405,30 @@ restart, and an empty list would otherwise read as "this trace logged nothing".
 
 ## Error Responses
 
-All endpoints return standard HTTP error codes:
+Errors are JSON with one field, `error`:
 
-**400 Bad Request:**
+**400 Bad Request** -- a parameter that does not parse:
 ```json
-{
-  "error": "Invalid time format for 'since' parameter"
-}
+{ "error": "invalid since parameter: invalid duration format: yesterday (expected: 30s, 5m, 1h)" }
 ```
 
-**404 Not Found:**
+**404 Not Found** -- an unknown trace, span or process:
 ```json
-{
-  "error": "Trace not found: abc123def456"
-}
+{ "error": "Trace 4bf92f3577b34da6a3ce929d0e0e4736 not found" }
 ```
 
-**500 Internal Server Error:**
-```json
-{
-  "error": "Failed to query buffer: <details>"
-}
-```
+**405 Method Not Allowed** -- for example a GET to a restart endpoint.
+
+**503 Service Unavailable** -- `Tracing not enabled`, from the trace endpoints when tracing
+is disabled.
+
+**500 Internal Server Error** -- a restart or stop that failed, with the reason.
+
+## Discovery
+
+- `GET /` -- `name`, `version` and `endpoints`: every endpoint with its method and a
+  description.
+- `GET /openapi.yaml` -- the full OpenAPI 3.0 specification.
 
 ---
 

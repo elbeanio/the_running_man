@@ -23,7 +23,7 @@ graph TB
         PARSER[Log Parser]
         BUFFER[(Ring Buffer<br/>30min / 50MB)]
         TRACE_STORE[(Trace Storage<br/>24h / 256MB, on disk)]
-        API[API Server<br/>REST, port 9000]
+        API[API Server<br/>REST, Unix socket]
         TUI[TUI Viewer]
         
         P1 -->|stdout/stderr| PW
@@ -59,7 +59,8 @@ Spawns and monitors child processes, capturing their output.
 
 - Executes via shell (`/bin/sh -c` or configured shell)
 - Captures stdout/stderr without blocking
-- Handles graceful shutdown (SIGINT/SIGTERM)
+- Handles graceful shutdown (SIGINT, SIGTERM, SIGHUP), stopping processes in reverse
+  config order
 - Optional restart on crash (`restart_on_crash`)
 - Preserves original command for display
 
@@ -105,8 +106,8 @@ be empty while a process sat there failed.
 
 In-memory circular buffer with time and size limits.
 
-- **Retention:** 30 minutes or 50MB (configurable)
-- **Indexed by:** timestamp, source, level
+- **Retention:** 30 minutes, 10,000 entries or 50MB (configurable)
+- **Indexed by:** trace ID, for log/trace correlation; other filters scan
 - **Thread-safe:** RWMutex for concurrent access
 - **Eviction:** Drops oldest entries when full
 - **Survives:** Application crashes (Running Man keeps running)
@@ -127,14 +128,14 @@ See [api-reference.md](api-reference.md) for full documentation.
 
 Interactive terminal UI built with Bubble Tea.
 
-- Tab switching between log sources
-- Auto-refresh every 100ms
-- Color-coded log levels
-- Real-time updates
+- Tab switching between log sources, plus Startup and Traces views
+- Polls the API every 2 seconds
+- Errors in red; agents' API calls in cyan
+- Traces oldest first, opening on the newest; a waterfall detail view, then span and
+  value levels
 
 **Log window:** the TUI requests `/logs?source=NAME` with no `since`, so it shows the full
-retention window rather than a recent slice, capped by the API's default `limit` of 1000
-entries.
+retention window rather than a recent slice. It always sends an explicit `limit`.
 
 ### OTEL Tracing (`internal/tracing`)
 
@@ -208,7 +209,7 @@ YAML configuration with validation and defaults.
 ```
 1. Agent reads the instance marker or probes GET /health
    ↓
-2. Agent discovers the surface via GET / or /docs (OpenAPI)
+2. Agent discovers the surface via GET / or /openapi.yaml
    ↓
 3. Agent queries /logs, /errors, /processes, /traces
    ↓
@@ -222,7 +223,7 @@ YAML configuration with validation and defaults.
 ### Agent-Facing API (`internal/api/server.go`)
 
 The REST API is the agent-facing interface. It is self-describing: `GET /` lists every
-endpoint and `/docs` serves interactive OpenAPI documentation.
+endpoint and `/openapi.yaml` serves the OpenAPI specification.
 
 **Logs:** `/logs` (filters: `since`, `level`, `source`, `contains`, `exclude`, `limit`),
 `/errors`
@@ -230,27 +231,26 @@ endpoint and `/docs` serves interactive OpenAPI documentation.
 **Processes:** `/processes`, `/processes/{name}`, `/processes/{name}/restart`,
 `/processes/stop-all`
 
-**Traces (when OTEL enabled):** `/traces` (filters: `service`, `span_name`, `status`,
-`trace_id`), `/traces/{id}`, `/traces/{id}/logs`
+**Traces (when OTEL enabled):** `/traces` (filters: `since`, `service`, `span_name`,
+`status`, `limit`), `/traces/{id}`, `/traces/{id}/spans/{span_id}`, `/traces/{id}/logs`
 
-**System:** `/health`
+**System:** `/health`, `/`, `/openapi.yaml`
 
-**Access control:** no authentication. Bound to all interfaces by default, with process
-control restricted to loopback — see
+**Access control:** no authentication. The API is a Unix socket in the project, mode
+0600, so only the same user on the same machine reaches it — see
 [network exposure](api-reference.md#network-exposure).
 
 ### Agent Integration Patterns
 
 **Common Workflows:**
 1. **Error investigation:** `GET /errors?since=10m` → `GET /logs?source=NAME&since=5m` for context
-2. **Startup debugging:** `get_startup_logs` for failed process initialization
-3. **Process monitoring:** `get_process_status` → `get_process_detail` for specifics
-4. **System health:** `get_health_status` for buffer stats and uptime
+2. **Startup debugging:** `GET /processes` → `startup_error` and `exit_code`, then
+   `GET /logs?source=NAME` for the process's own output
+3. **Process monitoring:** `GET /processes` → `GET /processes/{name}` for specifics
+4. **System health:** `GET /health` for buffer and span stats, uptime and identity
 
 **Safety Features:**
-- Read-only tools by default
-- Destructive operations require explicit confirmation
-- Error handling for invalid process names
+- Process names validated; an unknown name is a 404 listing the real ones
 - Local-only access by construction (Unix socket, mode 0600)
 
 ## File Structure
@@ -259,30 +259,34 @@ control restricted to loopback — see
 the_running_man/
 ├── cmd/running-man/          # CLI entry point + TUI
 │   ├── main.go              # Command parsing, orchestration
-│   └── tui.go               # Bubble Tea viewer
+│   └── tui*.go              # Bubble Tea viewer
 │
 ├── internal/
-│   ├── api/                 # HTTP server, REST endpoints
+│   ├── api/                 # HTTP server on a Unix socket, REST endpoints
 │   ├── config/              # YAML schema, loading, validation
-│   ├── docker/              # Compose parsing, log streaming
+│   ├── docker/              # Compose parsing, log streaming, readiness
+│   ├── health/              # Healthchecks for depends_on
+│   ├── instance/            # Instance marker
 │   ├── parser/              # Format detection, extraction
-│   ├── process/             # Wrapper, manager, shell execution
+│   ├── process/             # Wrapper, manager, startup order
 │   ├── storage/             # Ring buffer implementation
-│   └── tracing/             # OTEL receiver, trace storage, span management
+│   ├── termout/             # Terminal output under the TUI
+│   └── tracing/             # OTLP receiver, span storage on disk, traces API
 │
 ├── docs/                    # Documentation
-└── running-man.yml.example  # Example configuration
+└── running-man.yml          # Example configuration
 ```
 
 ## Technology Choices
 
 - **Language:** Go (fast, great concurrency, easy distribution)
-- **HTTP:** Standard library + chi router
-- **Docker:** Official docker/client library
+- **HTTP:** Standard library (`net/http` ServeMux)
+- **Docker:** moby/moby/client and moby/moby/api
 - **TUI:** Bubble Tea framework
 - **Config:** gopkg.in/yaml.v3
-- **Storage:** In-memory (maps + sync.RWMutex)
-- **Tracing:** OpenTelemetry Go SDK (go.opentelemetry.io/proto/otlp)
+- **Storage:** Logs in memory (slices + sync.RWMutex); spans in memory and in JSON-lines
+  segment files
+- **Tracing:** OTLP protobuf messages (go.opentelemetry.io/proto/otlp); no OpenTelemetry SDK
 - **Protocol Buffers:** google.golang.org/protobuf
 
 ---

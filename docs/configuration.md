@@ -13,9 +13,12 @@ The Running Man supports comprehensive configuration through YAML files, CLI fla
 Running Man automatically searches for configuration files in this order:
 
 1. Path specified by `--config` flag
-2. `running-man.yml` in current directory
-3. `running-man.yml` in parent directories (up to 5 levels up)
-4. `~/.config/running-man/config.yml` (user config)
+2. `running-man.yml` in the current directory
+3. `running-man.yml` in each parent directory in turn, up to the filesystem root
+
+There is no user-level configuration file.
+
+Unknown keys are ignored without a warning, so a misspelt key silently has no effect.
 
 ### Example Configuration
 
@@ -28,7 +31,6 @@ processes:
     command: python server.py
     args: ["--port", "8080"]
     restart_on_crash: true
-    shell: /bin/bash
 
   - name: frontend
     type: web
@@ -72,7 +74,6 @@ to make one process wait for another, use `depends_on` (see
 - `command` (string, required): Command to execute
 - `args` (array of strings, optional): Command arguments
 - `restart_on_crash` (boolean, optional): Auto-restart on non-zero exit (default: `false`)
-- `shell` (string, optional): Shell to use for this process (overrides global `shell`)
 - `interval` (string, optional): Interval for recurring execution (e.g., "30s", "1m", "5m", "1h"). Must be **positive** — a zero or negative interval is rejected at startup.
 - `depends_on` (array of strings, optional): Processes and Compose services that must be **ready** before this process starts. See [Dependencies and healthchecks](#dependencies-and-healthchecks).
 - `healthcheck` (object, optional): How to tell this process is ready, for the processes that depend on it. One of `port`, `http` or `log`, plus an optional `timeout`.
@@ -97,7 +98,6 @@ processes:
     type: worker
     description: "Background job processor"
     command: cd workers && python worker.py
-    shell: /bin/bash  # Use bash for cd command
 
   # Recurring processes (run at specified intervals)
   - name: health-check
@@ -353,7 +353,8 @@ service names and their `profiles` are read, which are rarely interpolated.
 
 **There is no API port key.** The API is served on a Unix socket at
 `.running-man/api.sock` inside the project, so there is nothing to configure: the path is
-derived from the project directory. See
+derived from the project directory. A project nested too deeply for a Unix socket path
+gets one under the temp directory instead; `.running-man/instance.json` records which. See
 [Network exposure](api-reference.md#network-exposure).
 
 `api_port` was removed. A config that still sets it is **rejected at startup** with a
@@ -425,8 +426,8 @@ OpenTelemetry tracing configuration.
   block does not disable tracing** — absence means the default applies. Set `enabled: false`.
 - `port` (integer): OTLP HTTP receiver port (default: `4318`). Other collectors default to
   4318 as well — Arize Phoenix, the OpenTelemetry Collector, Jaeger — so change this if one
-  of them is already running. A conflict fails at startup rather than silently disabling
-  tracing.
+  of them is already running. Left unset, a taken 4318 moves the receiver to the next free
+  port; set, a conflict fails at startup instead of quietly using another port.
 - `max_spans` (integer): Maximum spans to store (default: `50000`)
 - `max_span_age` (duration): How long to keep spans (default: `24h`). Must be **positive**.
   Far longer than log `retention`, because a trace is often compared with one from hours
@@ -654,8 +655,9 @@ processes:
 
 retention: 10m  # Shorter for CI runs
 max_entries: 1000
-no_tui: true  # Headless mode for CI
 ```
+
+Run it with `running-man run --no-tui`: headless mode is a flag, not a configuration key.
 
 ### Environment-Specific Configuration
 ```yaml
@@ -709,10 +711,10 @@ retention: 30  # Should be '30s', '30m', etc.
 
 # Error: removed key
 api_port: 9000  # No longer supported; the API is a Unix socket
-
-# Error: File not found
-docker_compose: ./nonexistent.yml
 ```
+
+A `docker_compose` file that does not exist passes validation, and fails afterwards, when
+the Compose files are parsed.
 
 ### Checking your configuration
 
@@ -732,39 +734,9 @@ watched, and which are not.
 
 ## Multiple Configuration Files
 
-### Layered Configuration
-You can use multiple configuration files:
-
-```bash
-# Base configuration
-running-man run --config base.yml
-
-# Override with environment-specific config
-running-man run --config base.yml --config production.yml
-```
-
-### Example Layered Setup
-```yaml
-# base.yml (shared settings)
-processes:
-  - name: app
-    command: python app.py
-
-retention: 30m
-```
-
-```yaml
-# development.yml (development overrides)
-shell: /bin/bash
-tracing:
-  enabled: true
-```
-
-```yaml
-# production.yml (production overrides)
-retention: 5m  # Shorter retention in production
-max_entries: 1000
-```
+`--config` takes one file; given twice, the last one wins and nothing is merged. Use
+`${VAR:-default}` in values (see [Environment-Specific Configuration](#environment-specific-configuration))
+to vary one file between environments.
 
 ## Configuration Tips
 
@@ -795,19 +767,7 @@ processes:
       python -m uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
-### 4. Process-Specific Shell
-```yaml
-processes:
-  - name: bash-script
-    command: ./script.sh
-    shell: /bin/bash  # This script needs bash
-
-  - name: python-app
-    command: python app.py
-    # Uses global shell or default
-```
-
-### 5. Conditional Configuration
+### 4. Conditional Configuration
 ```yaml
 # Use different commands based on environment
 processes:
@@ -838,9 +798,10 @@ shell: /usr/bin/bash  # Instead of /bin/bash
 
 ### Port Conflicts
 ```bash
-# Error: Address already in use
-# Solution: Change port or stop conflicting service
-tracing_port: 4321
+# Error: Address already in use (only for a port you named)
+# Solution: Name a free port, or leave it unset to take the next free one
+tracing:
+  port: 4321
 ```
 
 ### Invalid Duration Format

@@ -122,8 +122,9 @@ curl -s -X POST --unix-socket "$SOCK" http://localhost/processes/backend/restart
 ```
 
 Python tracebacks arrive as a single entry with the whole trace attached, rather than
-forty lines to stitch back together. Container logs, process output and OpenTelemetry
-spans all land in the same buffer, correlated by `trace_id` where the app provides one.
+forty lines to stitch back together. Container logs and process output land in one buffer;
+OpenTelemetry spans are kept alongside, for 24 hours and across restarts, and correlated to
+the logs by `trace_id` where the app provides one.
 
 `GET /` lists every endpoint with a description, and `/openapi.yaml` serves the full
 specification.
@@ -131,8 +132,8 @@ specification.
 ## Your agent finds it by itself
 
 While an instance is running, `.running-man/instance.json` sits in the project root with
-the API URL, the configured processes and ready-to-run `curl` hints — one file read, in a
-directory agents already inspect.
+the API socket path, the configured processes and ready-to-run `curl` hints — one file
+read, in a directory agents already inspect.
 
 Paired with [`skills/running-man/SKILL.md`](skills/running-man/SKILL.md), it answers the
 question that matters before an agent starts anything: **is this already running?**

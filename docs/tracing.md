@@ -12,7 +12,8 @@ Running Man provides a complete OpenTelemetry solution for local development:
 
 - **OTLP HTTP receiver** on port 4318 (configurable)
 - **Automatic environment variable injection** for managed processes
-- **In-memory span storage** with configurable retention limits
+- **Span storage** in memory and on disk, so traces survive a restart, under configurable
+  retention limits
 - **Trace-log correlation** via `trace_id`
 - **Trace endpoints** for exploration by AI agents
 - **REST API** for programmatic access to traces
@@ -29,9 +30,13 @@ running-man run --process "echo 'Hello'" --no-tui
 
 You should see:
 ```
+[tracing] OTLP receiver listening on http://localhost:4318
 Tracing: OTLP receiver on http://localhost:4318
-[tracing] OTLP receiver starting on http://localhost:4318
 ```
+
+If something else already holds 4318 -- another collector, or another project's Running
+Man -- the receiver takes the next free port above it, and the line above shows which. Naming a port, with
+`--tracing-port` or `tracing.port`, makes a conflict a startup error instead.
 
 ### 2. Configure Your Application
 
@@ -330,8 +335,8 @@ disk, set `persist: false`.
 ### Command Line Flags
 
 ```bash
-# Disable tracing
-running-man run --process "python app.py" --tracing false
+# Disable tracing (a Go boolean flag takes its value after '=')
+running-man run --process "python app.py" --tracing=false
 
 # Change tracing port
 running-man run --process "python app.py" --tracing-port 4321
@@ -428,7 +433,11 @@ os.environ.setdefault('OTEL_SERVICE_NAME', 'my-manual-app')
 
 ### Trace-Log Correlation
 
-Running Man automatically correlates logs with traces when logs contain `trace_id`:
+Running Man correlates a log line with a trace when the line carries the trace ID as the
+spans do: 32 lowercase hex characters. It finds it as a string `trace_id` (or `traceId`,
+`traceID`) field in a JSON line, or as `trace_id=<id>` (also `trace-id=`, `traceid:`) in a
+plain-text line. The ID has to be in what is printed: a value passed through `extra=`
+is not, under the default Python formatter.
 
 ```python
 import logging
@@ -439,12 +448,9 @@ tracer = trace.get_tracer(__name__)
 
 def process_request(request_id):
     with tracer.start_as_current_span("process_request") as span:
-        # Log with trace context
-        logger.info(f"Processing request {request_id}", extra={
-            "trace_id": span.get_span_context().trace_id,
-            "span_id": span.get_span_context().span_id
-        })
-        
+        trace_id = format(span.get_span_context().trace_id, "032x")
+        logger.info(f"Processing request {request_id} trace_id={trace_id}")
+
         # Your processing logic...
 ```
 
@@ -459,13 +465,13 @@ def process_request(request_id):
    Should show OTEL environment variables.
 
 2. **Verify OTLP receiver is running:**
-   Look for "Tracing: OTLP receiver on http://localhost:4318" in output.
+   Look for "Tracing: OTLP receiver on http://localhost:..." in output. The port is 4318
+   unless something else held it.
 
-3. **Check port conflicts:**
-   If port 4318 is in use, change it:
-   ```bash
-   running-man run --process "python app.py" --tracing-port 4321
-   ```
+3. **Check the endpoint the app exports to:**
+   Processes Running Man starts have the right endpoint injected. Anything else -- a
+   browser, a container with a hardcoded endpoint -- must use `otlp_endpoint` from
+   `.running-man/instance.json` or `/health`, since the port moves when 4318 is taken.
 
 4. **Python package issues:**
    Ensure you have the correct packages:
@@ -475,7 +481,9 @@ def process_request(request_id):
 
 ### Common Errors
 
-**"Address already in use"**: Port 4318 is occupied. Use `--tracing-port` to specify a different port.
+**"Address already in use"**: only when a port was named with `--tracing-port` or
+`tracing.port` and something else holds it. Name a free one, or leave it unnamed and let
+the receiver take the next free port.
 
 **"No spans received"**: Check that your application is properly instrumented and using the OTLP exporter.
 

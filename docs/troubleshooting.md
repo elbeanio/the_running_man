@@ -24,7 +24,7 @@ which running-man
 export PATH="$HOME/go/bin:$PATH"
 
 # Or use full path
-~/go/bin/running-man --version
+~/go/bin/running-man version
 ```
 
 ### "Go: command not found"
@@ -141,8 +141,8 @@ curl -s --unix-socket "$SOCK" http://localhost/health | jq -r .otlp_endpoint
 # Pin a different one
 running-man run --tracing-port 4321
 
-# Kill conflicting process (if safe)
-kill $(lsof -t -i :9000)
+# Kill the conflicting process on a port you named (if safe)
+kill $(lsof -t -i :4321)
 ```
 
 ### Docker Integration Failing
@@ -214,9 +214,9 @@ A report names the function, the error and the stack. If the file is absent, the
 TUI did not crash — the instance was stopped some other way, or the process was
 killed.
 
-The TUI no longer exits on a panic while drawing: it keeps the session, shows a
+The TUI no longer exits on a panic while drawing: it keeps running, shows a
 warning in the footer naming the crash log, and carries on. A panic while
-handling a message discards that message rather than the session.
+handling a message discards that message rather than ending the instance.
 
 ### The display is corrupted or garbled
 
@@ -233,7 +233,7 @@ gone blank.
   `build done`.
 - Running Man printing over its own frame. The OTLP receiver logged a line per
   request, so an instrumented application corrupted the display continuously.
-  Nothing but the TUI writes to the terminal during a session now.
+  Nothing but the TUI writes to the terminal while an instance runs now.
 
 If it still happens:
 
@@ -290,7 +290,7 @@ processes:
 
 ### Port 4318 is already in use
 
-**Symptom:** Running Man exits at startup with:
+**Symptom:** Running Man exits at startup, when the port was named, with:
 
 ```
 [running-man] Could not start the OTLP receiver: cannot listen on :4318:
@@ -335,12 +335,16 @@ tracing:
   enabled: false
 ```
 
-What happens on a port conflict depends on whether tracing was actually asked for:
+What happens on a port conflict depends on whether the port was named:
 
-| Tracing | On a port conflict |
+| Port | On a conflict |
 |---|---|
-| Requested — `enabled:` set, `tracing.port` set, or `--tracing`/`--tracing-port` passed | **Fails at startup.** Silently not doing what was asked is worse than stopping. |
-| On by default only | **Warns and continues without tracing.** Refusing to start would block everything over a feature that was never requested. |
+| Named — `--tracing-port` or `tracing.port` | **Fails at startup.** Quietly using a different port than the one asked for is the silent substitution this guards against. |
+| Not named | **Takes the next free port**, up to 20 above 4318, and prints which. One instance per project means several receivers on one machine is the ordinary case. |
+
+Only if none of those 20 is free does tracing fail: at startup when it was asked for
+(`enabled:`, `--tracing`), and with a warning, carrying on without tracing, when it was on
+by default only.
 
 > Running Man used to report the receiver as ready in this situation and carry on with
 > tracing silently dead — spans went to the other collector and `/traces` stayed empty
@@ -352,8 +356,8 @@ What happens on a port conflict depends on whether tracing was actually asked fo
 
 **Solutions:**
 ```bash
-# Enable tracing (enabled by default)
-running-man run --tracing true
+# Enable tracing (enabled by default; a Go boolean flag takes its value after '=')
+running-man run --tracing=true
 
 # Check tracing port
 running-man run --tracing-port 4318
@@ -425,7 +429,7 @@ skill is installed (see `skills/running-man/`) and that `AGENTS.md` points at it
 
 ### An agent can't reach the API
 
-**Problem:** connection refused on port 9000.
+**Problem:** connection refused, or no socket. The API is a Unix socket, not a TCP port.
 
 **Solutions:**
 ```bash
@@ -487,15 +491,17 @@ curl -s --unix-socket .running-man/api.sock http://localhost/health
 **Solutions:**
 ```bash
 # Check parameter format
-# since: duration string (5m, 1h, 30s)
+# since: a duration (5m, 1h, 30s) or a number of seconds (300); not a timestamp
 # level: comma-separated (error,warn,info)
 
 # Correct:
 curl --unix-socket "$SOCK" "http://localhost/logs?since=5m&level=error,warn"
 
-# Incorrect:
-curl --unix-socket "$SOCK" "http://localhost/logs?since=5"  # Missing unit
-curl --unix-socket "$SOCK" "http://localhost/logs?level=error warn"  # Space instead of comma
+# Returns 400:
+curl --unix-socket "$SOCK" "http://localhost/logs?since=2026-10-12T09:00:00Z"  # Not a duration
+
+# Returns nothing, without an error:
+curl --unix-socket "$SOCK" "http://localhost/logs?level=error%20warn"  # Space instead of comma
 ```
 
 ### No Logs in Response
@@ -636,16 +642,18 @@ os.environ.setdefault('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://localhost:4318')
 
 ### Seeing what Running Man is doing
 
-There is no debug or verbosity flag. Running Man reports what it resolved on startup and
-captures its own output as the `running-man` source, so its decisions are queryable like
-anything else:
+There is no debug or verbosity flag (`RUNNING_MAN_DEBUG=1` turns on internal debug
+output for developing Running Man itself). Running Man records its decisions -- process
+exits and restarts, startup and dependencies, agents' API calls, problems saving spans --
+in the `running-man` source, so they are queryable like anything else:
 
 ```bash
 curl -s --unix-socket "$SOCK" 'http://localhost/logs?source=running-man&since=5m'
 ```
 
-Startup prints the API address and network posture, the Compose files, profiles and
-services being watched, which services are not running, and the instance marker path.
+Startup prints, to the terminal only, the API socket path, the OTLP receiver's port, the
+Compose files, profiles and services being watched, which services are not running, and
+the instance marker path.
 ### Check Log Files
 
 ```bash
@@ -689,7 +697,7 @@ curl --unix-socket "$SOCK" http://localhost/processes
 curl --unix-socket "$SOCK" http://localhost/health | jq '.buffer'
 
 # Trace statistics
-curl --unix-socket "$SOCK" http://localhost/health | jq '.tracing'
+curl --unix-socket "$SOCK" http://localhost/health | jq '.traces'
 ```
 
 ## Performance Issues
@@ -758,7 +766,7 @@ When reporting issues, include:
 
 ```bash
 # Version information
-running-man --version
+running-man version
 
 # Go version
 go version

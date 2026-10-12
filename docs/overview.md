@@ -8,7 +8,8 @@
 
 A process runner with a memory. You describe your project's processes in `running-man.yml`,
 start an instance, and it spawns them and captures everything they emit — plus Docker
-container logs and OpenTelemetry spans — into one in-memory buffer, queryable over HTTP.
+container logs and OpenTelemetry spans — queryable over an HTTP API on a Unix socket. Logs
+are held in memory; spans are also kept on disk, so traces survive a restart.
 
 ## Why it exists
 
@@ -42,18 +43,20 @@ That makes it most useful in the hardest case: the app that will not start at al
   start the stack if it is not running
 - **Smart parsing** — Python tracebacks grouped into one entry, JSON logs field-extracted,
   plain text level-detected
-- **Ring buffer** — in-memory, bounded by retention limits (30 minutes / 10,000 entries /
-  50MB by default)
+- **Ring buffer** — logs in memory, bounded by retention limits (30 minutes / 10,000
+  entries / 50MB by default)
 - **REST API** — query by time, source, level or content; self-describing at `GET /` and
-  `/docs`
+  `/openapi.yaml`
 - **OpenTelemetry** — built-in OTLP receiver, environment injected into managed processes,
-  traces correlated to logs by `trace_id`
-- **Interactive TUI** — a tab per source, live
+  traces correlated to logs by `trace_id`, served in three levels of detail. Spans are kept
+  on disk as well as in memory (24 hours / 256MB / 50,000 spans by default), so traces
+  survive a restart
+- **Interactive TUI** — a tab per source, live; traces as a waterfall of their spans
 - **Agent integration** — an instance marker agents discover on their own, plus a skill
 
 ## What it is not
 
-- **Not production observability.** A local development tool: no persistence, no
+- **Not production observability.** A local development tool: no long-term storage, no
   multi-user concerns, not a hosted service.
 - **Not a Compose manager.** It offers to start your stack and then monitors it. Quitting
   leaves the stack exactly where it was.
