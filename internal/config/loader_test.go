@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -483,5 +484,39 @@ shell: ${RM_TEST_SHELL:-/bin/sh}
 				}
 			}
 		})
+	}
+}
+
+// Unknown keys were ignored, so a misspelt key, or one the docs invented, did
+// nothing and said nothing: the docs carried a per-process `shell`, `no_tui:`
+// and `tracing_port:` for months. Each is now a startup error naming the key
+// and its line.
+func TestLoadConfig_RejectsUnknownKeys(t *testing.T) {
+	cases := []struct{ name, yaml, key, line string }{
+		{"top level", "processes:\n  - name: a\n    command: x\nno_tui: true\n", "no_tui", "line 4"},
+		{"process", "processes:\n  - name: a\n    command: x\n    shell: /bin/bash\n", "shell", "line 4"},
+		{"tracing", "processes:\n  - name: a\n    command: x\ntracing:\n  portt: 4321\n", "portt", "line 5"},
+		{"healthcheck", "processes:\n  - name: a\n    command: x\n    healthcheck:\n      prot: 8000\n", "prot", "line 5"},
+		{"docker_compose mapping", "docker_compose:\n  files: [a.yml]\n  profile: dev\n", "profile", "line 3"},
+		{"compose healthchecks", "docker_compose:\n  files: [a.yml]\n  healthchecks:\n    db:\n      prot: 5432\n", "prot", "line 5"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "running-man.yml")
+			if err := os.WriteFile(path, []byte(c.yaml), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := LoadConfig(path)
+			if err == nil || !strings.Contains(err.Error(), c.key) || !strings.Contains(err.Error(), c.line) {
+				t.Errorf("err = %v; want a refusal naming %q at %s", err, c.key, c.line)
+			}
+		})
+	}
+}
+
+// The repository's own example has to load under the stricter rule.
+func TestLoadConfig_RepositoryExampleLoads(t *testing.T) {
+	if _, err := LoadConfig("../../running-man.yml"); err != nil {
+		t.Errorf("running-man.yml: %v", err)
 	}
 }
