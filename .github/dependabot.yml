@@ -1,0 +1,30 @@
+# Weekly dependency updates, as one PR per ecosystem. This replaced a hand-rolled
+# workflow (deps.yml) that failed on every run: it checked out its own branch
+# before peter-evans/create-pull-request, which then took that branch as the
+# PR's base and could not find it on the remote.
+#
+# Vulnerabilities are not this file's job: govulncheck in the Security workflow
+# fails every push that carries one.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      go-modules:
+        patterns: ["*"]
+    assignees: [elbeanio]
+
+  # The workflows' own actions: checkout, setup-go, codeql and the rest run on a
+  # deprecated Node 20 at their current majors.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+    assignees: [elbeanio]
