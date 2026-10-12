@@ -49,7 +49,7 @@ curl -s --unix-socket "$SOCK" 'http://localhost/logs?source=backend&since=5m&lim
 curl -s --unix-socket "$SOCK" http://localhost/processes
 ```
 
-`GET /` lists every endpoint; `/docs` serves interactive OpenAPI documentation.
+`GET /` lists every endpoint; `/openapi.yaml` serves the full OpenAPI specification.
 
 ## ⚠️ Read this before running it on a shared network
 
