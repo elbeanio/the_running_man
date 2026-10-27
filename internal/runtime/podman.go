@@ -72,8 +72,7 @@ func (p *Podman) Ping(ctx context.Context) error {
 	if _, err := p.connectedSocket(); err != nil {
 		return err
 	}
-	podmanURL := url.URL{Scheme: "http", Host: "podman", Path: "/_ping"}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, podmanURL.String(), nil)
+	req, err := p.newRequest(ctx, http.MethodGet, "/_ping")
 	if err != nil {
 		return err
 	}
@@ -476,8 +475,7 @@ func (p *Podman) Logs(ctx context.Context, id string, opts LogOpts) (io.ReadClos
 	if err := p.connect(); err != nil {
 		return nil, err
 	}
-	podmanURL := url.URL{Scheme: "http", Host: "podman", Path: u.String()}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, podmanURL.String(), nil)
+	req, err := p.newRequest(ctx, http.MethodGet, u.String())
 	if err != nil {
 		return nil, err
 	}
@@ -521,8 +519,7 @@ func (p *Podman) Events(ctx context.Context, opts EventOpts, dst chan<- Event) e
 			u.WriteString(url.QueryEscape("filter=" + k + "=" + v))
 		}
 	}
-	podmanURL := url.URL{Scheme: "http", Host: "podman", Path: u.String()}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, podmanURL.String(), nil)
+	req, err := p.newRequest(ctx, http.MethodGet, u.String())
 	if err != nil {
 		return err
 	}
@@ -616,12 +613,34 @@ func (p *Podman) connectedSocket() (string, error) {
 	return p.socket, p.socketErr
 }
 
+// newRequest builds an *http.Request whose URL is correct even when
+// `pathAndQuery` contains a `?` separator.
+//
+// Why this exists: setting `url.URL{Path: "/v1.40/x?all=1"}` causes
+// `URL.String()` to encode the `?` as `%3F`, so a server that matches
+// by `URL.Path` would see `/v1.40/x%3Fall=1` and return 404. Splitting
+// path and query at the first `?` and putting each into its own URL
+// field avoids the encoding entirely.
+//
+// The dialer ignores `URL.Host` so a placeholder host works for the
+// unix socket; using a string distinct from any docker-side prefix
+// keeps `/health` checks unambiguous during multi-runtime debugging.
+func (p *Podman) newRequest(ctx context.Context, method, pathAndQuery string) (*http.Request, error) {
+	pathOnly, query, _ := strings.Cut(pathAndQuery, "?")
+	podmanURL := url.URL{
+		Scheme:   "http",
+		Host:     "podman",
+		Path:     pathOnly,
+		RawQuery: query,
+	}
+	return http.NewRequestWithContext(ctx, method, podmanURL.String(), nil)
+}
+
 // doJSON issues a one-shot JSON request via the podman socket. Method and
 // path are joined against the podman URL host "podman"; the dialer sends
 // the request through the unix socket regardless.
 func (p *Podman) doJSON(ctx context.Context, method, path string, out any) error {
-	podmanURL := url.URL{Scheme: "http", Host: "podman", Path: path}
-	req, err := http.NewRequestWithContext(ctx, method, podmanURL.String(), nil)
+	req, err := p.newRequest(ctx, method, path)
 	if err != nil {
 		return err
 	}
