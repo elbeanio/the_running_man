@@ -89,6 +89,15 @@ func (c *Client) Ping(ctx context.Context) error {
 	return nil
 }
 
+// FindCommand exposes the docker-side compose CLI discovery through the
+// runtime.Runtime interface, satisfying `Runtime` for *Client alongside
+// *Podman. The actual lookup lives in the package's top-level
+// FindComposeCommand (preserved at its existing name) so existing
+// callers and test fixtures keep working unchanged.
+func (c *Client) FindCommand(ctx context.Context) (ComposeCommand, error) {
+	return FindComposeCommand(ctx)
+}
+
 // IsAvailable checks if Docker is available without returning an error
 func IsAvailable() bool {
 	cli, err := NewClient()
