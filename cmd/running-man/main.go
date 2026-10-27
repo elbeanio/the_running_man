@@ -16,11 +16,11 @@ import (
 
 	"github.com/elbeanio/the_running_man/internal/api"
 	"github.com/elbeanio/the_running_man/internal/config"
-	"github.com/elbeanio/the_running_man/internal/docker"
 	"github.com/elbeanio/the_running_man/internal/health"
 	"github.com/elbeanio/the_running_man/internal/instance"
 	"github.com/elbeanio/the_running_man/internal/parser"
 	"github.com/elbeanio/the_running_man/internal/process"
+	"github.com/elbeanio/the_running_man/internal/runtime"
 	"github.com/elbeanio/the_running_man/internal/storage"
 	"github.com/elbeanio/the_running_man/internal/termout"
 	"github.com/elbeanio/the_running_man/internal/tracing"
@@ -110,7 +110,7 @@ func lineSourceType(source, via string) string {
 }
 
 // composeServices summarises the Compose stack for dependency validation.
-func composeServices(compose *docker.ComposeFile, profiles []string) config.ComposeServices {
+func composeServices(compose *runtime.ComposeFile, profiles []string) config.ComposeServices {
 	svcs := config.ComposeServices{
 		Active:          map[string]bool{},
 		GatedOut:        map[string]bool{},
@@ -134,7 +134,7 @@ func composeServices(compose *docker.ComposeFile, profiles []string) config.Comp
 // a process depends on is ready: Docker's own health status for a service
 // whose Compose file defines a healthcheck, otherwise the healthcheck declared
 // under docker_compose.healthchecks. Validation has already ensured one exists.
-func composeReadiness(client *docker.Client, project string, compose *docker.ComposeFile,
+func composeReadiness(client *runtime.Client, project string, compose *runtime.ComposeFile,
 	declared map[string]config.HealthcheckConfig) process.ServiceReadiness {
 	return func(ctx context.Context, service string) error {
 		timeout := config.DefaultHealthcheckTimeout
@@ -539,10 +539,10 @@ func runCommand(args []string) {
 
 	// Parse the Compose files now, ahead of everything else that uses them,
 	// because dependency validation needs them and must come first.
-	var composeFile *docker.ComposeFile
+	var composeFile *runtime.ComposeFile
 	if finalCompose.IsSet() {
 		// Every configured Compose file, merged by service name.
-		composeFile, err = docker.ParseComposeFiles(finalCompose.Files)
+		composeFile, err = runtime.ParseComposeFiles(finalCompose.Files)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] Failed to parse compose file(s): %v\n", err)
 			os.Exit(1)
@@ -659,8 +659,8 @@ func runCommand(args []string) {
 	}
 
 	// Docker Compose integration
-	var containerWatcher *docker.Watcher
-	var dockerClient *docker.Client
+	var containerWatcher *runtime.Watcher
+	var dockerClient *runtime.Client
 	var serviceReady process.ServiceReadiness
 	ctx := context.Background()
 
@@ -679,7 +679,7 @@ func runCommand(args []string) {
 			os.Exit(1)
 		}
 
-		projectName := docker.ProjectName(
+		projectName := runtime.ProjectName(
 			finalCompose.ProjectName, compose.Name, finalCompose.PrimaryFile())
 
 		fmt.Printf("Docker Compose: %s\n", strings.Join(finalCompose.Files, ", "))
@@ -696,7 +696,7 @@ func runCommand(args []string) {
 		}
 
 		// Create Docker client
-		dockerClient, err = docker.NewClient()
+		dockerClient, err = runtime.NewClient()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[running-man] Failed to create Docker client: %v\n", err)
 			fmt.Fprintf(os.Stderr, "[running-man] Make sure Docker is running and accessible\n")
@@ -710,7 +710,7 @@ func runCommand(args []string) {
 			os.Exit(1)
 		}
 
-		discover := func() ([]docker.Container, error) {
+		discover := func() ([]runtime.Container, error) {
 			return dockerClient.DiscoverContainersInProject(ctx, projectName, serviceNames)
 		}
 
@@ -764,7 +764,7 @@ func runCommand(args []string) {
 		// Replays as much history as retention would keep, and no more:
 		// replayed lines arrive now, so anything older would otherwise be held
 		// for a full retention window regardless of its age.
-		containerWatcher = docker.NewWatcher(dockerClient, projectName, serviceNames, finalRetention, dockerLineHandler, flushStream)
+		containerWatcher = runtime.NewWatcher(dockerClient, projectName, serviceNames, finalRetention, dockerLineHandler, flushStream)
 		for _, container := range containers {
 			if err := containerWatcher.Attach(container); err != nil {
 				fmt.Fprintf(os.Stderr, "[running-man] Failed to start log streamer for %s: %v\n", container.Name, err)

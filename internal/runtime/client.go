@@ -1,4 +1,4 @@
-package docker
+package runtime
 
 import (
 	"context"
@@ -99,16 +99,6 @@ func IsAvailable() bool {
 
 	ctx := context.Background()
 	return cli.Ping(ctx) == nil
-}
-
-// Container represents a discovered Docker container
-type Container struct {
-	ID          string
-	Name        string
-	ServiceName string
-	ProjectName string
-	Image       string
-	State       string
 }
 
 // DiscoverContainersInProject finds running containers for an explicit Compose

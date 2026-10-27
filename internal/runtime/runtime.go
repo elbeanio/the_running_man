@@ -1,13 +1,12 @@
-// Package runtime defines the Container-Runtime interface and the canonical
-// data types shared by every supported runtime implementation.
+// Package runtime defines the Container-Runtime abstraction over Docker and
+// Podman.
 //
 // The Running Man supervisor talks to one runtime per instance. Today Docker
 // is the default; podman is opt-in via the `runtime:` configuration field.
-// The interface intentionally mirrors only what the supervisor reads: list,
-// inspect, wait, logs, events, and the runtime's preferred compose CLI.
-// Internal abstractions (the moby client, podman's REST adapter) live in
-// sibling files. New runtimes plug in by adding one Go file in this package
-// and registering it in `cmd/running-man/main.go`.
+// The interface intentionally mirrors what the supervisor actually reads:
+// list, inspect, wait, logs, events, and the runtime's preferred compose
+// CLI. Internal abstractions (the moby client in docker.go, podman's REST
+// adapter in podman.go once it lands) sit alongside as siblings.
 package runtime
 
 import (
@@ -21,40 +20,43 @@ type Runtime interface {
 	Endpoint() string
 
 	// List returns every container the runtime knows about, regardless of
-	// state. The runtime may return all containers running under it, or
-	// only those matching an idle-time filter; callers must not assume
-	// either.
+	// state.
 	List(ctx context.Context) ([]Container, error)
 
 	// Inspect returns a single container as the runtime sees it today.
-	// Container state should reflect the current moment, not a cached
-	// snapshot.
 	Inspect(ctx context.Context, id string) (Container, error)
 
-	// Wait blocks until the named container reaches the desired
-	// condition (typically "not-running"). Errors fast on timeout or
-	// runtime failure.
+	// Wait blocks until the named container reaches the desired condition
+	// (typically "not-running").
 	Wait(ctx context.Context, id string, condition string) error
 
-	// Logs opens a live log stream for the named container. The caller
-	// owns the returned ReadCloser and must close it.
+	// Logs opens a live log stream for the named container. The caller owns
+	// the returned ReadCloser and must close it.
 	Logs(ctx context.Context, id string, opts LogOpts) (io.ReadCloser, error)
 
-	// Events streams the runtime's container-event feed to dst until
-	// ctx is cancelled or the runtime closes the stream.
+	// Events streams the runtime's container-event feed to dst until ctx
+	// is cancelled or the runtime closes the stream.
 	Events(ctx context.Context, opts EventOpts, dst chan<- Event) error
 
-	// Composer exposes the runtime's preferred compose CLI.
-	Composer() Composer
+	// FindCommand returns the runtime's preferred compose CLI as a
+	// resolved command struct (Name, Base).
+	FindCommand(ctx context.Context) (ComposeCommand, error)
 }
 
-// Container is the runtime-agnostic view of a single container.
+// Container is the runtime-agnostic view of a single container. The field
+// shape retains the docker-side Compose-aware names (ServiceName,
+// ProjectName) so Compose discovery and healthcheck coordination continue
+// to work as the docker package did before this refactor; runtime-agnostic
+// fields (State, Exit, Created) sit alongside.
 type Container struct {
-	ID      string
-	Image   string
-	State   string
-	Exit    int
-	Created int64
+	ID          string
+	Name        string
+	ServiceName string
+	ProjectName string
+	Image       string
+	State       string
+	Exit        int
+	Created     int64
 }
 
 // LogOpts parameterises a Logs call.
@@ -79,22 +81,13 @@ type Event struct {
 	Time   int64
 }
 
-// Composer locates the runtime's preferred compose CLI.
-type Composer interface {
-	Find() (ComposeCommand, error)
-}
-
-// ComposeCommand is a resolved compose CLI entry point.
-//
-// It exists here in `runtime` so callers do not need to depend on a
-// runtime-specific subpackage just to discover the CLI. Each runtime's
-// own FindCommand implementation returns a ComposeCommand populated for
-// its preferred binary.
+// ComposeCommand is a resolved compose CLI entry point. It is the canonical
+// shape every implementation's FindCommand returns; runtime-specific flags
+// belong in ComposeOptions, declared in the per-runtime file.
 type ComposeCommand struct {
 	// Name is the executable, e.g. "docker" or "podman".
 	Name string
-
-	// Base are the leading arguments, e.g. []string{"compose"} for the
-	// docker v2 plugin shape.
+	// Base are the leading arguments, e.g. []string{"compose"} for the v2
+	// plugin shape, []string{} for the v1 standalone binary.
 	Base []string
 }

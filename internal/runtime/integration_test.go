@@ -3,8 +3,8 @@
 // Tests against a real Docker daemon. Tagged, because they take seconds and
 // need Docker: run them before review with
 //
-//	go test -tags integration ./internal/docker
-package docker
+//	go test -tags integration ./internal/runtime
+package runtime
 
 import (
 	"context"
