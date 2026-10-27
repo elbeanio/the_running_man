@@ -11,6 +11,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"io"
 )
 
@@ -65,6 +66,16 @@ type LogOpts struct {
 	Since  string
 	Until  string
 	Tail   int
+}
+
+// TailString returns Tail as a quoted-string Tail option; both Docker
+// and podman use the same wire shape. Zero means "all", which the wire
+// expresses as empty string.
+func (o LogOpts) TailString() string {
+	if o.Tail == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", o.Tail)
 }
 
 // EventOpts parameterises an Events stream.

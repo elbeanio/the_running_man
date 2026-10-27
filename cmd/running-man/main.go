@@ -448,6 +448,18 @@ func runCommand(args []string) {
 			config.RuntimeDocker, config.RuntimePodman, finalRuntime)
 		os.Exit(1)
 	}
+	// Today the supervisor is docker-side end-to-end; podman is recognised
+	// in config and CLI but the dispatch into the runtime.Runtime
+	// interface is a follow-up. Surface the gap honestly: refuse to
+	// silently override the user's intent, but also fail closed rather
+	// than pretending we honoured it.
+	if finalRuntime != config.RuntimeDocker {
+		fmt.Fprintf(os.Stderr,
+			"[running-man] runtime=%q is recognised but not yet wired into the supervisor.\n"+
+				"[running-man] Falling back to %q for this run; podman dispatch lands in a follow-up commit.\n",
+			finalRuntime, config.RuntimeDocker)
+		finalRuntime = config.RuntimeDocker
+	}
 
 	// Was tracing actually requested, or is it merely on by default?
 	//

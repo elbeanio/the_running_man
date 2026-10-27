@@ -40,8 +40,8 @@ const (
 	// podman is opt-in and reported but does not yet drive the supervisor
 	// (the wiring lands together with the docker-side interface
 	// satisfaction in a follow-up commit).
-	RuntimeDocker = "docker"
-	RuntimePodman = "podman"
+	RuntimeDocker  = "docker"
+	RuntimePodman  = "podman"
 	RuntimeDefault = RuntimeDocker
 
 	// socketDirName and socketFileName mirror internal/instance, for the
