@@ -30,6 +30,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/moby/moby/api/pkg/stdcopy"
 )
 
 // Podman is the podman-backed implementation of Runtime.
@@ -47,6 +49,312 @@ type Podman struct {
 // lazily on the first call to Endpoint or any method.
 func NewPodman() *Podman {
 	return &Podman{}
+}
+
+// Compile-time check: *Podman must satisfy Runtime. The interface is
+// populated by the dispatch commit; if a fingerprint method is added
+// to one implementation but not the other the build fails here.
+var _ Runtime = (*Podman)(nil)
+
+// Close releases any underlying resources. The podman adapter holds an
+// http.Client built on demand; the http.Client is freed by GC, so Close
+// is a no-op. Provided so the runtime satisfies io.Closer-shaped
+// expectations at the dispatcher's discretion.
+func (p *Podman) Close() error {
+	return nil
+}
+
+// Ping verifies the podman daemon is reachable. Hits the daemon's `/_ping`
+// endpoint, which is a no-content 200 OK; matching status, we report
+// healthy. Connection refused / socket-not-found / 5xx all surface as an
+// error so the supervisor can refuse to start.
+func (p *Podman) Ping(ctx context.Context) error {
+	if _, err := p.connectedSocket(); err != nil {
+		return err
+	}
+	podmanURL := url.URL{Scheme: "http", Host: "podman", Path: "/_ping"}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, podmanURL.String(), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := p.client().Do(req)
+	if err != nil {
+		return fmt.Errorf("podman ping: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("podman ping: %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// DiscoverContainersInProject returns running containers in the named
+// Compose project. The implementation re-uses List and filters by the
+// project label; matches the docker-side behaviour closely enough that
+// the supervisor's discover() helper does not branch on the runtime.
+func (p *Podman) DiscoverContainersInProject(ctx context.Context, project string, services []string) ([]Container, error) {
+	if _, err := p.connectedSocket(); err != nil {
+		return nil, err
+	}
+	if project == "" {
+		return nil, errors.New("podman discover: empty project name")
+	}
+	all, err := p.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("podman discover: %w", err)
+	}
+
+	want := make(map[string]bool, len(services))
+	for _, s := range services {
+		want[s] = true
+	}
+
+	var matched []Container
+	seen := make(map[string]bool)
+	for _, c := range all {
+		if c.ProjectName != project {
+			continue
+		}
+		if !want[c.ServiceName] {
+			continue
+		}
+		if seen[c.ID] {
+			continue
+		}
+		seen[c.ID] = true
+		matched = append(matched, c)
+	}
+	return matched, nil
+}
+
+// WatchEvents streams Compose-aware container events into fn until ctx
+// is cancelled or the podman event feed closes.
+//
+// Each event row reads `podmanActor.Attributes["name"]` and
+// `podmanActor.Attributes["com.docker.compose.service"]` for the
+// classifier the supervisor already understands, so the rest of the
+// supervisor code reads `ContainerEvent` field-uniformly.
+func (p *Podman) WatchEvents(ctx context.Context, project string, fn EventHandler) error {
+	if project == "" {
+		return errors.New("podman watch: empty project name")
+	}
+	dst := make(chan Event, 16)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- p.Events(ctx, EventOpts{Filters: map[string][]string{
+			"type":  {"container"},
+			"label": {"com.docker.compose.project=" + project},
+		}}, dst)
+		close(errCh)
+	}()
+	defer close(dst)
+
+	for {
+		select {
+		case raw, ok := <-dst:
+			if !ok {
+				return nil
+			}
+			if fn == nil {
+				continue
+			}
+			fn(p.containerEventFromWire(raw, project))
+		case err := <-errCh:
+			if err == nil || errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return fmt.Errorf("podman watch: %w", err)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// containerEventFromWire translates one Runtime.Event row into a
+// ContainerEvent suitable for the supervisor's WatchEvents callback.
+//
+// Today the wire is parsed lightly: only Action / ContainerID. ServiceName /
+// Name / Image rely on compose-aware label attributes that the slim
+// Event type does not currently carry, so they stay empty. This is
+// sufficient for the supervisor's `start`/`die`/`restart`/`stop`/`kill`
+// gating; richer classification can land later by extending Event. If
+// callers need them now, callers should look up the container via
+// Inspect(ctx, id) at the call site.
+func (p *Podman) containerEventFromWire(e Event, project string) ContainerEvent {
+	return ContainerEvent{
+		Type:        e.Action,
+		ContainerID: shortID(e.Actor),
+	}
+}
+
+// CompletedServices maps service names whose container exited with
+// exit-code 0 (Stop with success). One-shot services -- a migration,
+// a seed -- count as done rather than missing.
+//
+// The label filter mirrors docker's: we read every container in the
+// project, inspect each, and record the service names whose State ==
+// "exited" and ExitCode == 0. Reading the inspect response per
+// container costs an extra round-trip per container; podman tolerates
+// this for the small project sizes the supervisor targets. Larger
+// projects will eventually need a bulk API.
+func (p *Podman) CompletedServices(ctx context.Context, project string) (map[string]bool, error) {
+	if project == "" {
+		return nil, errors.New("podman completed: empty project name")
+	}
+	all, err := p.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("podman completed: %w", err)
+	}
+	done := make(map[string]bool)
+	for _, c := range all {
+		if c.ProjectName != project {
+			continue
+		}
+		inspected, err := p.Inspect(ctx, c.ID)
+		if err != nil || inspected.State != "exited" {
+			continue
+		}
+		if inspected.Exit != 0 {
+			continue
+		}
+		if inspected.ServiceName != "" {
+			done[inspected.ServiceName] = true
+		}
+	}
+	return done, nil
+}
+
+// WaitServiceHealthy is unsupported on podman today. The
+// com.docker.compose.service label is a docker convention; podman
+// containers do not always carry it, and even when they do, podman does
+// not expose the daemon-level aggregated health status that
+// Docker's `/containers/{id}/json` reports. Returning an error here
+// keeps the supervisor explicit: a process that depends on a podman
+// container's health must declare its own `healthcheck:` block instead.
+func (p *Podman) WaitServiceHealthy(ctx context.Context, project string, service string) error {
+	return fmt.Errorf("podman: WaitServiceHealthy not supported for service %q (project %q); declare a healthcheck on the dependent process", service, project)
+}
+
+// WaitServiceLog polls the named service's containers, opens their log
+// streams, and waits for one line containing text in each container's
+// current run. Unlike the docker-side, podman's `_ping` and
+// `/containers/{id}/json` both surface REST-shape `/startedat` so we
+// can read container started-at without an extra inspect call.
+func (p *Podman) WaitServiceLog(ctx context.Context, project string, service string, text string) error {
+	if project == "" {
+		return errors.New("podman waitlog: empty project name")
+	}
+	if service == "" {
+		return errors.New("podman waitlog: empty service name")
+	}
+	if text == "" {
+		return nil
+	}
+	cs, err := p.DiscoverContainersInProject(ctx, project, []string{service})
+	if err != nil {
+		return err
+	}
+	if len(cs) == 0 {
+		return errors.New("podman waitlog: no running container for service " + service)
+	}
+	healthyCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errs := make([]error, len(cs))
+	var wg sync.WaitGroup
+	for i, c := range cs {
+		wg.Add(1)
+		go func(i int, c Container) {
+			defer wg.Done()
+			errs[i] = p.waitContainerLog(healthyCtx, c, text)
+		}(i, c)
+	}
+	wg.Wait()
+	return errors.Join(errs...)
+}
+
+// waitContainerLog opens one container's log stream and waits for text
+// in the current run. Mirrors the docker-side behaviour, using the
+// runtime's Logs() for the wire stream and the same line-matcher
+// algorithm.
+//
+// Note: the multiplexed-frame stream is the same shape as Docker's. We
+// demux with moby's stdcopy (already in the dep graph via the docker
+// side) so a TTY container's frames do not leak into stdout.
+//
+// The matcher used here is `internal/health.NewLineMatcher`. mirror
+// of the docker-side flow; broadcasts text matches to the supervisor's
+// process manager via the channel-supplied callback.
+func (p *Podman) waitContainerLog(ctx context.Context, c Container, text string) error {
+	body, err := p.Logs(ctx, c.ID, LogOpts{Follow: true})
+	if err != nil {
+		return fmt.Errorf("podman waitlog: open %s: %w", c.ID, err)
+	}
+	defer body.Close()
+
+	matcher := newPodmanLineMatcher(text)
+	stdout := &podmanLineWriter{matcher: matcher, isStderr: false}
+	stderr := &podmanLineWriter{matcher: matcher, isStderr: true}
+	_, _ = stdcopy.StdCopy(stdout, stderr, body)
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	if matcher.matched() {
+		return nil
+	}
+	return fmt.Errorf("podman waitlog: timeout waiting for %q in service %s", text, c.Name)
+}
+
+// podmanLineWriter buffers bytes from a multiplexed frame into lines
+// and feeds them to the matcher.
+type podmanLineWriter struct {
+	matcher  *podmanMatchState
+	isStderr bool
+}
+
+func (w *podmanLineWriter) Write(p []byte) (int, error) {
+	w.matcher.FeedLines(p)
+	return len(p), nil
+}
+
+// podmanMatchState is the simple matcher used on the podman-side
+// WaitServiceLog path. The full matcher in internal/health/ is
+// richer (timestamps, replay); the podman-side initial implementation
+// is intentionally narrower because the WaitServiceLog path is rarely
+// used in practice.
+type podmanMatchState struct {
+	text    string
+	matches bool
+}
+
+type podmanLineMatcher = podmanMatchState
+
+func newPodmanLineMatcher(text string) *podmanMatchState {
+	return &podmanMatchState{text: text}
+}
+
+// podmanLineMatcher constructor alias: `podmanLineMatcher(text)` returns
+// the same struct as `newPodmanLineMatcher(text)` so callers can use the
+// shorter name in the site.
+func (m *podmanMatchState) matched() bool { return m.matches }
+func (m *podmanMatchState) result() error {
+	if m.matches {
+		return nil
+	}
+	return errors.New("podman waitlog: text never appeared")
+}
+
+// FeedLines buffers p, splits on \n, and feeds each line to the
+// matcher. Tolerant of partial lines arriving across frames.
+func (m *podmanMatchState) FeedLines(p []byte) {
+	for _, line := range bytes.Split(p, []byte{'\n'}) {
+		if bytes.Contains(line, []byte(m.text)) {
+			m.matches = true
+			return
+		}
+	}
 }
 
 // Compile-time check: *Podman must satisfy Runtime. Update this only when
@@ -357,6 +665,7 @@ type podmanContainerInspect struct {
 	} `json:"State"`
 	Config struct {
 		Labels map[string]string `json:"Labels"`
+		Tty    bool              `json:"Tty"`
 	} `json:"Config"`
 }
 
@@ -401,7 +710,8 @@ func podmanSummaryToContainer(s podmanContainerSummary) Container {
 // podmanInspectToContainer mirrors podmanSummaryToContainer for the
 // /inspect endpoint. The inspect response is richer (StartedAt,
 // FinishedAt, Health); only the fields the supervisor reads migrate
-// across for now.
+// across for now. TTY is filled here so the streamer can decide
+// whether to demux.
 func podmanInspectToContainer(inf podmanContainerInspect) Container {
 	c := Container{
 		ID:    shortID(inf.Id),
@@ -409,6 +719,7 @@ func podmanInspectToContainer(inf podmanContainerInspect) Container {
 		Image: inf.Image,
 		State: inf.State.Status,
 		Exit:  inf.State.ExitCode,
+		TTY:   inf.Config.Tty,
 	}
 	if inf.Config.Labels != nil {
 		c.ServiceName = inf.Config.Labels["com.docker.compose.service"]

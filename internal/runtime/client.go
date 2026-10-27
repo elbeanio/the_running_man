@@ -264,9 +264,10 @@ func dockerSummaryToContainer(s container.Summary) Container {
 }
 
 // dockerInspectToContainer adapts a moby inspect response into the
-// runtime's Container. The supervisor reads State.Status, Exit, and
-// the compose labels; the rest of InspectResponse is still reachable
-// through the underlying moby client.
+// runtime's Container. The supervisor reads State.Status, Exit, TTY
+// (for log-stream demux), and the compose labels; the rest of
+// InspectResponse is still reachable through the underlying moby
+// client.
 func dockerInspectToContainer(inf container.InspectResponse) Container {
 	c := Container{
 		ID:    shortID(inf.ID),
@@ -277,9 +278,12 @@ func dockerInspectToContainer(inf container.InspectResponse) Container {
 		c.State = string(inf.State.Status)
 		c.Exit = inf.State.ExitCode
 	}
-	if inf.Config != nil && inf.Config.Labels != nil {
-		c.ServiceName = inf.Config.Labels["com.docker.compose.service"]
-		c.ProjectName = inf.Config.Labels["com.docker.compose.project"]
+	if inf.Config != nil {
+		c.TTY = inf.Config.Tty
+		if inf.Config.Labels != nil {
+			c.ServiceName = inf.Config.Labels["com.docker.compose.service"]
+			c.ProjectName = inf.Config.Labels["com.docker.compose.project"]
+		}
 	}
 	return c
 }
@@ -411,15 +415,6 @@ func GetProjectNameFromPath(composePath string) string {
 	return projectName
 }
 
-// ContainerEvent represents a Docker container lifecycle event
-type ContainerEvent struct {
-	Type        string // start, stop, die, restart, kill
-	ContainerID string
-	Name        string
-	ServiceName string // the com.docker.compose.service label
-	Image       string
-}
-
 // containerStartedAt returns when the container's current run started. A
 // restart keeps the container's ID, so this is what tells one run from the
 // next.
@@ -433,9 +428,6 @@ func (c *Client) containerStartedAt(ctx context.Context, id string) (time.Time, 
 	}
 	return time.Parse(time.RFC3339Nano, info.Container.State.StartedAt)
 }
-
-// EventHandler is called when a container lifecycle event occurs
-type EventHandler func(event ContainerEvent)
 
 // WatchEvents watches Docker events and calls handler for container lifecycle events
 // This function blocks until the context is cancelled

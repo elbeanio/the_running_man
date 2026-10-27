@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
-	"github.com/moby/moby/client"
 
 	"github.com/elbeanio/the_running_man/internal/termout"
 )
@@ -32,9 +31,14 @@ type StreamEndHandler func(source string, isStderr bool)
 // in memory indefinitely.
 const maxContainerLineBytes = 1024 * 1024
 
-// ContainerStreamer streams logs from a Docker container
+// ContainerStreamer streams logs from a Docker or podman container.
+//
+// The streamer holds a Runtime rather than a *Client because the same
+// multiplexing-and-tail pattern applies to both runtimes; the runtime
+// caller's `Logs()` and `Inspect()` adapt the wire shape and the
+// streamer's consume() handles the multiplex demux uniformly.
 type ContainerStreamer struct {
-	client      *Client
+	runtime     Runtime
 	containerID string
 	name        string
 	handler     LineHandler
@@ -60,11 +64,11 @@ type ContainerStreamer struct {
 // point -- but it is bounded to the retention window, because replayed lines
 // arrive now and would otherwise be held for a full retention period however
 // old they were.
-func NewContainerStreamer(client *Client, containerID, name string, handler LineHandler, history time.Duration) *ContainerStreamer {
+func NewContainerStreamer(rt Runtime, containerID, name string, handler LineHandler, history time.Duration) *ContainerStreamer {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &ContainerStreamer{
-		client:      client,
+		runtime:     rt,
 		containerID: containerID,
 		name:        name,
 		handler:     handler,
@@ -104,23 +108,15 @@ func (s *ContainerStreamer) Start() error {
 	// the container is inspected first. If inspection fails it is assumed not to
 	// be a TTY, which is Compose's default.
 	tty := false
-	if info, err := s.client.cli.ContainerInspect(s.ctx, s.containerID, client.ContainerInspectOptions{}); err == nil &&
-		info.Container.Config != nil {
-		tty = info.Container.Config.Tty
+	if info, err := s.runtime.Inspect(s.ctx, s.containerID); err == nil {
+		tty = info.TTY
 	}
 
-	options := client.ContainerLogsOptions{
-		ShowStdout: true,
-		ShowStderr: true,
+	logStream, err := s.runtime.Logs(s.ctx, s.containerID, LogOpts{
 		Follow:     true,
-		// Docker's own timestamps, so a replayed line carries when it was
-		// written. Without them every line was stamped on arrival, and history
-		// from before Running Man attached was reported as having just happened.
 		Timestamps: true,
 		Since:      s.since(),
-	}
-
-	logStream, err := s.client.cli.ContainerLogs(s.ctx, s.containerID, options)
+	})
 	if err != nil {
 		return fmt.Errorf("failed to attach to container logs: %w", err)
 	}

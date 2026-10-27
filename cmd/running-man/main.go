@@ -131,10 +131,11 @@ func composeServices(compose *runtime.ComposeFile, profiles []string) config.Com
 }
 
 // composeReadiness is how the process manager learns that a Compose service
-// a process depends on is ready: Docker's own health status for a service
-// whose Compose file defines a healthcheck, otherwise the healthcheck declared
-// under docker_compose.healthchecks. Validation has already ensured one exists.
-func composeReadiness(client *runtime.Client, project string, compose *runtime.ComposeFile,
+// a process depends on is ready: the runtime's per-service health status
+// for a service whose Compose file defines a healthcheck, otherwise the
+// healthcheck declared under docker_compose.healthchecks. Validation has
+// already ensured one exists.
+func composeReadiness(rt runtime.Runtime, project string, compose *runtime.ComposeFile,
 	declared map[string]config.HealthcheckConfig) process.ServiceReadiness {
 	return func(ctx context.Context, service string) error {
 		timeout := config.DefaultHealthcheckTimeout
@@ -143,7 +144,7 @@ func composeReadiness(client *runtime.Client, project string, compose *runtime.C
 
 		if svc, ok := compose.Services[service]; ok && svc.HasHealthcheck() {
 			what = "its Compose healthcheck"
-			check = func(ctx context.Context) error { return client.WaitServiceHealthy(ctx, project, service) }
+			check = func(ctx context.Context) error { return rt.WaitServiceHealthy(ctx, project, service) }
 		} else if hc, ok := declared[service]; ok {
 			timeout = hc.GetTimeout()
 			switch {
@@ -155,7 +156,7 @@ func composeReadiness(client *runtime.Client, project string, compose *runtime.C
 				check = func(ctx context.Context) error { return health.HTTP(ctx, hc.HTTP) }
 			default:
 				what = fmt.Sprintf("its healthcheck (log %q)", hc.Log)
-				check = func(ctx context.Context) error { return client.WaitServiceLog(ctx, project, service, hc.Log) }
+				check = func(ctx context.Context) error { return rt.WaitServiceLog(ctx, project, service, hc.Log) }
 			}
 		} else {
 			return fmt.Errorf("it has no healthcheck")
@@ -448,18 +449,6 @@ func runCommand(args []string) {
 			config.RuntimeDocker, config.RuntimePodman, finalRuntime)
 		os.Exit(1)
 	}
-	// Today the supervisor is docker-side end-to-end; podman is recognised
-	// in config and CLI but the dispatch into the runtime.Runtime
-	// interface is a follow-up. Surface the gap honestly: refuse to
-	// silently override the user's intent, but also fail closed rather
-	// than pretending we honoured it.
-	if finalRuntime != config.RuntimeDocker {
-		fmt.Fprintf(os.Stderr,
-			"[running-man] runtime=%q is recognised but not yet wired into the supervisor.\n"+
-				"[running-man] Falling back to %q for this run; podman dispatch lands in a follow-up commit.\n",
-			finalRuntime, config.RuntimeDocker)
-		finalRuntime = config.RuntimeDocker
-	}
 
 	// Was tracing actually requested, or is it merely on by default?
 	//
@@ -723,23 +712,35 @@ func runCommand(args []string) {
 			fmt.Printf("  not watched (inactive profiles): %s\n", strings.Join(gated, ", "))
 		}
 
-		// Create Docker client
-		dockerClient, err = runtime.NewClient()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[running-man] Failed to create Docker client: %v\n", err)
-			fmt.Fprintf(os.Stderr, "[running-man] Make sure Docker is running and accessible\n")
-			os.Exit(1)
+		// Create container-runtime client. The supervisor's call sites
+		// hold a runtime.Runtime and the dispatcher selects docker or
+		// podman here, based on the resolved `finalRuntime` from earlier
+		// in this function.
+		var rt runtime.Runtime
+		switch finalRuntime {
+		case config.RuntimePodman:
+			fmt.Printf("Container runtime: podman\n")
+			rt = runtime.NewPodman()
+		default:
+			fmt.Printf("Container runtime: docker\n")
+			dockerClient, err = runtime.NewClient()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[running-man] Failed to create Docker client: %v\n", err)
+				fmt.Fprintf(os.Stderr, "[running-man] Make sure Docker is running and accessible\n")
+				os.Exit(1)
+			}
+			defer dockerClient.Close()
+			rt = dockerClient
 		}
-		defer dockerClient.Close()
 
-		// Check Docker availability
-		if err = dockerClient.Ping(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "[running-man] Docker daemon not available: %v\n", err)
+		// Check runtime availability
+		if err = rt.Ping(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "[running-man] runtime not available: %v\n", err)
 			os.Exit(1)
 		}
 
 		discover := func() ([]runtime.Container, error) {
-			return dockerClient.DiscoverContainersInProject(ctx, projectName, serviceNames)
+			return rt.DiscoverContainersInProject(ctx, projectName, serviceNames)
 		}
 
 		containers, err := discover()
@@ -762,7 +763,7 @@ func runCommand(args []string) {
 		// Part of the stack running is not all of it. Offer to start the rest,
 		// by the same rules as starting the whole stack.
 		completed := func() map[string]bool {
-			done, err := dockerClient.CompletedServices(ctx, projectName)
+			done, err := rt.CompletedServices(ctx, projectName)
 			if err != nil {
 				return nil
 			}
@@ -792,14 +793,14 @@ func runCommand(args []string) {
 		// Replays as much history as retention would keep, and no more:
 		// replayed lines arrive now, so anything older would otherwise be held
 		// for a full retention window regardless of its age.
-		containerWatcher = runtime.NewWatcher(dockerClient, projectName, serviceNames, finalRetention, dockerLineHandler, flushStream)
+		containerWatcher = runtime.NewWatcher(rt, projectName, serviceNames, finalRetention, dockerLineHandler, flushStream)
 		for _, container := range containers {
 			if err := containerWatcher.Attach(container); err != nil {
 				fmt.Fprintf(os.Stderr, "[running-man] Failed to start log streamer for %s: %v\n", container.Name, err)
 			}
 		}
 		containerWatcher.Watch(discover)
-		serviceReady = composeReadiness(dockerClient, projectName, compose, finalCompose.Healthchecks)
+		serviceReady = composeReadiness(rt, projectName, compose, finalCompose.Healthchecks)
 
 		fmt.Println()
 	}
