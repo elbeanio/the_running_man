@@ -360,6 +360,9 @@ func runCommand(args []string) {
 	configPath := fs.String("config", "", "Path to running-man.yml config file")
 	dockerCompose := fs.String("docker-compose", "", "Path to docker-compose.yml file (overrides config file)")
 	noTUI := fs.Bool("no-tui", false, "Disable TUI and run in headless mode")
+	runtimeKind := fs.String("runtime", "",
+		fmt.Sprintf("Container runtime: %s|%s (default: %s)",
+			config.RuntimeDocker, config.RuntimePodman, config.RuntimeDefault))
 	composeProfiles := &stringListFlag{}
 	fs.Var(composeProfiles, "compose-profile",
 		"Active Docker Compose profile (repeatable; overrides config)")
@@ -426,11 +429,24 @@ func runCommand(args []string) {
 	finalMaxEntries := defaultMaxEntries
 	finalMaxBytes := int64(defaultMaxBytes)
 	finalShell := "/bin/sh"
+	finalRuntime := config.RuntimeDefault
 	if cfg != nil {
 		finalRetention = cfg.GetRetentionDuration()
 		finalMaxEntries = cfg.GetMaxEntries()
 		finalMaxBytes = cfg.GetMaxBytes()
 		finalShell = cfg.GetShell()
+		finalRuntime = cfg.GetRuntime()
+	}
+	// CLI overrides config; the empty-string default for --runtime means
+	// "neither side has set it" and falls through to the default.
+	if *runtimeKind != "" {
+		finalRuntime = *runtimeKind
+	}
+	if !config.IsRuntimeValid(finalRuntime) {
+		fmt.Fprintf(os.Stderr,
+			"Error: --runtime must be %q or %q, got %q\n",
+			config.RuntimeDocker, config.RuntimePodman, finalRuntime)
+		os.Exit(1)
 	}
 
 	// Was tracing actually requested, or is it merely on by default?

@@ -36,6 +36,14 @@ const (
 	// so a count alone does not bound memory.
 	DefaultMaxSpanBytes = 256 * 1024 * 1024 // 256MB
 
+	// Container runtime selection. Only docker and podman are recognised;
+	// podman is opt-in and reported but does not yet drive the supervisor
+	// (the wiring lands together with the docker-side interface
+	// satisfaction in a follow-up commit).
+	RuntimeDocker = "docker"
+	RuntimePodman = "podman"
+	RuntimeDefault = RuntimeDocker
+
 	// socketDirName and socketFileName mirror internal/instance, for the
 	// api_port rejection message. Duplicated rather than imported to keep
 	// config free of a dependency it otherwise has no use for.
@@ -81,6 +89,14 @@ type Config struct {
 
 	// Tracing configuration
 	Tracing TracingConfig `yaml:"tracing,omitempty"`
+
+	// Runtime selects which container engine connects to logs, events, and
+	// the compose CLI. Today the supervisor is docker-only end-to-end; the
+	// value here is read at startup so the wire-up is forward-compatible
+	// with the follow-up commit that switches the docker-side calls through
+	// the runtime interface.
+	// Default: docker
+	Runtime string `yaml:"runtime,omitempty"`
 }
 
 // TracingConfig represents OpenTelemetry tracing configuration
@@ -236,6 +252,14 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("tracing configuration error: %w", err)
 	}
 
+	// Validate container runtime selection. Empty is allowed (defaults to
+	// docker); anything other than docker or podman is rejected so a typo
+	// does not silently bring up the wrong kind of supervisor.
+	if !IsRuntimeValid(c.Runtime) {
+		return fmt.Errorf("runtime: must be %q or %q, got %q",
+			RuntimeDocker, RuntimePodman, c.Runtime)
+	}
+
 	return nil
 }
 
@@ -306,6 +330,29 @@ func (c *Config) GetShell() string {
 		return DefaultShell
 	}
 	return c.Shell
+}
+
+// GetRuntime returns the configured container runtime, defaulting to
+// docker when none is set. Today this value is read at startup only;
+// the supervisor itself is still docker-side end-to-end. The field
+// exists so the user can declare their intent in running-man.yml and
+// see what the supervisor will do when the switch lands.
+func (c *Config) GetRuntime() string {
+	if c.Runtime == "" {
+		return RuntimeDefault
+	}
+	return c.Runtime
+}
+
+// IsRuntimeValid reports whether the value is recognised by Validate.
+// Empty string is treated as "unset" elsewhere; callers need an explicit
+// check, and IsRuntimeValid documents the recognised set.
+func IsRuntimeValid(value string) bool {
+	switch value {
+	case "", RuntimeDocker, RuntimePodman:
+		return true
+	}
+	return false
 }
 
 // Validate validates tracing configuration
