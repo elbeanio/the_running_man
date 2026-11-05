@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/elbeanio/the_running_man/internal/config"
-	"github.com/elbeanio/the_running_man/internal/docker"
+	"github.com/elbeanio/the_running_man/internal/runtime"
 )
 
 // Starting containers is a consequential thing to do to someone's machine, so
@@ -110,7 +110,7 @@ func TestTracingRequested(t *testing.T) {
 // them as missing would ask to start the stack on every run.
 func TestMissingServices(t *testing.T) {
 	expected := []string{"db", "db-migrate", "denodo", "keycloak", "vault-setup"}
-	running := []docker.Container{{ServiceName: "denodo"}}
+	running := []runtime.Container{{ServiceName: "denodo"}}
 	completed := map[string]bool{"db-migrate": true}
 
 	got := missingServices(expected, running, completed)
@@ -119,7 +119,7 @@ func TestMissingServices(t *testing.T) {
 		t.Errorf("missing = %v, want %v", got, want)
 	}
 
-	if got := missingServices([]string{"db"}, []docker.Container{{ServiceName: "db"}}, nil); len(got) != 0 {
+	if got := missingServices([]string{"db"}, []runtime.Container{{ServiceName: "db"}}, nil); len(got) != 0 {
 		t.Errorf("nothing should be missing: %v", got)
 	}
 }

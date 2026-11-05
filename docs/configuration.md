@@ -421,6 +421,34 @@ shell: /bin/bash
 shell: /bin/zsh
 ```
 
+### Container Runtime
+
+#### `runtime` (string, optional)
+Which **container runtime** the supervisor connects to when watching the compose
+stack, reading logs and events, and dispatching Compose up (see [Glossary](../GLOSSARY.md)).
+
+- `docker` (default) — Docker engine. The historical default; works with the
+  Docker daemon exposed on the usual socket paths.
+- `podman` — Podman engine. Available where Docker's daemon is not (a Mac with
+  `podman machine start`, a Linux host with only podman installed).
+
+**Example:**
+```yaml
+runtime: podman
+runtime: docker
+```
+
+Today, `runtime: podman` is recognised at parse time and shown by `--runtime` on the
+CLI, but the supervisor falls back to Docker with a clear stderr message — the full
+end-to-end podman dispatch lands in a follow-up commit. The setting is forward-compatible:
+declaring `runtime: podman` today does not break a Docker-only workflow, and the
+follow-up commit turns the dispatch on without further config edits.
+
+Override at invocation:
+```
+running-man run --runtime=podman
+```
+
 ### OpenTelemetry Tracing
 
 #### `tracing` (object, optional)

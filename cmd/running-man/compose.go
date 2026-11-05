@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/elbeanio/the_running_man/internal/config"
-	"github.com/elbeanio/the_running_man/internal/docker"
+	"github.com/elbeanio/the_running_man/internal/runtime"
 )
 
 // Offering to start a Compose stack.
@@ -27,8 +27,8 @@ func offerToStartCompose(
 	ctx context.Context,
 	cfg config.DockerComposeConfig,
 	projectName string,
-	discover func() ([]docker.Container, error),
-) ([]docker.Container, error) {
+	discover func() ([]runtime.Container, error),
+) ([]runtime.Container, error) {
 	mode := cfg.GetStart()
 
 	notRunning := fmt.Errorf(
@@ -41,14 +41,14 @@ func offerToStartCompose(
 		return nil, notRunning
 	}
 
-	composeCmd, err := docker.FindComposeCommand(ctx)
+	composeCmd, err := runtime.FindComposeCommand(ctx)
 	if err != nil {
 		// Not a hard failure of ours: the stack simply is not running and we
 		// cannot offer to help. Say both things.
 		return nil, fmt.Errorf("%w.\n[running-man] Also: %v", notRunning, err)
 	}
 
-	opts := docker.ComposeOptions{
+	opts := runtime.ComposeOptions{
 		Files:       cfg.Files,
 		Profiles:    cfg.Profiles,
 		ProjectName: cfg.ProjectName,
@@ -63,14 +63,14 @@ func offerToStartCompose(
 				"[running-man] Not prompting because stdout is not a terminal; "+
 				"use --compose-start=always to start it without asking", notRunning)
 		}
-		if !confirmComposeUp(os.Stdin, projectName, docker.DisplayCommand(composeCmd, opts)) {
+		if !confirmComposeUp(os.Stdin, projectName, runtime.DisplayCommand(composeCmd, opts)) {
 			return nil, fmt.Errorf("declined to start the Compose stack")
 		}
 	}
 
-	fmt.Printf("[running-man] Starting Compose stack: %s\n", docker.DisplayCommand(composeCmd, opts))
+	fmt.Printf("[running-man] Starting Compose stack: %s\n", runtime.DisplayCommand(composeCmd, opts))
 
-	out, err := docker.Up(ctx, composeCmd, opts)
+	out, err := runtime.Up(ctx, composeCmd, opts)
 	if trimmed := strings.TrimSpace(out); trimmed != "" {
 		// Compose's own output, indented so it is clearly not ours. Shown on
 		// success too: it lists what was created, which is exactly what someone
@@ -80,7 +80,7 @@ func offerToStartCompose(
 		}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("`%s` failed: %w", docker.DisplayCommand(composeCmd, opts), err)
+		return nil, fmt.Errorf("`%s` failed: %w", runtime.DisplayCommand(composeCmd, opts), err)
 	}
 
 	// Containers do not register instantly, and failing immediately after being
@@ -131,9 +131,9 @@ func confirmComposeUp(in io.Reader, projectName, command string) bool {
 // waitForContainers polls discovery until containers appear or time runs out.
 func waitForContainers(
 	ctx context.Context,
-	discover func() ([]docker.Container, error),
+	discover func() ([]runtime.Container, error),
 	timeout time.Duration,
-) ([]docker.Container, error) {
+) ([]runtime.Container, error) {
 	deadline := time.Now().Add(timeout)
 
 	for {
@@ -163,7 +163,7 @@ func waitForContainers(
 // have not run to completion either. One-shot services -- a migration, a seed
 // -- exit by design; counting them as missing would ask to start the stack on
 // every run.
-func missingServices(expected []string, running []docker.Container, completed map[string]bool) []string {
+func missingServices(expected []string, running []runtime.Container, completed map[string]bool) []string {
 	up := make(map[string]bool, len(running))
 	for _, c := range running {
 		up[c.ServiceName] = true
@@ -195,27 +195,27 @@ func offerToStartMissing(
 	cfg config.DockerComposeConfig,
 	projectName string,
 	missing []string,
-	discover func() ([]docker.Container, error),
+	discover func() ([]runtime.Container, error),
 	completed func() map[string]bool,
-	current []docker.Container,
-) []docker.Container {
+	current []runtime.Container,
+) []runtime.Container {
 	mode := cfg.GetStart()
 	if mode == config.ComposeStartNever {
 		return current
 	}
-	composeCmd, err := docker.FindComposeCommand(ctx)
+	composeCmd, err := runtime.FindComposeCommand(ctx)
 	if err != nil {
 		fmt.Printf("[running-man] Cannot offer to start the missing services: %v\n", err)
 		return current
 	}
-	opts := docker.ComposeOptions{
+	opts := runtime.ComposeOptions{
 		Files:       cfg.Files,
 		Profiles:    cfg.Profiles,
 		ProjectName: cfg.ProjectName,
 		EnvFile:     cfg.EnvFile,
 		Services:    missing,
 	}
-	command := docker.DisplayCommand(composeCmd, opts)
+	command := runtime.DisplayCommand(composeCmd, opts)
 
 	if mode == config.ComposeStartAsk {
 		if !stdoutIsTerminal() {
@@ -229,7 +229,7 @@ func offerToStartMissing(
 	}
 
 	fmt.Printf("[running-man] Starting: %s\n", command)
-	out, err := docker.Up(ctx, composeCmd, opts)
+	out, err := runtime.Up(ctx, composeCmd, opts)
 	if trimmed := strings.TrimSpace(out); trimmed != "" {
 		for _, line := range strings.Split(trimmed, "\n") {
 			fmt.Printf("    %s\n", line)
@@ -280,13 +280,13 @@ func confirmStartMissing(in io.Reader, projectName string, missing []string, com
 // the services still missing.
 func waitForServices(
 	ctx context.Context,
-	discover func() ([]docker.Container, error),
+	discover func() ([]runtime.Container, error),
 	completed func() map[string]bool,
 	services []string,
 	timeout time.Duration,
-) ([]docker.Container, []string) {
+) ([]runtime.Container, []string) {
 	deadline := time.Now().Add(timeout)
-	var containers []docker.Container
+	var containers []runtime.Container
 	still := services
 	for {
 		if found, err := discover(); err == nil {

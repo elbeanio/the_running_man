@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/elbeanio/the_running_man/internal/docker"
+	"github.com/elbeanio/the_running_man/internal/runtime"
 )
 
 // The summary dependency validation works from: which services the active
@@ -27,7 +27,7 @@ services:
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
-	cf, err := docker.ParseComposeFiles([]string{path})
+	cf, err := runtime.ParseComposeFiles([]string{path})
 	if err != nil {
 		t.Fatal(err)
 	}
