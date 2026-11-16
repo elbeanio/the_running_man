@@ -1,6 +1,7 @@
-package docker
+package runtime
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -44,7 +45,7 @@ func (d *fakeDaemon) setStarted(id string, at time.Time) {
 func newTestWatcher() (*Watcher, *fakeDaemon) {
 	d := &fakeDaemon{startedAt: map[string]time.Time{}}
 	w := NewWatcher(nil, "proj", []string{"api"}, time.Hour, nil, nil)
-	w.startedAt = func(id string) (time.Time, error) {
+	w.startedAt = func(ctx context.Context, id string) (time.Time, error) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		return d.startedAt[id], nil

@@ -12,7 +12,7 @@ import (
 // Nothing outside internal/termout may write to the terminal directly.
 //
 // This exists because an assumption was wrong twice. internal/process gated its
-// pass-through behind a `silent` flag; internal/docker was assumed to share it
+// pass-through behind a `silent` flag; internal/runtime was assumed to share it
 // and had no gate at all, so every container log line was echoed over the TUI's
 // frame -- reported from a Compose stack after the first round of fixes claimed
 // to have handled it. A grep is the only thing that actually checks.

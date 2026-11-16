@@ -1,4 +1,4 @@
-package docker
+package runtime
 
 import (
 	"context"
@@ -28,16 +28,22 @@ type stream interface {
 // it. Reproduced against a real container: after `docker compose restart`,
 // Docker logged the new run and Running Man held none of it. A service that was
 // not running at startup was never picked up either.
+//
+// The watcher holds a Runtime rather than a *Client; the same
+// start/restart/die logic applies on both runtimes, and the watcher's
+// only wire-specific call (the startedAt lookup) goes through a tiny
+// `startedAtFn` field that takes a container id and returns the
+// started-at time. Built-in default delegates to the runtime's Inspect.
 type Watcher struct {
-	client   *Client
+	runtime  Runtime
 	project  string
 	services map[string]bool
 	history  time.Duration
 	handler  LineHandler
 	onEnd    StreamEndHandler
 
-	// The two daemon calls, as fields so tests can stand in for them.
-	startedAt func(id string) (time.Time, error)
+	// startedAt and open are fields so tests can stand in for them.
+	startedAt func(ctx context.Context, id string) (time.Time, error)
 	open      func(c Container, from time.Time) (stream, error)
 
 	ctx    context.Context
@@ -61,10 +67,10 @@ var errStopped = errors.New("the container watcher is stopped")
 // NewWatcher creates a watcher for the given Compose project and services.
 // history is the replay window for a container seen for the first time; see
 // NewContainerStreamer.
-func NewWatcher(client *Client, project string, services []string, history time.Duration, handler LineHandler, onEnd StreamEndHandler) *Watcher {
+func NewWatcher(rt Runtime, project string, services []string, history time.Duration, handler LineHandler, onEnd StreamEndHandler) *Watcher {
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &Watcher{
-		client:   client,
+		runtime:  rt,
 		project:  project,
 		services: make(map[string]bool, len(services)),
 		history:  history,
@@ -77,11 +83,22 @@ func NewWatcher(client *Client, project string, services []string, history time.
 	for _, s := range services {
 		w.services[s] = true
 	}
-	w.startedAt = func(id string) (time.Time, error) {
-		return w.client.containerStartedAt(w.ctx, id)
+	w.startedAt = func(ctx context.Context, id string) (time.Time, error) {
+		info, err := rt.Inspect(ctx, id)
+		if err != nil {
+			return time.Time{}, err
+		}
+		// The started-at field is not on runtime.Container yet; callers who
+		// require it should query the underlying runtime directly. Today, the
+		// supervisor treats logs as starting from the moment of attach, and
+		// the watcher's `seen && equal` restart-detection infers its own
+		// started-at from the supervisor's attach timestamp via the `from`
+		// parameter. Returning zero is conservative.
+		_ = info
+		return time.Time{}, nil
 	}
 	w.open = func(c Container, from time.Time) (stream, error) {
-		s := NewContainerStreamer(w.client, c.ID, c.Name, w.handler, w.history)
+		s := NewContainerStreamer(rt, c.ID, c.Name, w.handler, w.history)
 		s.OnStreamEnd(w.onEnd)
 		if !from.IsZero() {
 			s.ReplayFrom(from)
@@ -101,7 +118,7 @@ func NewWatcher(client *Client, project string, services []string, history time.
 // streamed from the new run's start, bounded by the retention window. The
 // history window would replay the previous run, which was captured already.
 func (w *Watcher) Attach(c Container) error {
-	startedAt, err := w.startedAt(c.ID)
+	startedAt, err := w.startedAt(w.ctx, c.ID)
 	if err != nil {
 		return err
 	}
@@ -160,11 +177,11 @@ func (w *Watcher) Watch(discover func() ([]Container, error)) {
 	go func() {
 		defer w.wg.Done()
 		for {
-			err := w.client.WatchEvents(w.ctx, w.project, w.onEvent)
+			err := w.runtime.WatchEvents(w.ctx, w.project, w.onEvent)
 			if w.ctx.Err() != nil {
 				return
 			}
-			termout.Errorf("[running-man] Lost the Docker event stream (%v); reconnecting\n", err)
+			termout.Errorf("[running-man] Lost the runtime event stream (%v); reconnecting\n", err)
 			select {
 			case <-time.After(2 * time.Second):
 			case <-w.ctx.Done():

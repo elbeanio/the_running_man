@@ -1,4 +1,4 @@
-package docker
+package runtime
 
 import (
 	"context"
@@ -30,18 +30,9 @@ type ComposeOptions struct {
 	Services []string
 }
 
-// ComposeCommand is a resolved Compose CLI entry point.
-//
-// Compose exists as both a `docker compose` subcommand (v2) and a standalone
-// `docker-compose` binary (v1), and plenty of machines have only one.
-type ComposeCommand struct {
-	// Name is the executable, e.g. "docker" or "docker-compose".
-	Name string
-	// Base are the leading arguments, e.g. ["compose"] for v2.
-	Base []string
-}
-
-// FindComposeCommand locates a usable Compose CLI, preferring v2.
+// FindComposeCommand locates a usable Docker Compose CLI, preferring v2.
+// ComposeCommand itself is declared in runtime.go as the canonical shape
+// every runtime's FindCommand returns.
 func FindComposeCommand(ctx context.Context) (ComposeCommand, error) {
 	if path, err := exec.LookPath("docker"); err == nil {
 		// `docker` existing does not mean the compose plugin is installed.

@@ -609,3 +609,58 @@ func TestTracingConfig_Persist(t *testing.T) {
 		t.Error("persist: false read as on")
 	}
 }
+
+// --- runtime: config field -------------------------------------------------
+
+func TestConfig_GetRuntime_DefaultIsDocker(t *testing.T) {
+	var c Config
+	if got := c.GetRuntime(); got != RuntimeDocker {
+		t.Errorf("GetRuntime() with empty field = %q, want %q", got, RuntimeDocker)
+	}
+}
+
+func TestConfig_GetRuntime_RespectsExplicitValue(t *testing.T) {
+	cases := []struct {
+		set, want string
+	}{
+		{RuntimeDocker, RuntimeDocker},
+		{RuntimePodman, RuntimePodman},
+	}
+	for _, tc := range cases {
+		c := Config{Runtime: tc.set}
+		if got := c.GetRuntime(); got != tc.want {
+			t.Errorf("GetRuntime() with Runtime=%q = %q, want %q", tc.set, got, tc.want)
+		}
+	}
+}
+
+func TestConfig_IsRuntimeValid(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"", true}, // empty means "unset"; fallthrough to default
+		{RuntimeDocker, true},
+		{RuntimePodman, true},
+		{"rkt", false},
+		{"containerd", false},
+	}
+	for _, tc := range cases {
+		if got := IsRuntimeValid(tc.in); got != tc.want {
+			t.Errorf("IsRuntimeValid(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestConfig_Validate_RejectsUnknownRuntime(t *testing.T) {
+	c := Config{
+		Runtime: "containerd",
+		// Processes must also be set so validation is not aborted earlier
+		// by the "must specify at least one process or docker_compose file"
+		// branch in Validate.
+		Processes: []ProcessConfig{{Name: "web", Command: "npm start"}},
+	}
+	if err := c.Validate(); err == nil {
+		t.Error("Validate should reject an unknown runtime value")
+	}
+}
